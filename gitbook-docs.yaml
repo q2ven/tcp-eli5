@@ -1,0 +1,17 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: tcp-eli5
+  structure:
+    - type: space
+      key: ja
+      title: 日本語
+      path: ja
+      content:
+        directory: ./ja
+
+    - type: space
+      key: en
+      title: English
+      path: en
+      content:
+        directory: ./en

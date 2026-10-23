@@ -12,9 +12,12 @@ Linux カーネルの TCP スタックを、たとえ話とコードの両方か
 
 ## GitBook
 
-Each language is a separate GitBook space synced with Git Sync.
-Set the space's *project directory* to `ja` or `en`.  Diagrams use
-mermaid code blocks, so enable the Mermaid integration in GitBook.
+The repository is laid out for GitBook site-level Git Sync:
+`gitbook-docs.yaml` at the root maps the `ja` and `en` directories to
+two spaces, and each directory has its own `.gitbook.yaml`,
+`README.md` and `SUMMARY.md`.  Keep the project directory at the
+repository root.  Diagrams use mermaid code blocks, so enable the
+Mermaid integration in GitBook.
 
 ## Contributing
 
