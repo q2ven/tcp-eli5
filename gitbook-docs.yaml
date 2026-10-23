@@ -4,6 +4,7 @@ site:
   structure:
     - type: space
       key: ja
+      default: true
       title: 日本語
       path: ja
       content:
