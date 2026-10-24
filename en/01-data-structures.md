@@ -335,7 +335,7 @@ The correspondence with RFC variables is as follows:
 | (Linux extension) | `tp->write_seq` | Tail of data queued by application + 1 |
 | (Linux extension) | `tp->copied_seq` | Head of data not yet read by application |
 
-For both sending and receiving, Linux adds one boundary line to the RFC's two lines:
+Because the RFC sequence variables only define boundaries on the wire, Linux adds `write_seq` on the send side and `copied_seq` on the receive side to mark the boundary between the application (`sendmsg()` / `recvmsg()`) and the socket buffer:
 
 ```
 Sender:    snd_una <= snd_nxt <= write_seq

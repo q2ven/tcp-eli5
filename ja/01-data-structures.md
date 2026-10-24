@@ -335,7 +335,7 @@ RFC 変数との対応は次のとおりです。
 | （Linux 独自） | `tp->write_seq` | アプリが積んだデータの末尾 + 1 |
 | （Linux 独自） | `tp->copied_seq` | アプリがまだ読んでいない先頭 |
 
-送受信それぞれ、RFC の 2 本の線に Linux は 1 本ずつ足しています。
+RFC のシーケンス変数はワイヤ上の境界しか定義していないため、Linux はアプリ（`sendmsg()` / `recvmsg()`）とソケットバッファの境界として、送信側に `write_seq`、受信側に `copied_seq` をそれぞれ追加しています。
 
 ```
 送信側:  snd_una <= snd_nxt <= write_seq
