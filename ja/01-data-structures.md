@@ -38,7 +38,12 @@ TCP の各コネクションは **TCB（Transmission Control Block）** とい�
  4 - まだ送ってはいけない
 ```
 
-SND.UNA = 最古の未 ACK、SND.NXT = 次に送る番号、SND.WND = 相手の広告ウィンドウ、SND.UP = urgent pointer、SND.WL1 / SND.WL2 = 最後にウィンドウ更新に使ったセグメントの SEQ / ACK、ISS = 初期送信シーケンス番号です。
+- `SND.UNA`: 最古の未 ACK シーケンス番号
+- `SND.NXT`: 次に送るシーケンス番号
+- `SND.WND`: 相手が広告してきた受信ウィンドウ幅（こちらが送ってよい幅）
+- `SND.UP`: urgent pointer
+- `SND.WL1` / `SND.WL2`: **最後に `SND.WND` を更新したときに使った相手パケットの `SEG.SEQ`（相手の送信番号）と `SEG.ACK`（こちらへの ACK 番号）**。パケットがネットワーク上で順番通り届かないときに、遅れて届いた古いパケットの `window` 値で `SND.WND` を巻き戻してしまわないよう、「最後に採用したウィンドウ情報はどの `(SEG.SEQ, SEG.ACK)` のパケットのものだったか」を記録しておく変数です。
+- `ISS`: 初期送信シーケンス番号
 
 ### 受信シーケンス変数
 
@@ -371,7 +376,9 @@ static inline u32 tcp_receive_window(const struct tcp_sock *tp)
 - `tcp_receive_window()`（[include/net/tcp.h#L956](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n956)）: `rcv_wnd` は「最後に広告したときの」ウィンドウで、基準点は `rcv_wup` です。データを受けて `rcv_nxt` が進むと残りは減ります。RFC の RCV.WND は「今の残り」なので、こちらが RFC の RCV.WND に相当します。右端を後退させないという §3.8.6 の要求は、この右端 `rcv_wup + rcv_wnd` を基準に `tcp_select_window()` が守ります（第 10 章）。
 - `tcp_wnd_end()`（[include/net/tcp.h#L1614](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1614)）は単に `snd_una + snd_wnd` を返し、送信ウィンドウの右端 SND.UNA + SND.WND を表します。
 
-SND.WL2 が無い理由は、ウィンドウ更新判定 `tcp_may_update_window()` を見ると分かります。
+`struct tcp_sock` に `SND.WL1`（`tp->snd_wl1`）はあるのに `SND.WL2` が無い理由は、`tcp_ack_update_window()`（[net/ipv4/tcp_input.c#L3951](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3951)）と `tcp_may_update_window()`（[net/ipv4/tcp_input.c#L3881](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3881)）を見ると分かります。
+
+> 引数名に注意してください。Linux のコードでは、届いたパケットの **`SEG.ACK`（こちらへの ACK 番号）が `ack`**、届いたパケットの **`SEG.SEQ`（相手の送信シーケンス番号）が `ack_seq`** という名前になっています。
 
 ```c
 static inline bool tcp_may_update_window(const struct tcp_sock *tp,
@@ -384,7 +391,18 @@ static inline bool tcp_may_update_window(const struct tcp_sock *tp,
 }
 ```
 
-`tcp_may_update_window()`（[net/ipv4/tcp_input.c#L3881](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3881)）は、新しいデータを ACK した（`ack > snd_una`）なら無条件に更新します。この関数は `snd_una` を進める前に呼ばれるので、`snd_una` が RFC の SND.WL2 の役を兼ねます。同じ SEQ でもウィンドウが広がる場合とゼロウィンドウの場合は受け入れるという Linux 独自の緩和もあります。
+呼び出し元の `tcp_ack_update_window()` は、次の順番で処理します。
+
+1. まず `tcp_may_update_window(tp, ack, ack_seq, nwin)` で、まだ更新していない **`tp->snd_una`** と今回の `ack`（`SEG.ACK`）を比較し、通れば `tp->snd_wl1 = ack_seq` と `tp->snd_wnd = nwin` を更新する。
+2. **その直後に** `tcp_snd_una_update(tp, ack)` を呼んで `tp->snd_una = ack` に進める。
+
+この順番になっているため、`tcp_may_update_window()` が走る時点の `tp->snd_una` は「これまでに受理した最大の `SEG.ACK`（= 前回ウィンドウを更新した時点の `SEG.ACK`）」そのものです。つまり **`tp->snd_una` が RFC の `SND.WL2` の役割をそのまま兼ねている** ため、`snd_wl2` という別フィールドを持つ必要がありません。
+
+また、上の 3 つの条件は RFC 9293 §3.10.7.4 の式（`SND.WL1 < SEG.SEQ || (SND.WL1 == SEG.SEQ && SND.WL2 <= SEG.ACK)`）を意図的に修正したものです（第 7 章で詳しく追います）。
+
+1. **`after(ack, tp->snd_una)`（`SEG.ACK > SND.UNA`）**: こちらの未 ACK データを新たに ACK したパケットは、そのデータを受け取った後に相手が作った最新のパケットなので、`snd_wl1` を見ずに無条件でウィンドウを更新します。
+2. **`after(ack_seq, tp->snd_wl1)`（`SEG.SEQ > SND.WL1`）**: 相手自身の送信シーケンス番号が進んでいるので、新しいパケットとしてウィンドウを更新します。
+3. **`ack_seq == tp->snd_wl1 && (nwin > tp->snd_wnd || !nwin)`**: 相手がデータを送っていない一方向通信では、pure ACK の `SEG.SEQ`（`ack_seq`）も `SEG.ACK`（`ack == snd_una`）も同じ値のまま並びます。たとえば相手が `WIN=10000` の pure ACK の直後にバッファを読み出して `WIN=60000` の Window Update（同じ `SEQ`、同じ `ACK`）を送ったとき、ネットワーク上でこの 2 つが入れ替わると、RFC の規則（`SND.WL2 <= SEG.ACK`）では後から届いた古い `WIN=10000` で上書きされてしまいます。そこで Linux は、`(SEQ, ACK)` が同じパケットについては **「今よりウィンドウが広がるとき（`nwin > tp->snd_wnd`）」** か **「相手がゼロウィンドウで閉じたとき（`!nwin`）」** だけ更新を受け入れ、リオーダリングで古い小さいウィンドウに戻されるのを防いでいます。
 
 最後に、in-flight の会計です。`packets_out`, `sacked_out`, `lost_out`, `retrans_out` は skb 数ではなく **セグメント数**（`tcp_skb_pcount()` の和）です。`tcp_packets_in_flight()`（[include/net/tcp.h#L1549](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1549)）は `packets_out - (sacked_out + lost_out) + retrans_out` を返し、RFC 6675 の "pipe" に相当します。この値が `snd_cwnd` と比較されます（第 4・8 章）。この 4 つのカウンタは次の Step の `sacked` ビットの集計値なので、両者がずれると `WARN_ON` や cwnd の暴走につながります。
 
