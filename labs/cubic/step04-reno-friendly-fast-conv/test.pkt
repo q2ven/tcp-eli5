@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 4: CUBIC Reno-friendly Region (W_est) & Fast Convergence
+//
+// Verifies:
+//   1. Slow start from cwnd = 10 to cwnd = 20 (recording delay_min = 100ms).
+//   2. Loss #1 at cwnd = 20 -> last_max_cwnd = 20, ssthresh = 14, cwnd = 14.
+//   3. Loss #2 at cwnd = 14 (< last_max_cwnd = 20):
+//      Fast Convergence lowers last_max_cwnd to (14 * 1741) / 2048 = 11
+//      (instead of 14 without Fast Convergence), and sets ssthresh = 9, cwnd = 9.
+//   4. Congestion Avoidance from cwnd = 9:
+//      - Flight 1 (t_elapsed = 0.0s): cnt = 9 -> 9 ACKs grow cwnd from 9 to 10.
+//      - Flight 2 (t_elapsed = 0.8s): with Fast Convergence (last_max_cwnd = 11),
+//        bic_target plateaus at 11 -> cnt = 10/(11-10) = 10 -> 10 ACKs grow cwnd
+//        from 10 to 11 (without Fast Convergence, last_max_cwnd = 14 -> bic_target = 13
+//        -> cnt = 3 -> cwnd jumps to 13!).
+//   5. Reno-friendly region (W_est) at the plateau (cwnd = 11):
+//      While t < bic_K (~1.71s), pure CUBIC stays flat at bic_target = 11 (cnt = 1100).
+//      Reno-friendly mode advances ca->tcp_cwnd every delta = (11 * 15) >> 3 = 20 ACKs;
+//      once ca->tcp_cwnd reaches 12 (> cwnd = 11), it clamps ca->cnt to 11 so cwnd grows
+//      beyond the plateau!
+
+0.000 `sysctl -q net.ipv4.tcp_congestion_control=bpf_cubic4`
+
++0.000 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.000 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.000 bind(3, ..., ...) = 0
++0.000 listen(3, 1) = 0
+
+// 3-way handshake with MSS = 1012 (1000-byte payload + 12-byte TS) and RTT = 100ms
++0.000 < S 0:0(0) win 65535 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.000 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.100 < . 1:1(0) ack 1 win 512 <nop,nop,TS val 200 ecr 100>
++0.000 accept(3, ..., ...) = 4
+
+// 1. Slow Start: send 10 segments -> ACK grows cwnd from 10 to 20 and records delay_min = 100ms
++0.000 write(4, ..., 10000) = 10000
++0.000 > P. 1:10001(10000) ack 1 <nop,nop,TS val 200 ecr 200>
++0.100 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 300 ecr 200>
++0.000 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd 20 after slow start, got {tcpi_snd_cwnd}"
+}%
+
+// 2. Loss Episode #1 at cwnd = 20 -> last_max_cwnd = 20, ssthresh = 14, cwnd = 14
++0.000 write(4, ..., 4000) = 4000
++0.000 > P. 10001:14001(4000) ack 1 <nop,nop,TS val 300 ecr 300>
++0.100 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:12001>
++0.000 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:13001>
++0.000 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:14001>
++0.000 > . 10001:11001(1000) ack 1 <nop,nop,TS val 400 ecr 400>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Recovery, f"expected Recovery, got {tcpi_ca_state}"
+assert tcpi_snd_ssthresh == 14, f"expected ssthresh 14, got {tcpi_snd_ssthresh}"
+}%
++0.100 < . 1:1(0) ack 14001 win 512 <nop,nop,TS val 500 ecr 400>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Open, f"expected Open, got {tcpi_ca_state}"
+assert tcpi_snd_cwnd == 14, f"expected cwnd 14, got {tcpi_snd_cwnd}"
+assert tcpi_snd_ssthresh == 14, f"expected ssthresh 14, got {tcpi_snd_ssthresh}"
+}%
+
+// 3. Loss Episode #2 at cwnd = 14 (< last_max_cwnd = 20)
+//    Fast Convergence sets last_max_cwnd = (14 * 1741) / 2048 = 11, ssthresh = 9
++0.000 write(4, ..., 4000) = 4000
++0.000 > P. 14001:18001(4000) ack 1 <nop,nop,TS val 500 ecr 500>
++0.100 < . 1:1(0) ack 14001 win 512 <nop,nop,TS val 600 ecr 500,nop,nop,sack 15001:16001>
++0.000 < . 1:1(0) ack 14001 win 512 <nop,nop,TS val 600 ecr 500,nop,nop,sack 15001:17001>
++0.000 < . 1:1(0) ack 14001 win 512 <nop,nop,TS val 600 ecr 500,nop,nop,sack 15001:18001>
++0.000 > . 14001:15001(1000) ack 1 <nop,nop,TS val 600 ecr 600>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Recovery, f"expected Recovery, got {tcpi_ca_state}"
+assert tcpi_snd_ssthresh == 9, f"expected ssthresh 9, got {tcpi_snd_ssthresh}"
+}%
++0.100 < . 1:1(0) ack 18001 win 512 <nop,nop,TS val 700 ecr 600>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Open, f"expected Open, got {tcpi_ca_state}"
+assert tcpi_snd_cwnd == 9, f"expected cwnd 9, got {tcpi_snd_cwnd}"
+assert tcpi_snd_ssthresh == 9, f"expected ssthresh 9, got {tcpi_snd_ssthresh}"
+}%
+
+// 4. Flight 1 in Congestion Avoidance (epoch start, t_elapsed = 0.0s):
+//    bic_target = 10 -> ca->cnt = 9 / (10 - 9) = 9.
+//    9 ACKed packets increase cwnd from 9 to 10.
++0.000 write(4, ..., 9000) = 9000
++0.000 > P. 18001:27001(9000) ack 1 <nop,nop,TS val 700 ecr 700>
++0.100 < . 1:1(0) ack 27001 win 512 <nop,nop,TS val 800 ecr 700>
++0.000 %{
+assert tcpi_snd_cwnd == 10, f"expected cwnd 10 after Flight 1, got {tcpi_snd_cwnd}"
+}%
+
+// 5. Flight 2 (t_elapsed = 0.8s, verifying Fast Convergence W_max = 11):
+//    With Fast Convergence (last_max_cwnd = 11, bic_K = 1750), delta = 0 -> bic_target = 11,
+//    so ca->cnt = 10 / (11 - 10) = 10 -> 10 ACKed packets grow cwnd from 10 to 11.
+//    (Without Fast Convergence, last_max_cwnd = 14 -> bic_target = 13 -> ca->cnt = 3,
+//     so cwnd would jump to 13!)
++0.700 write(4, ..., 10000) = 10000
++0.000 > P. 27001:37001(10000) ack 1 <nop,nop,TS val 1500 ecr 800>
++0.100 < . 1:1(0) ack 37001 win 512 <nop,nop,TS val 1600 ecr 1500>
++0.000 %{
+assert tcpi_snd_cwnd == 11, f"expected cwnd 11 (Fast Convergence W_max=11), got {tcpi_snd_cwnd}"
+}%
+
+// 6. Flights 3-6 at the Fast Convergence plateau (cwnd = 11 == last_max_cwnd):
+//    While t < bic_K (~1.71s), pure CUBIC is flat at bic_target = 11 (ca->cnt = 1100).
+//    Across 4 flights of 11 packets, Reno-friendly mode advances ca->tcp_cwnd to 12
+//    (every delta = (11 * 15) >> 3 = 20 ACKs) and clamps ca->cnt to 11, growing cwnd > 11!
++0.000 write(4, ..., 11000) = 11000
++0.000 > P. 37001:48001(11000) ack 1 <nop,nop,TS val 1600 ecr 1600>
++0.100 < . 1:1(0) ack 48001 win 512 <nop,nop,TS val 1700 ecr 1600>
++0.000 %{
+assert tcpi_snd_cwnd == 11, f"expected cwnd 11 at plateau, got {tcpi_snd_cwnd}"
+}%
+
++0.000 write(4, ..., 11000) = 11000
++0.000 > P. 48001:59001(11000) ack 1 <nop,nop,TS val 1700 ecr 1700>
++0.100 < . 1:1(0) ack 59001 win 512 <nop,nop,TS val 1800 ecr 1700>
+
++0.000 write(4, ..., 11000) = 11000
++0.000 > P. 59001:70001(11000) ack 1 <nop,nop,TS val 1800 ecr 1800>
++0.100 < . 1:1(0) ack 70001 win 512 <nop,nop,TS val 1900 ecr 1800>
+
++0.000 write(4, ..., 11000) = 11000
++0.000 > P. 70001:81001(11000) ack 1 <nop,nop,TS val 1900 ecr 1900>
++0.100 < . 1:1(0) ack 81001 win 512 <nop,nop,TS val 2000 ecr 1900>
++0.000 %{
+assert tcpi_snd_cwnd > 11, f"expected Reno-friendly region to grow cwnd > 11 at plateau, got {tcpi_snd_cwnd}"
+}%

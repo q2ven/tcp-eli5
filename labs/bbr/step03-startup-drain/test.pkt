@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 3: BBR_STARTUP to BBR_DRAIN / BBR_PROBE_BW transition after 3 plateau rounds
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_bbr3`
+
+// Server socket setup
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
+// 3-way handshake with initial 100 ms RTT so initial pacing rate is ~141 KB/s
+// MSS = 1000 bytes, receive window = 1,000 bytes (1 segment per RTT -> BtlBw = 100 KB/s at 10 ms RTT)
++0.00 < S 0:0(0) win 1000 <mss 1000,sackOK,nop,nop>
++0.00 > S. 0:0(0) ack 1 <...>
++0.10 < . 1:1(0) ack 1 win 1000
++0.00 accept(3, ..., ...) = 4
+
+// Queue 5,000 bytes (5 segments) in one write() so the write queue stays
+// non-empty across rounds (avoiding app-limited rate samples after warmup).
++0.00 write(4, ..., 5000) = 5000
+
+// Warmup round (1:1001): clears initial app_limited state upon ACK at +0.01
++0.00 > P. 1:1001(1000) ack 1
++0.01 < . 1:1(0) ack 1001 win 1000
+
+// Round 1 (1001:2001): non-app-limited, sets full_bw = BtlBw (~100 KB/s), full_bw_cnt = 0
+// In BBR_STARTUP, pacing_gain = bbr_high_gain (~2.89x) -> tcpi_pacing_rate ~= 286 KB/s
++0.00 > P. 1001:2001(1000) ack 1
++0.01 < . 1:1(0) ack 2001 win 1000
++0.00 %{
+assert 250000 < tcpi_pacing_rate < 320000, f"Round 1 STARTUP: expected ~286KB/s, got {tcpi_pacing_rate}"
+assert tcpi_snd_ssthresh == 0x7fffffff, f"Round 1 STARTUP: expected infinite ssthresh, got {tcpi_snd_ssthresh}"
+}%
+
+// Round 2 (2001:3001): 0% bw growth (< 25%) -> full_bw_cnt = 1 (still in BBR_STARTUP)
++0.00 > P. 2001:3001(1000) ack 1
++0.01 < . 1:1(0) ack 3001 win 1000
++0.00 %{
+assert 250000 < tcpi_pacing_rate < 320000, f"Round 2 STARTUP: expected ~286KB/s, got {tcpi_pacing_rate}"
+}%
+
+// Round 3 (3001:4001): 0% bw growth (< 25%) -> full_bw_cnt = 2 (still in BBR_STARTUP)
++0.00 > P. 3001:4001(1000) ack 1
++0.01 < . 1:1(0) ack 4001 win 1000
++0.00 %{
+assert 250000 < tcpi_pacing_rate < 320000, f"Round 3 STARTUP: expected ~286KB/s, got {tcpi_pacing_rate}"
+}%
+
+// Round 4 (4001:5001): 0% bw growth (< 25%) -> full_bw_cnt = 3 -> full_bw_reached = 1!
+// Transitions BBR_STARTUP -> BBR_DRAIN -> BBR_PROBE_BW (since in_flight == 0 <= BDP).
+// Pacing rate drops from ~2.89x BtlBw (~286 KB/s) to ~1.0x BtlBw (~99 KB/s)!
++0.00 > P. 4001:5001(1000) ack 1
++0.01 < . 1:1(0) ack 5001 win 1000
++0.00 %{
+assert 90000 < tcpi_pacing_rate < 110000, f"Round 4 exited STARTUP: expected ~99KB/s, got {tcpi_pacing_rate}"
+assert 1 <= tcpi_snd_ssthresh <= 4, f"Round 4 exited STARTUP: expected ssthresh in [1, 4], got {tcpi_snd_ssthresh}"
+assert tcpi_snd_cwnd == 4, f"Round 4 PROBE_BW: expected cwnd == 4, got {tcpi_snd_cwnd}"
+}%

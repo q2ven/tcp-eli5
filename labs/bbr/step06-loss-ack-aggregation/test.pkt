@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 6: Loss Recovery, Packet Conservation (cwnd = 1), & Prior cwnd Restoration
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_bbr6`
+
+// Establish a connection with base RTT = 10 ms
++0.000 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.000 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.000 bind(3, ..., ...) = 0
++0.000 listen(3, 1) = 0
+
++0.000 < S 0:0(0) win 65535 <mss 1000,sackOK,nop,nop,nop,wscale 7>
++0.000 > S. 0:0(0) ack 1 <mss 1460,nop,nop,sackOK,nop,wscale 7>
++0.010 < . 1:1(0) ack 1 win 512
++0.000 accept(3, ..., ...) = 4
+
+// Send 10 segments at RTT = 10 ms to grow cwnd from 10 to 20
++0.000 write(4, ..., 10000) = 10000
++0.000 > P. 1:10001(10000) ack 1
++0.010 < . 1:1(0) ack 10001 win 512
++0.000 %{
+assert tcpi_snd_cwnd >= 20, f"expected cwnd >= 20, got {tcpi_snd_cwnd}"
+assert tcpi_ca_state == TCP_CA_Open, f"expected CA_Open, got {tcpi_ca_state}"
+}%
+
+// Send 4 segments (10001:14001)
++0.000 write(4, ..., 4000) = 4000
++0.000 > P. 10001:14001(4000) ack 1
+
+// Receive 3 SACK duplicate ACKs to trigger Fast Recovery
++0.010 < . 1:1(0) ack 10001 win 512 <sack 11001:12001,nop,nop>
++0.000 < . 1:1(0) ack 10001 win 512 <sack 11001:13001,nop,nop>
++0.000 < . 1:1(0) ack 10001 win 512 <sack 11001:14001,nop,nop>
+
+// Fast retransmit of the lost segment (10001:11001)
++0.000 > . 10001:11001(1000) ack 1
+
+// Verify packet conservation in the 1st round of Recovery:
+// in_flight was 0, max(acked, 1) = 1, so cwnd = 1!
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Recovery, f"expected CA_Recovery, got {tcpi_ca_state}"
+assert tcpi_snd_cwnd == 1, f"expected cwnd == 1 under packet conservation, got {tcpi_snd_cwnd}"
+}%
+
+// Cumulative ACK acknowledging all 14,000 bytes exits Recovery
++0.010 < . 1:1(0) ack 14001 win 512
+
+// BBR exits Recovery back to TCP_CA_Open and restores cwnd to pre-recovery prior_cwnd (>= 20)
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Open, f"expected CA_Open, got {tcpi_ca_state}"
+assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
+}%

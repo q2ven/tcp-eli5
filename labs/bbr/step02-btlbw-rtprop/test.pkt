@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 2: Track BtlBw and RtProp with app-limited rate sample filtering
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_bbr2`
+
+// Server socket setup
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
+// 3-way handshake with 10 ms RTT (0.000 SYN, 0.000 SYN-ACK, 0.010 ACK)
+// MSS = 1012 with 12-byte TCP timestamps -> payload MSS = 1000 bytes
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.01 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 110 ecr 100>
++0.00 accept(3, ..., ...) = 4
+
+// Phase 1: High-bandwidth burst
+// write(4, ..., 10000) sends 10 segments (1:10001) at 0.010, ACKed at 0.020.
+// rtt_us = 10000, delivered = 10, interval_us = 10000
+// bw = 10 pkts / 10 ms = 1000 pkts/s (1,000,000 B/s)
+// bdp = 10 pkts
+// cwnd = bdp + 4 = 14
+// pacing_rate = 99% of 1 MB/s = ~990,000 B/s
++0.00 write(4, ..., 10000) = 10000
++0.00 > P. 1:10001(10000) ack 1 <nop,nop,TS val 110 ecr 110>
++0.01 < . 1:1(0) ack 10001 win 257 <nop,nop,TS val 120 ecr 110>
+
++0.00 %{
+assert tcpi_snd_cwnd == 14, f"expected cwnd 14, got {tcpi_snd_cwnd}"
+assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s, got {tcpi_pacing_rate}"
+}%
+
+// Phase 2: App-limited smaller burst with longer interval and higher RTT
+// Send 2 segments (2,000 bytes) at 0.050 (+0.030), ACKed at 0.070 (+0.020).
+// rtt_us = 20000, interval_us = 50000, is_app_limited = true.
+// BtlBw and RtProp tracking should preserve max_bw = 1000 pkts/s and min_rtt = 10000 us!
++0.03 write(4, ..., 2000) = 2000
++0.00 > P. 10001:12001(2000) ack 1 <nop,nop,TS val 150 ecr 120>
++0.02 < . 1:1(0) ack 12001 win 257 <nop,nop,TS val 170 ecr 150>
+
++0.00 %{
+assert tcpi_snd_cwnd == 14, f"expected cwnd 14 to be preserved, got {tcpi_snd_cwnd}"
+assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s to be preserved, got {tcpi_pacing_rate}"
+}%

@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 5: BBR_PROBE_RTT transition, clamping cwnd to 4, and restoring prior_cwnd
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_bbr5`
+
+// Establish a connection with base RTT = 10 ms
++0.000 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.000 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.000 bind(3, ..., ...) = 0
++0.000 listen(3, 1) = 0
+
++0.000 < S 0:0(0) win 65535 <mss 1000,sackOK,nop,nop,nop,wscale 7>
++0.000 > S. 0:0(0) ack 1 <mss 1460,nop,nop,sackOK,nop,wscale 7>
++0.010 < . 1:1(0) ack 1 win 512
++0.000 accept(3, ..., ...) = 4
+
+// Send 10 segments at RTT = 10 ms to grow cwnd from 10 to 20
++0.000 write(4, ..., 10000) = 10000
++0.000 > P. 1:10001(10000) ack 1
++0.010 < . 1:1(0) ack 10001 win 512
++0.000 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd == 20, got {tcpi_snd_cwnd}"
+}%
+
+// Advance +2.1s (> BBR_MIN_RTT_WIN_US = 2s) and ACK with RTT = 15 ms (> 10 ms)
+// so min_rtt_us is not refreshed early and the filter window expires.
++2.100 write(4, ..., 1000) = 1000
++0.000 > P. 10001:11001(1000) ack 1
++0.015 < . 1:1(0) ack 11001 win 512
+
+// BBR must enter BBR_PROBE_RTT and clamp cwnd to BBR_MIN_PIPE_CWND (4)!
++0.000 %{
+assert tcpi_snd_cwnd == 4, f"expected cwnd == 4 in PROBE_RTT, got {tcpi_snd_cwnd}"
+}%
+
+// Wait +0.25s (> BBR_PROBE_RTT_MODE_US = 200 ms) with in_flight <= 4
+// and complete 1 packet-timed round trip at RTT = 10 ms.
++0.250 write(4, ..., 1000) = 1000
++0.000 > P. 11001:12001(1000) ack 1
++0.010 < . 1:1(0) ack 12001 win 512
+
+// BBR exits BBR_PROBE_RTT and restores cwnd >= prior_cwnd (20)!
++0.000 %{
+assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
+}%

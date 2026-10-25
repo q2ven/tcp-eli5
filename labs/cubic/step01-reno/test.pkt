@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 1: Test BPF Reno Slow Start, ssthresh boundary clamping, and Reno AI
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_reno1`
+
+// Establish a passive TCP connection.
+// MSS = 1012 with 12-byte TCP Timestamps option -> tp->mss_cache == 1000 bytes.
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.01 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 110 ecr 100>
++0.00 accept(3, ..., ...) = 4
+
+// Verify initial cwnd == 10 and ssthresh == 22 (from bpf_reno1_init).
++0.00 %{
+assert tcpi_snd_cwnd == 10, f"expected initial cwnd 10, got {tcpi_snd_cwnd}"
+assert tcpi_snd_ssthresh == 22, f"expected initial ssthresh 22, got {tcpi_snd_ssthresh}"
+}%
+
+// 1. Pure Slow Start: send 10,000 bytes (10 segments == full cwnd, so
+//    tp->is_cwnd_limited becomes true) and ACK them. cwnd grows 10 -> 20.
++0.00 write(4, ..., 10000) = 10000
++0.00 > P. 1:10001(10000) ack 1 <nop,nop,TS val 110 ecr 110>
++0.01 < . 1:1(0) ack 10001 win 257 <nop,nop,TS val 120 ecr 110>
++0.00 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd 20 after Slow Start, got {tcpi_snd_cwnd}"
+}%
+
+// 2. Slow Start -> Congestion Avoidance transition:
+//    Send 20,000 bytes (20 segments == full cwnd 20) and ACK all 20 segments.
+//    - Slow Start uses 2 segments to reach ssthresh (20 -> 22).
+//    - The remaining 18 ACKed segments fall through to Congestion Avoidance,
+//      setting tp->snd_cwnd_cnt = 18 (< 22, so cwnd stays 22).
++0.00 write(4, ..., 20000) = 20000
++0.00 > P. 10001:30001(20000) ack 1 <nop,nop,TS val 120 ecr 120>
++0.01 < . 1:1(0) ack 30001 win 257 <nop,nop,TS val 130 ecr 120>
++0.00 %{
+assert tcpi_snd_cwnd == 22, f"expected cwnd 22 at ssthresh boundary, got {tcpi_snd_cwnd}"
+}%
+
+// 3. Reno Additive Increase:
+//    Send 22,000 bytes (22 segments == full cwnd 22) and ACK them.
+//    tp->snd_cwnd_cnt (18 + 22 = 40 >= 22) triggers +1 cwnd (22 -> 23).
++0.00 write(4, ..., 22000) = 22000
++0.00 > P. 30001:52001(22000) ack 1 <nop,nop,TS val 130 ecr 130>
++0.01 < . 1:1(0) ack 52001 win 257 <nop,nop,TS val 140 ecr 130>
++0.00 %{
+assert tcpi_snd_cwnd == 23, f"expected cwnd 23 after Reno AI, got {tcpi_snd_cwnd}"
+}%

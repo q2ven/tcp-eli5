@@ -24,3 +24,8 @@
 - [12. CUBIC](12-cubic.md)
 - [13. BBR](13-bbr.md)
 - [14. ECN と DCTCP](14-ecn-dctcp.md)
+
+## BPF CC ハンズオン
+
+- [15. ハンズオン: BPF CC と packetdrill で作る CUBIC](15-lab-cubic.md)
+- [16. ハンズオン: BPF CC と packetdrill で作る BBR](16-lab-bbr.md)

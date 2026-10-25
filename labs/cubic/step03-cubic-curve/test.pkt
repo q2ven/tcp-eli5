@@ -1,0 +1,101 @@
+// Step 3: Fixed-Point Cubic Root and W_cubic(t) Curve (Concave & Convex)
+// Verifies:
+//   1. Multiplicative decrease beta = 717/1024: on loss from cwnd = 20,
+//      ssthresh becomes 14 (20 * 717 / 1024 = 14, unlike Reno's 10).
+//   2. Concave growth (t < K): rapid cwnd growth toward W_max = 20
+//      (14 -> 15 -> 18 -> 20).
+//   3. Plateau at inflection point (t ~= K): bic_target == W_max == 20,
+//      so ca->cnt = 100 * cwnd and cwnd stays at 20 across a full RTT.
+//   4. Convex growth (t > K): bic_target = W_max + delta > 20,
+//      so cwnd grows beyond W_max = 20.
+
+0.000 `sysctl -q net.ipv4.tcp_congestion_control=bpf_cubic3`
+
++0.000 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.000 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.000 bind(3, ..., ...) = 0
++0.000 listen(3, 1) = 0
+
+// 3-way handshake with MSS = 1012 (1000-byte payload + 12-byte TS) and RTT = 100ms
++0.000 < S 0:0(0) win 65535 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.000 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.100 < . 1:1(0) ack 1 win 512 <nop,nop,TS val 200 ecr 100>
++0.000 accept(3, ..., ...) = 4
+
+// Slow Start: send 10 segments -> ACK grows cwnd from 10 to 20 and records delay_min = 100ms
++0.000 write(4, ..., 10000) = 10000
++0.000 > P. 1:10001(10000) ack 1 <nop,nop,TS val 200 ecr 200>
++0.100 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 300 ecr 200>
++0.000 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd 20 after slow start, got {tcpi_snd_cwnd}"
+}%
+
+// Trigger packet loss at cwnd = 20: send 4 segments, first segment (10001:11001) is lost
++0.000 write(4, ..., 4000) = 4000
++0.000 > P. 10001:14001(4000) ack 1 <nop,nop,TS val 300 ecr 300>
++0.100 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:12001>
++0.000 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:13001>
++0.000 < . 1:1(0) ack 10001 win 512 <nop,nop,TS val 400 ecr 300,nop,nop,sack 11001:14001>
++0.000 > . 10001:11001(1000) ack 1 <nop,nop,TS val 400 ecr 400>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Recovery, f"expected Recovery, got {tcpi_ca_state}"
+assert tcpi_snd_ssthresh == 14, f"expected CUBIC ssthresh 14 (20 * 717 / 1024), got {tcpi_snd_ssthresh}"
+}%
+
+// Recovery ACK completes Fast Recovery: cwnd = ssthresh = 14, W_max = 20
++0.100 < . 1:1(0) ack 14001 win 512 <nop,nop,TS val 500 ecr 400>
++0.000 %{
+assert tcpi_ca_state == TCP_CA_Open, f"expected Open, got {tcpi_ca_state}"
+assert tcpi_snd_cwnd == 14, f"expected cwnd 14 after recovery, got {tcpi_snd_cwnd}"
+}%
+
+// Flight 1 (Epoch start, t_elapsed = 0.0s, Concave region):
+// bic_K = cubic_root(cube_factor * (20 - 14)) = 2523 (~2.46s)
+// delta = 5 -> bic_target = 20 - 5 = 15 -> ca->cnt = 14 / (15 - 14) = 14
+// 14 ACKed packets increase cwnd from 14 to 15.
++0.000 write(4, ..., 14000) = 14000
++0.000 > P. 14001:28001(14000) ack 1 <nop,nop,TS val 500 ecr 500>
++0.100 < . 1:1(0) ack 28001 win 512 <nop,nop,TS val 600 ecr 500>
++0.000 %{
+assert tcpi_snd_cwnd == 15, f"expected cwnd 15 after Flight 1 (concave start), got {tcpi_snd_cwnd}"
+}%
+
+// Flight 2 (t_elapsed = 0.6s, Concave steep region):
+// delta = 2 -> bic_target = 20 - 2 = 18 -> ca->cnt = 15 / (18 - 15) = 5
+// 15 ACKed packets increase cwnd by 15 / 5 = 3 (from 15 to 18 in one RTT!).
++0.500 write(4, ..., 15000) = 15000
++0.000 > P. 28001:43001(15000) ack 1 <nop,nop,TS val 1100 ecr 600>
++0.100 < . 1:1(0) ack 43001 win 512 <nop,nop,TS val 1200 ecr 1100>
++0.000 %{
+assert tcpi_snd_cwnd == 18, f"expected cwnd 18 after Flight 2 (concave jump), got {tcpi_snd_cwnd}"
+}%
+
+// Flight 3 (t_elapsed = 1.8s, Approaching origin W_max = 20):
+// delta = 0 -> bic_target = 20 -> ca->cnt = 18 / (20 - 18) = 9
+// 18 ACKed packets increase cwnd by 18 / 9 = 2 (reaching W_max = 20).
++1.100 write(4, ..., 18000) = 18000
++0.000 > P. 43001:61001(18000) ack 1 <nop,nop,TS val 2300 ecr 1200>
++0.100 < . 1:1(0) ack 61001 win 512 <nop,nop,TS val 2400 ecr 2300>
++0.000 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd 20 at W_max origin, got {tcpi_snd_cwnd}"
+}%
+
+// Flight 4 (t_elapsed = 2.1s, Plateau at W_max = 20 near t ~= K):
+// bic_target == 20 <= cwnd, so ca->cnt = 100 * cwnd = 2000.
+// Even after 20 ACKed packets, cwnd stays flat at 20!
++0.200 write(4, ..., 20000) = 20000
++0.000 > P. 61001:81001(20000) ack 1 <nop,nop,TS val 2600 ecr 2400>
++0.100 < . 1:1(0) ack 81001 win 512 <nop,nop,TS val 2700 ecr 2600>
++0.000 %{
+assert tcpi_snd_cwnd == 20, f"expected cwnd to plateau at 20 near K, got {tcpi_snd_cwnd}"
+}%
+
+// Flight 5 (t_elapsed = 4.0s > K, Convex probing region):
+// t > bic_K and delta = 1 -> bic_target = 20 + 1 = 21 > cwnd (20)
+// ca->cnt = 20 / (21 - 20) = 20 -> cwnd grows beyond W_max (20)!
++1.800 write(4, ..., 20000) = 20000
++0.000 > P. 81001:101001(20000) ack 1 <nop,nop,TS val 4500 ecr 2700>
++0.100 < . 1:1(0) ack 101001 win 512 <nop,nop,TS val 4600 ecr 4500>
++0.000 %{
+assert tcpi_snd_cwnd > 20, f"expected cwnd > 20 in convex region, got {tcpi_snd_cwnd}"
+}%

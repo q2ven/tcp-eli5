@@ -1,0 +1,54 @@
+// Test HyStart delay detection in bpf_cubic6
+// Verify that slow start exits early when RTT increases beyond threshold.
+
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_cubic6`
+
+0.000 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
+   +0 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
+   +0 bind(3, ..., ...) = 0
+   +0 listen(3, 1) = 0
+
+   +0 < S 0:0(0) win 65535 <mss 1012,sackOK,nop,nop,nop,wscale 7>
+   +0 > S. 0:0(0) ack 1 <mss 1460,nop,nop,sackOK,nop,wscale 7>
++.020 < . 1:1(0) ack 1 win 1024
+   +0 accept(3, ..., ...) = 4
+   +0 setsockopt(4, SOL_SOCKET, SO_SNDBUF, [300000], 4) = 0
+
+// Round 1: write 30360 bytes (30 segments of 1012 bytes).
+// Initial cwnd is 10, so first 10 segments are sent immediately.
+   +0 write(4, ..., 30360) = 30360
+   +0 > P. 1:10121(10120) ack 1
+   +0 %{ assert tcpi_snd_cwnd == 10, tcpi_snd_cwnd }%
+
+// Round 1 ACK: 20 ms RTT baseline.
+// 10 segments are acknowledged, so cwnd doubles from 10 to 20.
+// Kernel transmits the remaining 20 segments (20240 bytes).
++.020 < . 1:1(0) ack 10121 win 1024
+   +0 > P. 10121:30361(20240) ack 1
+   +0 %{ assert tcpi_snd_cwnd == 20, tcpi_snd_cwnd }%
+   +0 %{ assert tcpi_snd_ssthresh == 0x7fffffff, tcpi_snd_ssthresh }%
+
+// Round 2 at cwnd = 20:
+// Send 9 individual 1-MSS ACKs with inflated RTT (35 ms > delay_min 20ms + 4ms).
+// ACK 1 arrives at +0.035, starting Round 2 and resetting sample_cnt to 0.
++.035 < . 1:1(0) ack 11133 win 1024
+   +0 %{ assert tcpi_snd_ssthresh == 0x7fffffff, tcpi_snd_ssthresh }%
+
+// Next 7 ACKs arrive in burst (+0.000). sample_cnt increments to 8.
++0.000 < . 1:1(0) ack 12145 win 1024
++0.000 < . 1:1(0) ack 13157 win 1024
++0.000 < . 1:1(0) ack 14169 win 1024
++0.000 < . 1:1(0) ack 15181 win 1024
++0.000 < . 1:1(0) ack 16193 win 1024
++0.000 < . 1:1(0) ack 17205 win 1024
++0.000 < . 1:1(0) ack 18217 win 1024
+
+// 9th ACK: sample_cnt >= 8 and curr_rtt (35ms) >= delay_min (20ms) + 4ms.
+// HyStart delay detection fires and sets ssthresh = cwnd!
++0.000 < . 1:1(0) ack 19229 win 1024
+   +0 %{ assert tcpi_snd_ssthresh == tcpi_snd_cwnd, (tcpi_snd_ssthresh, tcpi_snd_cwnd) }%
+   +0 %{ assert tcpi_snd_ssthresh < 0x7fffffff, tcpi_snd_ssthresh }%
+
+// ACK remaining 11 segments
++0.000 < . 1:1(0) ack 30361 win 1024
+   +0 %{ assert tcpi_snd_ssthresh < 0x7fffffff, tcpi_snd_ssthresh }%

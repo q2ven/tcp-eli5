@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 5: CUBIC Idle Epoch Shift (CA_EVENT_TX_START)
+//
+// Verify that bpf_cubic5 shifts ca->epoch_start forward on CA_EVENT_TX_START
+// when resuming transmission after an idle period in Congestion Avoidance,
+// preventing elapsed idle time from exploding t on the CUBIC curve.
+
+0.000 `sysctl -q net.ipv4.tcp_congestion_control=bpf_cubic5`
++0 `sysctl -q net.ipv4.tcp_slow_start_after_idle=0`
+
+// 1. Establish connection (RTT = 20ms, peer MSS = 1000)
++0 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0 bind(3, ..., ...) = 0
++0 listen(3, 1) = 0
+
++0 < S 0:0(0) win 32792 <mss 1000,sackOK,nop,nop,nop,wscale 7>
++0 > S. 0:0(0) ack 1 <mss 1460,nop,nop,sackOK,nop,wscale 7>
++0.020 < . 1:1(0) ack 1 win 257
++0 accept(3, ..., ...) = 4
+
+// 2. Slow Start: send 10 segments -> ACK -> cwnd grows from 10 to 20
++0 write(4, ..., 10000) = 10000
++0 > P. 1:10001(10000) ack 1
++0.020 < . 1:1(0) ack 10001 win 257
++0 %{
+assert tcpi_snd_cwnd == 20, tcpi_snd_cwnd
+}%
+
+// 3. Trigger loss at cwnd = 20 -> W_max = 20, ssthresh = (20 * 717) / 1024 = 14
++0 write(4, ..., 20000) = 20000
++0 > P. 10001:30001(20000) ack 1
++0.020 < . 1:1(0) ack 10001 win 257 <sack 11001:12001,nop,nop>
++0 < . 1:1(0) ack 10001 win 257 <sack 11001:13001,nop,nop>
++0 < . 1:1(0) ack 10001 win 257 <sack 11001:14001,nop,nop>
++0 > . 10001:11001(1000) ack 1
+
+// Complete recovery -> tcp_complete_cwr() sets cwnd = ssthresh = 14 and
+// transitions to TCP_CA_Open; cong_avoid runs on this ACK, initializing
+// ca->epoch_start and growing cwnd from 14 to 15 (since bic_target = 15).
++0.020 < . 1:1(0) ack 30001 win 257
++0 %{
+assert tcpi_ca_state == TCP_CA_Open, tcpi_ca_state
+assert tcpi_snd_ssthresh == 14, tcpi_snd_ssthresh
+assert tcpi_snd_cwnd == 15, tcpi_snd_cwnd
+}%
+
+// 4. Send 1 RTT (15 segments) in Congestion Avoidance before going idle.
++0 write(4, ..., 15000) = 15000
++0 > P. 30001:45001(15000) ack 1
++0.020 < . 1:1(0) ack 45001 win 257
++0 %{
+assert tcpi_snd_cwnd == 15, tcpi_snd_cwnd
+}%
+
+// 5. Sit idle for 2.0 seconds with in_flight == 0, then send 1 full cwnd (15 segments).
+// When the first segment is sent, CA_EVENT_TX_START fires:
+// - solution.bpf.c shifts ca->epoch_start by the 2-second idle delta, keeping t small
+//   so bic_target == 15 and tcpi_snd_cwnd stays 15 (<= 15).
+// - starter.bpf.c does NOT shift ca->epoch_start, so t jumps by 2 seconds and
+//   tcpi_snd_cwnd spikes to >= 20, failing the assertion below.
++2.000 write(4, ..., 15000) = 15000
++0 > P. 45001:60001(15000) ack 1
++0.020 < . 1:1(0) ack 60001 win 257
++0 %{
+assert tcpi_snd_cwnd <= 15, tcpi_snd_cwnd
+}%

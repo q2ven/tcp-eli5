@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 1: Verify .cong_control hook and pacing rate calculation from rate_sample
+0.00 `sysctl -q net.ipv4.tcp_congestion_control=bpf_bbr1`
+
+// Server socket setup
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
+// 3-way handshake with initial RTT = 100 ms (so initial pacing rate is ~281 KB/s)
+// MSS = 1012 -> payload MSS = 1000 bytes (with 12-byte TCP timestamps)
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.10 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 200 ecr 100>
++0.00 accept(3, ..., ...) = 4
+
+// Verify initial cwnd=10 and initial pacing rate (~281,738 B/s from 100 ms SYN RTT)
++0.00 %{
+assert tcpi_snd_cwnd == 10, f"expected cwnd 10, got {tcpi_snd_cwnd}"
+assert 200000 < tcpi_pacing_rate < 400000, f"expected initial pacing_rate ~281KB/s, got {tcpi_pacing_rate}"
+}%
+
+// Send 10 segments (10,000 bytes) and ACK after 10 ms (+0.010):
+// Delivery rate = 10 * 1000 B / 0.010 s = 1,000,000 B/s
+// Pacing rate = 1,000,000 * 2885 / 1024 = ~2,817,382 B/s
++0.00 write(4, ..., 10000) = 10000
++0.00 > P. 1:10001(10000) ack 1 <nop,nop,TS val 200 ecr 200>
++0.01 < . 1:1(0) ack 10001 win 257 <nop,nop,TS val 210 ecr 200>
+
++0.00 %{
+assert tcpi_pacing_rate > 500000, f"expected pacing_rate > 500000, got {tcpi_pacing_rate}"
+assert 2000000 < tcpi_pacing_rate < 3500000, f"expected pacing_rate ~2.82MB/s, got {tcpi_pacing_rate}"
+}%

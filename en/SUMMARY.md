@@ -24,3 +24,8 @@
 - [12. CUBIC](12-cubic.md)
 - [13. BBR](13-bbr.md)
 - [14. ECN and DCTCP](14-ecn-dctcp.md)
+
+## BPF CC hands-on labs
+
+- [15. Hands-on lab: Building CUBIC with BPF CC and packetdrill](15-lab-cubic.md)
+- [16. Hands-on lab: Building BBR with BPF CC and packetdrill](16-lab-bbr.md)
