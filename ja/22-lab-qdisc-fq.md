@@ -992,7 +992,7 @@ Linux 4.20 で導入された **EDT モデル** では、ソケットが設定�
 2. **ソケットの `sk_max_pacing_rate` が有効な場合**:
    現在のフローの次回送出時刻 `flow->time_next_packet` と現在時刻 `now` の大きい方を基準とします：
    $$\text{time to send} = \max(\text{flow} \to \text{next packet time}, \text{now})$$
-   そして、このパケットを送るのに必要な時間幅（ $\Delta t$）を足して、次回のパケットのために `time_next_packet` を進めます：
+   そして、このパケットを送るのに必要な時間幅（ $\Delta t$ ）を足して、次回のパケットのために `time_next_packet` を進めます：
    $$\text{flow} \to \text{next packet time} = \text{time to send} + \frac{\text{packet len} \times 10^9}{\text{rate}}$$
 3. **上記以外**: 即座に送出可能（`time_to_send = now`）とします。
 

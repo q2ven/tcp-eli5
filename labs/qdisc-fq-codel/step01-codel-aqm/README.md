@@ -38,8 +38,8 @@ CoDel は、**「`INTERVAL`（観測ウィンドウ）の間、最低滞在時�
 ### 2.3 CoDel の状態マシン
 
 CoDel は以下の 2 つの主要パラメータで動作します：
-- **`TARGET_NS`**: 目標滞在時間（標準 5 ms = $5,000,000\text{ ns}$）。
-- **`INTERVAL_NS`**: 観測ウィンドウ（標準 100 ms、本ラボではテスト時間短縮のため $20\text{ ms} = 20,000,000\text{ ns}$）。
+- **`TARGET_NS`**: 目標滞在時間（標準 5 ms = $5,000,000\text{ ns}$ ）。
+- **`INTERVAL_NS`**: 観測ウィンドウ（標準 100 ms、本ラボではテスト時間短縮のため $20\text{ ms} = 20,000,000\text{ ns}$ ）。
 
 ```mermaid
 flowchart TD

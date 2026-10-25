@@ -16,7 +16,7 @@
 - **出発時刻**: 前のトラックからの間隔を空けているか（pacing）。
 - **門の前の渋滞**: 建物の門の前（qdisc やデバイスのキュー）に自分のトラックが並びすぎていないか（TSQ）。
 
-全部 OK なら、発送係は小包の**コピー**に伝票（TCP ヘッダ）を貼って門（IP 層）に渡します。原本は「再発送用の控え棚」（retransmit queue）に移します。受領印が届くまでは捨てられないからです。
+全部 OK なら、発送係は小包の **コピー** に伝票（TCP ヘッダ）を貼って門（IP 層）に渡します。原本は「再発送用の控え棚」（retransmit queue）に移します。受領印が届くまでは捨てられないからです。
 
 門の前の渋滞で止まったときは、トラックが門を出た時点（送信完了）で「空いたよ」というベル（`tcp_wfree()`）が鳴ります。発送係はそのベルで再び動き出します。
 
@@ -50,7 +50,7 @@ RFC 896（1984 年、John Nagle）は、telnet のような 1 バイトずつの
 
 RFC 9293 は、TCP 実装は Nagle を実装すべき（SHOULD）であり、アプリケーションが接続ごとに無効化できなければならない（MUST）と定めています。Linux では `TCP_NODELAY` で無効化でき、`TCP_CORK` は逆に「フルサイズになるまで常に溜める」というより強い指示になります。
 
-Linux はさらに **Minshall の変形**（Greg Minshall の Internet-Draft "A Proposed Modification to Nagle's Algorithm", 1999）を使います。条件を「未 ACK のデータがある間」から「未 ACK の**小さい**セグメントがある間」に緩めたものです。これで request/response 型の通信で「フルサイズ + 端数」を書いたとき、端数が delayed ACK を待たされる問題が緩和されます。
+Linux はさらに **Minshall の変形**（Greg Minshall の Internet-Draft "A Proposed Modification to Nagle's Algorithm", 1999）を使います。条件を「未 ACK のデータがある間」から「未 ACK の **小さい** セグメントがある間」に緩めたものです。これで request/response 型の通信で「フルサイズ + 端数」を書いたとき、端数が delayed ACK を待たされる問題が緩和されます。
 
 **送信側 SWS 回避（[RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1)）**
 
@@ -71,7 +71,7 @@ RFC 5681 は slow start、congestion avoidance、fast retransmit/fast recovery �
 
 > The minimum of cwnd and rwnd governs data transmission.
 
-つまり送信側は、`SND.UNA + min(cwnd, rwnd)` を超えるシーケンス番号を送ってはいけません。RFC は cwnd をバイトで数えますが、Linux は `tp->snd_cwnd` を**パケット数（セグメント数）**で数えます。比較対象も「ネットワーク内にあると推定されるパケット数」`tcp_packets_in_flight()` です。
+つまり送信側は、`SND.UNA + min(cwnd, rwnd)` を超えるシーケンス番号を送ってはいけません。RFC は cwnd をバイトで数えますが、Linux は `tp->snd_cwnd` を **パケット数（セグメント数）** で数えます。比較対象も「ネットワーク内にあると推定されるパケット数」`tcp_packets_in_flight()` です。
 
 ```
 in_flight = packets_out - (sacked_out + lost_out) + retrans_out
@@ -84,7 +84,7 @@ in_flight = packets_out - (sacked_out + lost_out) + retrans_out
 
 ### RFC 7323: TCP Extensions for High Performance（各セグメントに書く Timestamps option）
 
-RFC 7323 は window scale、timestamps、PAWS をまとめた仕様です（RFC 1323 を obsolete にしました）。送信路で関係するのは、ネゴシエーション済みの接続では**すべてのセグメント**に Timestamps option（kind 8, length 10）を付けることです（[§3.2](https://www.rfc-editor.org/rfc/rfc7323#section-3.2)）。
+RFC 7323 は window scale、timestamps、PAWS をまとめた仕様です（RFC 1323 を obsolete にしました）。送信路で関係するのは、ネゴシエーション済みの接続では **すべてのセグメント** に Timestamps option（kind 8, length 10）を付けることです（[§3.2](https://www.rfc-editor.org/rfc/rfc7323#section-3.2)）。
 
 - `TSval`: 送信者のタイムスタンプクロックの現在値
 - `TSecr`: 相手から最後に受け取った有効な `TSval`（`TS.Recent`）のエコー
@@ -97,14 +97,14 @@ RFC は timestamp clock の刻みを 1 ms から 1 s の範囲と推奨してい
 
 **TCP Small Queues（TSQ）**: bufferbloat への対策です。ホスト内の qdisc やデバイスのリングに 1 フローが大量の skb を積むと、他のフローのパケット（ACK を含む）がその後ろで待たされます。RTT が膨らみ、cwnd の推定も歪みます。TSQ は「qdisc + デバイスに滞留している、このソケットの skb の truesize 合計」（`sk->sk_wmem_alloc`）に上限を設けます。超えたら送信を止め、送信完了の destructor（`tcp_wfree()`）で再開します。目安は「2 パケット、または約 1 ms 分」です。
 
-**Pacing**: cwnd だけで送信を制御すると、ACK が届いた瞬間に cwnd の空き分をまとめて送るバーストになります。pacing は「`sk_pacing_rate` バイト/秒を超えない間隔」で skb を送り出します。Linux は **EDT（Earliest Departure Time）モデル**を使います。TCP が各 skb に「この時刻より前に出すな」という時刻を `skb->tstamp` に書き、`sch_fq`（または EDT 対応 NIC）がそれを守ります。`sch_fq` がいない場合は TCP 自身が hrtimer で間隔を空けます（internal pacing）。
+**Pacing**: cwnd だけで送信を制御すると、ACK が届いた瞬間に cwnd の空き分をまとめて送るバーストになります。pacing は「`sk_pacing_rate` バイト/秒を超えない間隔」で skb を送り出します。Linux は **EDT（Earliest Departure Time）モデル** を使います。TCP が各 skb に「この時刻より前に出すな」という時刻を `skb->tstamp` に書き、`sch_fq`（または EDT 対応 NIC）がそれを守ります。`sch_fq` がいない場合は TCP 自身が hrtimer で間隔を空けます（internal pacing）。
 
 ## 全体の流れ
 
 ```mermaid
 flowchart TD
-    A["tcp_sendmsg() / tcp_push()<br/>(第3章)"] --> P["__tcp_push_pending_frames()"]
-    B["ACK 受信: tcp_data_snd_check()<br/>(第5, 7章)"] --> P
+    A["tcp_sendmsg() / tcp_push()<br/>(第 3 章)"] --> P["__tcp_push_pending_frames()"]
+    B["ACK 受信: tcp_data_snd_check()<br/>(第 5, 7 章)"] --> P
     P --> W["tcp_write_xmit()"]
     T1["TSQ BH work: tcp_tsq_workfn()"] --> H["tcp_tsq_handler() / tcp_release_cb()"]
     T2["pacing hrtimer: tcp_pace_kick()"] --> H
@@ -124,7 +124,7 @@ flowchart TD
 
 ポイントは 2 つあります。
 
-- `tcp_write_xmit()` は**再入口が 4 つある**関数です。ユーザコンテキスト（`sendmsg()`）、softirq の ACK 処理、BH workqueue の TSQ 処理、softirq の pacing hrtimer です。どの入口でも呼び出し側がソケットロックを持っています（softirq 側は `bh_lock_sock()` で、ユーザが所有中なら `tcp_release_cb()` に遅延されます）。
+- `tcp_write_xmit()` は **再入口が 4 つある** 関数です。ユーザコンテキスト（`sendmsg()`）、softirq の ACK 処理、BH workqueue の TSQ 処理、softirq の pacing hrtimer です。どの入口でも呼び出し側がソケットロックを持っています（softirq 側は `bh_lock_sock()` で、ユーザが所有中なら `tcp_release_cb()` に遅延されます）。
 - 送るのは常に **clone** です。原本は retransmit queue（rb-tree）に移り、ACK まで保持されます。clone の destructor が `tcp_wfree()` になっていて、それが TSQ のフィードバック経路になります。
 
 ## コードを追う
@@ -257,7 +257,7 @@ static inline void tcp_mstamp_refresh_inline(struct tcp_sock *tp)
 ```
 
 - AccECN の option beacon: AccECN option を周期的に載せるかどうかは時刻に依存します。option 長が変わると MSS（ペイロード長）が変わるので、`mss_now` を取り直します（第 14 章）。
-- `if (!push_one)`: MTU probe は通常の push でだけ試みます。`tcp_mtu_probe()` の戻り値は 3 値です。`0` は「probe を送りたいが、いまは cwnd/rwnd が足りないので待つ」で、`tcp_write_xmit()` は**何も送らずに** `false` を返します。probe 用の大きなセグメントを作るために、普通の小さいセグメントで cwnd を埋めてしまわないようにしているわけです。`1` は probe を送ったので `sent_pkts = 1`、`-1` は probe と無関係に通常処理を続けます。
+- `if (!push_one)`: MTU probe は通常の push でだけ試みます。`tcp_mtu_probe()` の戻り値は 3 値です。`0` は「probe を送りたいが、いまは cwnd/rwnd が足りないので待つ」で、`tcp_write_xmit()` は **何も送らずに** `false` を返します。probe 用の大きなセグメントを作るために、普通の小さいセグメントで cwnd を埋めてしまわないようにしているわけです。`1` は probe を送ったので `sent_pkts = 1`、`-1` は probe と無関係に通常処理を続けます。
 - `max_segs = tcp_tso_segs(sk, mss_now)`: 1 個の TSO skb に入れてよいセグメント数の上限です。ループの外で 1 回だけ計算します（Step 3）。
 
 `tcp_mtu_probe()` の `0` 返却が安全な理由: `0` を返す 2 つの経路（`after(snd_nxt + size_needed, tcp_wnd_end)` と `in_flight + 2 > cwnd` かつ `in_flight != 0`）は、どちらも in-flight のデータがある状態です。だから ACK が必ず戻ってきて、再び `tcp_write_xmit()` が呼ばれます。in-flight が 0 のときは `-1` を返して停止を避けています（コメント "With none in flight, don't stall"）。
@@ -748,7 +748,7 @@ static void tcp_minshall_update(struct tcp_sock *tp, unsigned int mss_now,
 ```
 
 - `snd_sml` は「最後に送った小さい（MSS 未満の）セグメントの末尾」です。`tcp_minshall_check()` は `snd_una < snd_sml <= snd_nxt`、つまりその小さいセグメントがまだ ACK されていないときに真になります。
-- 元の Nagle は「未 ACK のデータが 1 バイトでもあれば小さいセグメントを送らない」というルールでした。Minshall では「未 ACK の**小さい**セグメントがなければ送ってよい」になります。フルサイズ数個 + 端数の応答は、端数をすぐ送れます。
+- 元の Nagle は「未 ACK のデータが 1 バイトでもあれば小さいセグメントを送らない」というルールでした。Minshall では「未 ACK の **小さい** セグメントがなければ送ってよい」になります。フルサイズ数個 + 端数の応答は、端数をすぐ送れます。
 - `tcp_minshall_update()` は、TSO skb の最後のセグメントが端数かどうかを `skb->len < pcount * mss` で判定します。コメントのとおり `skb->len % mss != 0` と同値ですが、除算を避けています。
 
 **`tso_segs > 1` のとき: `tcp_tso_should_defer()`**
@@ -999,7 +999,7 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
 
 **`tcp_small_queue_check()`: TSQ**
 
-split の**後**で判定するのは、TSQ の判断に使う truesize は実際に送る skb のものだからです（605ad7f184b6）。
+split の **後** で判定するのは、TSQ の判断に使う truesize は実際に送る skb のものだからです（605ad7f184b6）。
 
 ```c
 static bool tcp_rtx_queue_empty_or_single_skb(const struct sock *sk)
@@ -1074,7 +1074,7 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 
 - `sk_wmem_alloc` は qdisc とデバイスに滞留している（まだ TX 完了していない）このソケットの clone の truesize 合計 + 1 です（Step 7 の `__tcp_transmit_skb()` で加算、`tcp_wfree()` で減算）。
 - 上限を超えていても、retransmit queue が空または skb 1 個なら送ります。TX 完了が遅いドライバでは、1 個ずつしか qdisc に入れられないとワイヤに隙間ができます（f921a4a5bffa）。この短絡は 75eefc6c59fd で入りましたが、75c119afe14f（rb-tree 化）で「1 個」の場合が失われ、6 年後に回帰として見つかり直されました。
-- **レースの処理**: `TSQ_THROTTLED` を立てた**後**に、もう一度 `sk_wmem_alloc` を読みます。立てる前に最後の TX 完了が起きていたら、`tcp_wfree()` は THROTTLED を見ずに素通りしています。その後に誰もこのソケットを起こさず、送信が止まります。`smp_mb__after_atomic()` で `set_bit()` と再読み込みの順序を保証し、`tcp_wfree()` 側の「`sk_wmem_alloc` を減らす → flags を読む」と対にしています。典型的な「フラグを立ててから条件を再確認する」パターンです。
+- **レースの処理**: `TSQ_THROTTLED` を立てた **後** に、もう一度 `sk_wmem_alloc` を読みます。立てる前に最後の TX 完了が起きていたら、`tcp_wfree()` は THROTTLED を見ずに素通りしています。その後に誰もこのソケットを起こさず、送信が止まります。`smp_mb__after_atomic()` で `set_bit()` と再読み込みの順序を保証し、`tcp_wfree()` 側の「`sk_wmem_alloc` を減らす → flags を読む」と対にしています。典型的な「フラグを立ててから条件を再確認する」パターンです。
 
 **空 skb のチェック**
 
@@ -1435,7 +1435,7 @@ static void tcp_options_write(struct tcphdr *th, struct tcp_sock *tp,
 	}
 ```
 
-- 冒頭のコメントのとおり、option の**順序**は相互運用性のために固定です（SACK_PERM を先頭に置くと壊れる middlebox があります）。
+- 冒頭のコメントのとおり、option の **順序** は相互運用性のために固定です（SACK_PERM を先頭に置くと壊れる middlebox があります）。
 - ESTABLISHED では `NOP, NOP, TS(8), len(10), TSval, TSecr` の 12 バイトになり、4 バイト境界に揃います。受信側の header prediction（第 5 章）はこのちょうどの並びを 1 回の 32 ビット比較で認識します。
 
 ```c
@@ -1555,7 +1555,7 @@ static void tcp_options_write(struct tcphdr *th, struct tcp_sock *tp,
 - `tcp_options_write()` で option を書きます。
 - **MD5**: ハッシュはセグメント全体にかかります。GSO で分割すると、分割後の各セグメントのハッシュが計算できません。だから `sk_gso_disable()` でこのソケットの GSO/TSO を永久に無効化してから、ハッシュを計算します。TCP-AO も `tcp_ao_transmit_skb()` で MAC を計算します（AO 側も GSO を無効化しています）。
 - BPF の header option（`BPF_SOCK_OPS_WRITE_HDR_OPT_CB`）は最後に書きます。
-- **checksum**: `icsk_af_ops->net_header_len` で IPv6 か IPv4 かを判定し、`tcp_v6_send_check()` / `tcp_v4_send_check()` を呼びます（`likely` は IPv6 側に付いています）。どちらも `__tcp_v{4,6}_send_check()` で `th->check` に**擬似ヘッダの checksum の補数だけ**を入れ、`csum_start`/`csum_offset` を設定します（`CHECKSUM_PARTIAL`）。ペイロード部分の checksum は NIC（または GSO 時のソフトウェア、もしくはオフロード非対応デバイス向けの `skb_checksum_help()`）が計算します。TCP 送信路でペイロードを CPU で読むことはありません（zerocopy や sendfile が成り立つ前提です）。
+- **checksum**: `icsk_af_ops->net_header_len` で IPv6 か IPv4 かを判定し、`tcp_v6_send_check()` / `tcp_v4_send_check()` を呼びます（`likely` は IPv6 側に付いています）。どちらも `__tcp_v{4,6}_send_check()` で `th->check` に **擬似ヘッダの checksum の補数だけ** を入れ、`csum_start`/`csum_offset` を設定します（`CHECKSUM_PARTIAL`）。ペイロード部分の checksum は NIC（または GSO 時のソフトウェア、もしくはオフロード非対応デバイス向けの `skb_checksum_help()`）が計算します。TCP 送信路でペイロードを CPU で読むことはありません（zerocopy や sendfile が成り立つ前提です）。
 - ACK フラグがあれば `tcp_event_ack_sent()` を呼びます。
 
 ```c
@@ -1665,7 +1665,7 @@ static void tcp_event_data_sent(struct tcp_sock *tp,
 
 ### Step 8: IP 層へ — `ip_queue_xmit()` と `inet6_csk_xmit()` / `ip6_xmit()`
 
-ここから先は IP 層なので、要点だけを見ます。どちらの経路も**ソケットにキャッシュされた dst（`sk->sk_dst_cache`）を使い、パケットごとの経路探索をしない**点が共通です。
+ここから先は IP 層なので、要点だけを見ます。どちらの経路も **ソケットにキャッシュされた dst（`sk->sk_dst_cache`）を使い、パケットごとの経路探索をしない** 点が共通です。
 
 **IPv4**: `ip_queue_xmit()`（[net/ipv4/ip_output.c#L545](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/ip_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n545)）は、`inet->tos` を付けて `__ip_queue_xmit()`（[net/ipv4/ip_output.c#L462](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/ip_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n462)）を呼びます。
 
@@ -1866,7 +1866,7 @@ void tcp_wfree(struct sk_buff *skb)
 ```
 
 - コメントのとおり、ここ（destructor）から送信することはできません。qdisc のロックを持ったまま呼ばれている可能性があるからです（qdisc の drop 経路など）。そこから `dev_queue_xmit()` に再入するとデッドロックします。だから「後で送る」ための仕組みが必要になります。
-- `refcount_sub_and_test(skb->truesize - 1, ...)`: truesize から **1 を残して**減算します。この 1 は、ソケットが解放されないように保持する一時的な参照です。最後に `sk_free()`（`sk_wmem_alloc` を 1 減らし、0 になったら `__sk_free()`）で返します。ソケットがキューに入る場合は、`tcp_tsq_workfn()` の `sk_free()` が返します。つまり、TSQ のキューに載っているソケットは `sk_wmem_alloc` 経由で生存が保証されています。`sock_hold()` を使わずに済み、atomic 操作を 1 回減らせます（a9b204d15647）。
+- `refcount_sub_and_test(skb->truesize - 1, ...)`: truesize から **1 を残して** 減算します。この 1 は、ソケットが解放されないように保持する一時的な参照です。最後に `sk_free()`（`sk_wmem_alloc` を 1 減らし、0 になったら `__sk_free()`）で返します。ソケットがキューに入る場合は、`tcp_tsq_workfn()` の `sk_free()` が返します。つまり、TSQ のキューに載っているソケットは `sk_wmem_alloc` 経由で生存が保証されています。`sock_hold()` を使わずに済み、atomic 操作を 1 回減らせます（a9b204d15647）。
 - **ksoftirqd チェック（9b462d02d6dd "strange attractors"）**: TX 完了が ksoftirqd で処理されている、つまり softirq が溢れて負荷が高い状態で、まだ自分のパケットが qdisc/デバイスに残っている場合は、ここでは送信を再開しません。キューが空になるのを待ちます。空になれば Step 7 の `ooo_okay` が立ち、より空いた TX キューに移れるからです。多数のフローが遅い TX キューに「吸い寄せられ」、その TX 完了 CPU が 100% になる現象への対策です。
 
 ```c
@@ -2000,7 +2000,7 @@ static void tcp_tsq_write(struct sock *sk)
 | 項目 | RFC | Linux | 理由 |
 | --- | --- | --- | --- |
 | cwnd の単位 | バイト（RFC 5681） | パケット数（`snd_cwnd`）と `tcp_packets_in_flight()` | TSO/SACK の会計がセグメント単位で自然。バイト単位の判定は rwnd（`tcp_snd_wnd_test()`）でだけ行う |
-| Nagle の条件 | 未 ACK のデータがあれば小さいセグメントを溜める（RFC 896, RFC 9293 §3.7.4） | 未 ACK の**小さい**セグメントがあれば溜める（Minshall の変形） | 「フルサイズ + 端数」の応答で端数が delayed ACK を待つ問題の回避 |
+| Nagle の条件 | 未 ACK のデータがあれば小さいセグメントを溜める（RFC 896, RFC 9293 §3.7.4） | 未 ACK の **小さい** セグメントがあれば溜める（Minshall の変形） | 「フルサイズ + 端数」の応答で端数が delayed ACK を待つ問題の回避 |
 | `TCP_CORK` | RFC にない | in-flight に関係なくフルサイズまで溜める | sendfile + ヘッダのように、アプリが境界を明示したい用途 |
 | 送信側 SWS の override timeout | 0.1-1.0 s のタイマ（RFC 9293 §3.8.6.2.1 規則 4） | なし | ACK、TLP、probe0 タイマ、TSQ/pacing の再開経路で十分。タイマを増やさない |
 | 送信側 SWS の `Fs` | `Fs = 1/2` × 最大送信ウィンドウ | TSO defer で `min(snd_wnd, cwnd*mss) / tcp_tso_win_divisor`（既定 1/3） | 目的は SWS ではなく「TSO の塊を大きくすること」。cwnd も考慮する |
@@ -2170,7 +2170,7 @@ v4-mapped IPv6 ソケット（`::ffff:a.b.c.d`）は `icsk_af_ops` が `ipv6_map
 1 個の TSO skb が cwnd の半分を超えないようにして、少なくとも 2 個の skb（GSO パケット）が in-flight にある状態を作るためです。cwnd 全体が 1 個の巨大な skb だと、qdisc/NIC から見ても受信側から見ても「1 パケット」になります。その ACK が戻るまで何も送れず、ACK clock が粗くなり、受信側の delayed ACK とも相性が悪くなります。cwnd が 1 のときは `halfcwnd = max(1 >> 1, 1U) = 1` なので、1 セグメントは送れます。なお、この戻り値はセグメント数で、後で `max_segs` とも min を取ります。
 </details>
 
-3. `__tcp_transmit_skb()` で、`skb_set_delivery_time()` を clone の**前**に原本に対して呼んでいるのはなぜですか。clone の後に clone にだけ設定すると、何が壊れますか。
+3. `__tcp_transmit_skb()` で、`skb_set_delivery_time()` を clone の **前** に原本に対して呼んでいるのはなぜですか。clone の後に clone にだけ設定すると、何が壊れますか。
 
 <details><summary>答え</summary>
 

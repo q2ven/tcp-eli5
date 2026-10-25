@@ -113,6 +113,11 @@ most detailed.  Connection setup / teardown is intentionally brief.
 
 - `ja/` and `en/` have the same files and the same structure.
 - Japanese: です・ます調.  Keep kernel identifiers, struct fields and
-  RFC terms in English.
+  RFC terms in English.  Always insert a half-width space (` `) between
+  full-width Japanese characters and half-width characters (ASCII
+  letters/digits, inline code `` `...` ``, inline math `$...$`, and
+  outside bold `**...**`), as well as on both sides of inline math
+  (`$...$`) when adjacent to any full-width character (e.g.
+  `（ $...$ ）`).
 - English: plain, friendly, British spelling.
 - Use `-` for bullet lists.

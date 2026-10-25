@@ -39,7 +39,7 @@ RFC 6298 は RTO（Retransmission TimeOut）の計算方法と、再送タイマ
 - **R2**: 再送が R2 に達したらコネクションを閉じる。データセグメントでは少なくとも 100 秒（SHOULD）、SYN では少なくとも 3 分（MUST）。
 - R1/R2 は回数でも時間でもよい。アプリケーションが R2 を設定できなければならない（MUST）。
 
-Linux では R1 = `tcp_retries1`（既定 3）、R2 = `tcp_retries2`（既定 15）、SYN の R2 = `tcp_syn_retries`（既定 6）/ `tcp_synack_retries`（既定 5）です。アプリケーションが設定できる R2 は `TCP_USER_TIMEOUT`（[RFC 5482](https://www.rfc-editor.org/rfc/rfc5482) の User Timeout のローカル側）です。ただし後述のとおり、Linux は「回数」を**時間に変換**して判定します。
+Linux では R1 = `tcp_retries1`（既定 3）、R2 = `tcp_retries2`（既定 15）、SYN の R2 = `tcp_syn_retries`（既定 6）/ `tcp_synack_retries`（既定 5）です。アプリケーションが設定できる R2 は `TCP_USER_TIMEOUT`（[RFC 5482](https://www.rfc-editor.org/rfc/rfc5482) の User Timeout のローカル側）です。ただし後述のとおり、Linux は「回数」を **時間に変換** して判定します。
 
 ### RFC 1122 §4.2.2.17 / RFC 9293 §3.8.6.1: ゼロウィンドウプローブ（persist timer）
 
@@ -95,8 +95,8 @@ flowchart TD
     D -->|"not owned"| DH
     H -->|"RETRANS"| RT["tcp_retransmit_timer() -> tcp_write_timeout()"]
     H -->|"PROBE0"| PT["tcp_probe_timer() -> tcp_send_probe0()"]
-    H -->|"LOSS_PROBE"| TLP["tcp_send_loss_probe() (第8章)"]
-    H -->|"REO_TIMEOUT"| REO["tcp_rack_reo_timeout() (第8章)"]
+    H -->|"LOSS_PROBE"| TLP["tcp_send_loss_probe() (第 8 章)"]
+    H -->|"REO_TIMEOUT"| REO["tcp_rack_reo_timeout() (第 8 章)"]
 ```
 
 すべてのコールバックは softirq（timer wheel は `TIMER_SOFTIRQ`、hrtimer は `*_SOFT` モードなので `HRTIMER_SOFTIRQ`）で動き、`bh_lock_sock()` でソケットの spinlock を取ります。ユーザがソケットを所有中（`sock_owned_by_user()`）なら仕事を `sk->sk_tsq_flags` のビットに積んで `tcp_release_cb()` に委ねる、というのが共通パターンです。keepalive だけは遅延に鈍感なので、50 ms 後に再試行するという昔ながらの方式のままです。
@@ -134,10 +134,10 @@ struct inet_connection_sock {
 	u32			  icsk_user_timeout;
 ```
 
-- `icsk_pending`: 再送タイマーに今どのイベントが載っているか（`ICSK_TIME_*` のいずれか、または 0）。**1 本のタイマーに 1 つのイベント**しか載らないのが重要な不変条件です。
+- `icsk_pending`: 再送タイマーに今どのイベントが載っているか（`ICSK_TIME_*` のいずれか、または 0）。**1 本のタイマーに 1 つのイベント** しか載らないのが重要な不変条件です。
 - `icsk_retransmits`: 現在の RTO 回復での RTO 回数。`tcp_ack()` で `snd_una` が進むと 0 に戻ります。R1/R2 判定の「回数がゼロかどうか」に使われます。
 - `icsk_backoff`: 指数バックオフの指数。RTO とゼロウィンドウプローブで共有されます。有効な RTT サンプルが取れたときだけ 0 に戻ります（`tcp_ack_update_rtt()`、RFC 6298 の Karn のルール）。
-- `icsk_probes_out`: 応答のないプローブの数。ゼロウィンドウプローブと keep-alive で**共有**されます（前者は送信キューが空でないとき、後者は空のときにしか動かないので衝突しません）。任意の ACK を受けると `tcp_ack()` で 0 に戻ります。
+- `icsk_probes_out`: 応答のないプローブの数。ゼロウィンドウプローブと keep-alive で **共有** されます（前者は送信キューが空でないとき、後者は空のときにしか動かないので衝突しません）。任意の ACK を受けると `tcp_ack()` で 0 に戻ります。
 - `icsk_probes_tstamp`: ゼロウィンドウプローブを始めた時刻（`TCP_USER_TIMEOUT` 判定用）。
 - `icsk_user_timeout`: `TCP_USER_TIMEOUT`（ミリ秒）。setsockopt からロックなしで書かれるため、読む側は常に `READ_ONCE()` です。
 
@@ -186,13 +186,13 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 ```
 
 - `when` は相対 jiffies で、`max_when`（TCP では `tcp_rto_max(sk)`）でクランプされます。RFC 6298 (5.5) の上限です。
-- `icsk_pending` を `what` で**上書き**します。例えば TLP を arm すると、それまでの RETRANS イベントは消えます。TLP / RACK のハンドラが最後に `tcp_rearm_rto()` を呼んで RETRANS を載せ直すのはこのためです。
+- `icsk_pending` を `what` で **上書き** します。例えば TLP を arm すると、それまでの RETRANS イベントは消えます。TLP / RACK のハンドラが最後に `tcp_rearm_rto()` を呼んで RETRANS を載せ直すのはこのためです。
 - `smp_store_release()` は、ロックなしで `icsk_pending` を読む `tcp_write_timer()` / `get_tcp4_sock()` の `smp_load_acquire()` と対になります。
 - `sk_reset_timer()`（[net/core/sock.c#L3773](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/core/sock.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3773)）は `mod_timer()` が 0（＝タイマーが pending でなかった）を返したときだけ `sock_hold()` します。つまり「**タイマーが pending である間、ソケットの参照を 1 つ持つ**」という不変条件があり、コールバックは最後に必ず `sock_put()` します。
 
 TCP 側のラッパ `tcp_reset_xmit_timer()`（[include/net/tcp.h#L1667](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1667)）は、`pace_delay` が真なら `tcp_pacing_delay()`（次の送信予定時刻 `tcp_wstamp_ns` までの残り）を足します。pacing で送信が先送りされているのに RTO や probe が早く満了して誤再送するのを防ぐためです。中身は `when += tcp_pacing_delay(sk)` の後に `inet_csk_reset_xmit_timer(sk, what, when, tcp_rto_max(sk))` を呼ぶだけです。
 
-逆に止める `inet_csk_clear_xmit_timer()`（[include/net/inet_connection_sock.h#L205](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/inet_connection_sock.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n205)）は、`INET_CSK_CLEAR_TIMERS` が定義されていないので**タイマー自体は止めず**、`smp_store_release()` で `icsk_pending`（DACK なら `icsk_ack.pending` と `icsk_ack.retry`）を 0 にするだけです（`sk_stop_timer()` は `#ifdef INET_CSK_CLEAR_TIMERS` の中にあります）。
+逆に止める `inet_csk_clear_xmit_timer()`（[include/net/inet_connection_sock.h#L205](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/inet_connection_sock.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n205)）は、`INET_CSK_CLEAR_TIMERS` が定義されていないので **タイマー自体は止めず**、`smp_store_release()` で `icsk_pending`（DACK なら `icsk_ack.pending` と `icsk_ack.retry`）を 0 にするだけです（`sk_stop_timer()` は `#ifdef INET_CSK_CLEAR_TIMERS` の中にあります）。
 
 これは意図的な選択です。アクティブなフローでは ACK のたびに「止める→また arm する」を繰り返しますが、`timer_delete()` は timer base のロックを取り、しかも別 CPU から呼ばれることが多いので false sharing とロック競合を生みます。止めずに放っておけば、次の arm は `mod_timer()` 1 回で済み、満了時刻が同じなら何もしないで済むことすらあります。代償として、タイマーは「空振り」で満了しうるので、コールバック側で `icsk_pending == 0` を安価に検出する必要があります（Step 2）。本当にタイマーを止めるのはソケット破棄時の `inet_csk_clear_xmit_timers()` / `tcp_clear_xmit_timers()` だけです。
 
@@ -272,9 +272,9 @@ void tcp_write_timer_handler(struct sock *sk)
 ```
 
 - CLOSE / LISTEN では何もしません。`tcp_disconnect()` や `listen()` への遷移でタイマーが残っていても無害にするためです。ロックを取った後で `icsk_pending` をもう一度見るのは、Step 2 のロックなしチェックの後に clear された可能性があるからです。
-- `time_after(tcp_timeout_expires(sk), jiffies)`: **満了時刻がまだ未来**なら再 arm して帰ります。これは主に委譲経路のためです。タイマーが満了して `TCP_WRITE_TIMER_DEFERRED` が立った後、ユーザがロックを持っている間に backlog の ACK が処理されて `tcp_rearm_rto()` が新しい満了時刻を設定することがあります。そのまま `tcp_release_cb()` から処理すると早すぎる再送になるので、ここで弾きます。`sk_reset_timer()` はタイマーが既に pending なら参照を増やしません。
+- `time_after(tcp_timeout_expires(sk), jiffies)`: **満了時刻がまだ未来** なら再 arm して帰ります。これは主に委譲経路のためです。タイマーが満了して `TCP_WRITE_TIMER_DEFERRED` が立った後、ユーザがロックを持っている間に backlog の ACK が処理されて `tcp_rearm_rto()` が新しい満了時刻を設定することがあります。そのまま `tcp_release_cb()` から処理すると早すぎる再送になるので、ここで弾きます。`sk_reset_timer()` はタイマーが既に pending なら参照を増やしません。
 - `tcp_mstamp_refresh()`: タイマー経由で送るパケットの TSval や RTT 計測、`skb->skb_mstamp_ns` が古いキャッシュ時刻にならないよう、`tp->tcp_mstamp` を更新します。
-- RETRANS と PROBE0 は**ハンドラを呼ぶ前に** `icsk_pending` を 0 にします。ハンドラが自分で再 arm する（または諦めて終わる）ためです。
+- RETRANS と PROBE0 は **ハンドラを呼ぶ前に** `icsk_pending` を 0 にします。ハンドラが自分で再 arm する（または諦めて終わる）ためです。
 - REO_TIMEOUT と LOSS_PROBE は `icsk_pending` を残したままハンドラを呼びます。これらのハンドラは最後に `tcp_rearm_rto()`（[net/ipv4/tcp_input.c#L3524](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3524)）を呼び、そこで `icsk_pending == ICSK_TIME_REO_TIMEOUT / LOSS_PROBE` を見て「元の RTO から既に経過した分」を差し引いた残り（`tcp_rto_delta_us()`）で RETRANS を載せ直します。pending を先に消すと、この差し引きができず RTO が実質的に延びてしまいます。
 
 ### Step 4: `tcp_retransmit_timer()` — RTO の概略
@@ -334,7 +334,7 @@ void tcp_write_timer_handler(struct sock *sk)
 
 （`...` は `net_dbg_ratelimited()` による IPv4 / IPv6 別のデバッグ出力です。）
 
-ここが RFC 1122 §4.2.2.17 の実装の一部です。送信済みデータがあるのに相手がウィンドウを 0 に**縮めた**場合、再送はゼロウィンドウプローブとして働きます。プローブに相手が応答している限り（`rcv_tstamp` が更新され続ける限り）殺してはいけないので、`tcp_write_timeout()` を通らず、`icsk_retransmits` も増やしません。代わりに `tcp_rtx_probe0_timed_out()`（[net/ipv4/tcp_timer.c#L496](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n496)）で「最後に ACK を受けてから `2 * tcp_rto_max`（または `TCP_USER_TIMEOUT`）を超え、**かつ**再送開始から同じだけ経った」ときだけ諦めます。`rcv_delta` を `jiffies` ではなく `tcp_timeout_expires(sk)`（本来の満了時刻）から測るのは、timer wheel の粒度で満了が遅れた分（HZ=1000 で 512 ms〜4 s の範囲なら最大 63 ms）を誤って経過時間に含めないためで、遅れの間に ACK が来ると `rcv_delta` は負になりうるので符号付きで比較します。
+ここが RFC 1122 §4.2.2.17 の実装の一部です。送信済みデータがあるのに相手がウィンドウを 0 に **縮めた** 場合、再送はゼロウィンドウプローブとして働きます。プローブに相手が応答している限り（`rcv_tstamp` が更新され続ける限り）殺してはいけないので、`tcp_write_timeout()` を通らず、`icsk_retransmits` も増やしません。代わりに `tcp_rtx_probe0_timed_out()`（[net/ipv4/tcp_timer.c#L496](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n496)）で「最後に ACK を受けてから `2 * tcp_rto_max`（または `TCP_USER_TIMEOUT`）を超え、**かつ** 再送開始から同じだけ経った」ときだけ諦めます。`rcv_delta` を `jiffies` ではなく `tcp_timeout_expires(sk)`（本来の満了時刻）から測るのは、timer wheel の粒度で満了が遅れた分（HZ=1000 で 512 ms〜4 s の範囲なら最大 63 ms）を誤って経過時間に含めないためで、遅れの間に ACK が来ると `rcv_delta` は負になりうるので符号付きで比較します。
 
 ```c
 	__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPTIMEOUTS);
@@ -402,7 +402,7 @@ out:;
 
 ### Step 5: `tcp_write_timeout()` と `retransmits_timed_out()` — R1 / R2
 
-`retransmits_timed_out()`（[net/ipv4/tcp_timer.c#L215](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n215)）は「`boundary` 回の再送」を**時間**に換算して、`retrans_stamp`（この回復で最初に再送した時刻）からの経過時間と比べます。
+`retransmits_timed_out()`（[net/ipv4/tcp_timer.c#L215](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n215)）は「`boundary` 回の再送」を **時間** に換算して、`retrans_stamp`（この回復で最初に再送した時刻）からの経過時間と比べます。
 
 ```c
 static bool retransmits_timed_out(struct sock *sk,
@@ -510,7 +510,7 @@ static int tcp_write_timeout(struct sock *sk)
 	}
 ```
 
-- **SYN 系**: 2 回目以降の SYN（SYN-ACK）タイムアウトでは毎回 `__dst_negative_advice()` で経路の見直しを促します。R2 はまず**回数**で判定します（`TCP_SYNCNT` → `tcp_syn_retries`）。`SYN_SENT` では線形タイムアウトの回数ぶん上限を足します。そうしないと、線形区間のぶん総待ち時間が短くなり、RFC の「SYN は 3 分以上」から遠ざかるからです。
+- **SYN 系**: 2 回目以降の SYN（SYN-ACK）タイムアウトでは毎回 `__dst_negative_advice()` で経路の見直しを促します。R2 はまず **回数** で判定します（`TCP_SYNCNT` → `tcp_syn_retries`）。`SYN_SENT` では線形タイムアウトの回数ぶん上限を足します。そうしないと、線形区間のぶん総待ち時間が短くなり、RFC の「SYN は 3 分以上」から遠ざかるからです。
 - **同期状態**: R1 の時間を過ぎたら、`tcp_mtu_probing()`（[net/ipv4/tcp_timer.c#L166](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n166)）で PMTU black hole 検出を有効化（既に有効なら探索下限 MSS を半分に）し、`__dst_negative_advice()` で IPv4/IPv6 の dst に negative advice を渡します。これが RFC 1122 R1 の実装です。
 - R2 は `tcp_retries2` ですが、orphan（`close()` 済み、`SOCK_DEAD`）なら `tcp_orphan_retries()`（[net/ipv4/tcp_timer.c#L150](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n150)）に置き換えます。`tcp_orphan_retries` は既定 0 で、その場合「RTO がまだ上限に達していない（最近まで生きていた）なら 8」、soft error（ICMP）が来ていて生きていなければ 0 になります。
 - orphan はさらに `tcp_out_of_resources()`（[net/ipv4/tcp_timer.c#L107](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n107)）で、orphan 数の上限超過やメモリ逼迫（`tcp_check_oom()`）、netns の終了時に即座に殺されます。これは RFC 違反ですが DoS 対策として明記されています。
@@ -544,7 +544,7 @@ static int tcp_write_timeout(struct sock *sk)
 }
 ```
 
-- 回数で期限切れでなくても、`retry_until` 回分の**時間**（`TCP_USER_TIMEOUT` が設定されていればそれ）を過ぎたら期限切れです。`TCP_USER_TIMEOUT` は R2 を時間で上書きするので、SYN 状態でも同期状態でも効きます。
+- 回数で期限切れでなくても、`retry_until` 回分の **時間**（`TCP_USER_TIMEOUT` が設定されていればそれ）を過ぎたら期限切れです。`TCP_USER_TIMEOUT` は R2 を時間で上書きするので、SYN 状態でも同期状態でも効きます。
 - TFO / MPTCP は、SYN に付けたオプションが中間装置に落とされている（black hole）可能性を検出して、以後のコネクションで機能を無効化します。
 - 期限切れなら `tcp_write_err()`（[net/ipv4/tcp_timer.c#L77](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n77)）が `sk_err_soft`（ICMP で記録されたエラー、例えば `EHOSTUNREACH`）か `ETIMEDOUT` でソケットを閉じ、`TCPAbortOnTimeout` を数えます。
 - まだ続けるなら `__sk_rethink_txhash_reset_dst()` で `sk_txhash` を引き直し（`sysctl net.core.txrehash` / `SO_TXREHASH` に従う）、IPv6 flow label や ECMP の経路選択を変えて、壊れた経路を避ける機会を作ります。キャッシュした dst もリセットされるので、ローカルの ECMP 選択もやり直されます。
@@ -588,7 +588,7 @@ static void tcp_probe_timer(struct sock *sk)
 ```
 
 - 飛んでいるパケットがある（RTO が面倒を見る）か、送るものがないなら、プローブは不要です。カウンタを消して終わります（PROBE0 は既に `tcp_write_timer_handler()` で clear 済みなので、タイマーも再 arm されません）。
-- `icsk_probes_tstamp` はゼロウィンドウ状態に入った最初のプローブ時刻です。`icsk_probes_out` は**任意の ACK**（ウィンドウ 0 のままでも）で 0 に戻るため、「相手は応答しているがウィンドウを開かない」状態の継続時間を測れません。そこで別に開始時刻を持ち、`TCP_USER_TIMEOUT` を超えたら諦めます。`icsk_probes_tstamp` は使えるウィンドウが開いたとき（`tcp_ack_probe()`）に 0 に戻ります。
+- `icsk_probes_tstamp` はゼロウィンドウ状態に入った最初のプローブ時刻です。`icsk_probes_out` は **任意の ACK**（ウィンドウ 0 のままでも）で 0 に戻るため、「相手は応答しているがウィンドウを開かない」状態の継続時間を測れません。そこで別に開始時刻を持ち、`TCP_USER_TIMEOUT` を超えたら諦めます。`icsk_probes_tstamp` は使えるウィンドウが開いたとき（`tcp_ack_probe()`）に 0 に戻ります。
 
 ```c
 	max_probes = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_retries2);
@@ -612,7 +612,7 @@ abort:		tcp_write_err(sk);
 }
 ```
 
-- 上限は `tcp_retries2` 回の**連続して応答のない**プローブです。応答がある限り `icsk_probes_out` は 0 に戻るので、RFC 1122 の「応答し続ける限り閉じない」を満たします。
+- 上限は `tcp_retries2` 回の **連続して応答のない** プローブです。応答がある限り `icsk_probes_out` は 0 に戻るので、RFC 1122 の「応答し続ける限り閉じない」を満たします。
 - orphan では `tcp_orphan_retries()` を使い、バックオフが上限に達していれば打ち切ります。
 - `tcp_send_probe0()`（[net/ipv4/tcp_output.c#L4619](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4619)）は `tcp_write_wakeup()` でプローブを送り、`icsk_probes_out++`、`icsk_backoff++`（`tcp_retries2` まで）して `tcp_probe0_when()`（[include/net/tcp.h#L1690](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1690)）= `tcp_probe0_base() << backoff`（上限 `tcp_rto_max`）後に再 arm します。送信がローカル輻輳で失敗したら 500 ms 後です。`tcp_clamp_probe0_to_user_timeout()`（[net/ipv4/tcp_timer.c#L50](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_timer.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n50)）で user timeout の残りを上限にし、満了済みなら `TCP_TIMEOUT_MIN`（2 jiffies）後にして、すぐ次の `tcp_probe_timer()` で abort させます。
 
@@ -853,7 +853,7 @@ void tcp_release_cb(struct sock *sk)
 ```
 
 - フラグを読み、`TCP_DEFERRED_ALL` のビットが 1 つも無ければ atomic 操作をせずに帰ります。大多数の `release_sock()` はここで終わります。
-- `try_cmpxchg()` ループで延期ビットだけを**一括で取り出して消します**。`TSQ_THROTTLED` / `TSQ_QUEUED` は `tcp_wfree()` が並行して更新するので残します。取り出した後に softirq が新たにビットを立てても、それは次の `release_sock()` で処理されます。
+- `try_cmpxchg()` ループで延期ビットだけを **一括で取り出して消します**。`TSQ_THROTTLED` / `TSQ_QUEUED` は `tcp_wfree()` が並行して更新するので残します。取り出した後に softirq が新たにビットを立てても、それは次の `release_sock()` で処理されます。
 - 各ハンドラは softirq のときと同じ関数ですが、ここでは process context で、spinlock 保持・BH 無効・owner 保持の状態です。どのハンドラも「満了時刻がまだ未来なら再 arm」「pending が消えていれば何もしない」を自分で確認するので、延期中に状態が変わっていても安全です。
 - 各 `__sock_put()` は、ビットを立てたときの `sock_hold()` を返します。呼び出し元が参照を持っているので最後の参照にはならず、`__sock_put()`（解放チェックなし）で足ります。`TCP_ACK_DEFERRED` は process context から `set_bit()` されるだけで参照を取らないので、`__sock_put()` もありません。
 - 順序にも意味があります。TSQ（送信）→ 再送タイマー → delayed ACK の順なので、データ送信で ACK が piggyback されれば、その後の delack ハンドラは `ICSK_ACK_TIMER` が消えているのを見て何もしません。
@@ -1039,7 +1039,7 @@ TFO の子ソケットでは、Step 4 の `tcp_fastopen_synack_timer()`（[net/i
 | --- | --- | --- | --- |
 | RTO 下限 | 1 s（RFC 6298 §2.4、SHOULD） | 200 ms（`TCP_RTO_MIN`、per-socket / route / sysctl で変更可） | 1 s は低 RTT 環境では保守的すぎる。delayed ACK（≤ 200 ms）との兼ね合いで 200 ms |
 | RTO 上限 | 60 s 以上なら可（§2.5） | 120 s（`tcp_rto_max_ms` / `TCP_RTO_MAX_MS` で 1〜120 s） | 歴史的な値。アプリが速く再試行したい場合のため可変に |
-| R1 / R2 | 回数か時間 | 回数を `tcp_model_timeout()` で**時間に換算**して判定 | RTO revert（RFC 6069）やバックオフの変化があっても総時間を予測可能に保つ |
+| R1 / R2 | 回数か時間 | 回数を `tcp_model_timeout()` で **時間に換算** して判定 | RTO revert（RFC 6069）やバックオフの変化があっても総時間を予測可能に保つ |
 | R2 = 100 s 以上 | SHOULD | `tcp_retries2` = 15 → 約 924.6 s | 長時間の経路断に耐えるため保守的な既定値 |
 | R2 をアプリが設定 | MUST | `TCP_USER_TIMEOUT`（ms） | RFC 5482 のローカル側 |
 | R1 時の通知 | アプリに通知すべき（SHOULD） | 通知はしない。negative advice、MTU probing、txhash 再計算、dst リセットのみ | `sk_err_soft` は ICMP 由来のみ |
@@ -1160,7 +1160,7 @@ TLP / RACK のハンドラは最後に `tcp_rearm_rto()` を呼びます。`tcp_
 
 <details><summary>答え</summary>
 
-どちらも `retrans_stamp` から約 924.6 秒です。`retransmits_timed_out()` は実際の RTO ではなく、`tcp_model_timeout(15, TCP_RTO_MIN)` =（2^10 − 1）× 200 ms + 6 × 120 s という**モデル化した時間**と経過時間を比べます。5 ms の RTO なら 15 回よりはるかに多く再送されてから切れ、RTO が大きければ 15 回より少ない再送で切れます（判定は RTO 満了時にしか行われないので、実際には直後の満了時です）。ただし `icsk_retransmits == 0` なら判定されず、`tcp_rto_max_ms` を下げればモデル化した時間も短くなります。
+どちらも `retrans_stamp` から約 924.6 秒です。`retransmits_timed_out()` は実際の RTO ではなく、`tcp_model_timeout(15, TCP_RTO_MIN)` =（2^10 − 1）× 200 ms + 6 × 120 s という **モデル化した時間** と経過時間を比べます。5 ms の RTO なら 15 回よりはるかに多く再送されてから切れ、RTO が大きければ 15 回より少ない再送で切れます（判定は RTO 満了時にしか行われないので、実際には直後の満了時です）。ただし `icsk_retransmits == 0` なら判定されず、`tcp_rto_max_ms` を下げればモデル化した時間も短くなります。
 
 </details>
 
@@ -1193,7 +1193,7 @@ SACK 圧縮は delack タイマーを arm しないので、`ICSK_ACK_TIMER` は
 - TCP ソケットには、再送タイマー（RETRANS / PROBE0 / LOSS_PROBE / REO_TIMEOUT を `icsk_pending` で多重化）、delayed ACK、keepalive（orphan FIN_WAIT2 と兼用）、pacing の hrtimer、SACK 圧縮の hrtimer があり、passive open では request_sock ごとの SYN-ACK タイマーがあります。
 - どのコールバックも softirq で `bh_lock_sock()` を取り、ユーザ所有中なら `sk_tsq_flags` の `TCP_*_DEFERRED` に積んで `tcp_release_cb()` で処理します（keepalive だけは 50 ms 後の再試行）。
 - タイマーは clear しても止めません。空振りの満了は `smp_load_acquire()` の fast path で弾き、ハンドラは「満了時刻がまだ未来なら再 arm」を自分で確認します。
-- R1（`tcp_retries1`）/ R2（`tcp_retries2`）は `tcp_model_timeout()` で**時間に換算**され、`retrans_stamp` からの経過時間で判定されます。既定では R1 ≈ 3 s、R2 ≈ 924.6 s です。`TCP_USER_TIMEOUT` はこの時間を上書きし、RTO / probe0 の再 arm 間隔もその残り時間でクランプされます。
+- R1（`tcp_retries1`）/ R2（`tcp_retries2`）は `tcp_model_timeout()` で **時間に換算** され、`retrans_stamp` からの経過時間で判定されます。既定では R1 ≈ 3 s、R2 ≈ 924.6 s です。`TCP_USER_TIMEOUT` はこの時間を上書きし、RTO / probe0 の再 arm 間隔もその残り時間でクランプされます。
 - ゼロウィンドウでは、相手が応答する限り（`icsk_probes_out` が ACK で戻る限り）永久に待ちます。打ち切るのは `TCP_USER_TIMEOUT`（`icsk_probes_tstamp`）と orphan の場合だけです。
 - delayed ACK のタイマーが鳴ったら「piggyback に失敗した」ということなので、bulk なら `ato` を倍に、pingpong ならモードを抜けます。
 

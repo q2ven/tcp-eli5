@@ -10,9 +10,9 @@
 
 ### なぜ `BBR_PROBE_BW` だけでは真の最小 RTT（RTprop）を見失うのか？
 
-BBR はネットワーク経路の帯域遅延積（ $\text{BDP} = \text{BtlBw} \times \text{RTprop}$）を推定するために、直近の最大配送レート `max_bw`（ $\approx \text{BtlBw}$）と直近の最小 RTT `min_rtt_us`（ $\approx \text{RTprop}$）という 2 つの独立した推定量を維持しています。しかし、物理的な往復伝播遅延（ $\text{RTprop}$）は「ボトルネックのバッファが完全に空（キュー遅延 $= 0$）の瞬間」にしか観測できません。
+BBR はネットワーク経路の帯域遅延積（ $\text{BDP} = \text{BtlBw} \times \text{RTprop}$ ）を推定するために、直近の最大配送レート `max_bw`（ $\approx \text{BtlBw}$ ）と直近の最小 RTT `min_rtt_us`（ $\approx \text{RTprop}$ ）という 2 つの独立した推定量を維持しています。しかし、物理的な往復伝播遅延（ $\text{RTprop}$ ）は「ボトルネックのバッファが完全に空（キュー遅延 $= 0$ ）の瞬間」にしか観測できません。
 
-定常状態の `BBR_PROBE_BW` では、8 フェーズのゲインサイクル（`[1.25, 0.75, 1, 1, 1, 1, 1, 1]`）を回します。フェーズ 0（ゲイン `1.25`）で自ら余分に積み上げたキュー（ $0.25 \times \text{BDP}$）はフェーズ 1（ゲイン `0.75`）で排出されますが、その後の 6 フェーズは常にインフライト数を $1.0 \times \text{BDP}$ に保ち続けます。このため、以下の 2 つの問題が発生します。
+定常状態の `BBR_PROBE_BW` では、8 フェーズのゲインサイクル（`[1.25, 0.75, 1, 1, 1, 1, 1, 1]`）を回します。フェーズ 0（ゲイン `1.25`）で自ら余分に積み上げたキュー（ $0.25 \times \text{BDP}$ ）はフェーズ 1（ゲイン `0.75`）で排出されますが、その後の 6 フェーズは常にインフライト数を $1.0 \times \text{BDP}$ に保ち続けます。このため、以下の 2 つの問題が発生します。
 
 1. **複数フロー競合による常時滞留キュー（Standing Queue）**:
    ボトルネックにすでにキューが存在している状態で別フローが合流すると、各フローが $1.0 \times \text{BDP}$ を維持し続ける限り、ボトルネックのキューは一度も 0 パケットになりません。結果として、観測されるすべての RTT サンプルが `真の RTprop + 常時滞留キュー遅延` となり、`min_rtt_us` が過大評価されたまま固定化してしまいます。
@@ -24,7 +24,7 @@ BBR はネットワーク経路の帯域遅延積（ $\text{BDP} = \text{BtlBw} 
 この問題を解決するため、BBR は最小 RTT フィルタに **有効期限ウィンドウ `BBR_MIN_RTT_WIN_US`**（Linux カーネル `net/ipv4/tcp_bbr.c` では 10 秒、本ラボでは `packetdrill` の実行時間を短縮するため **2 秒**）を設けます。
 
 - **ウィンドウ期間内の更新条件（厳密な不等号 `<`）**:
-  新しい ACK から得られた RTT サンプル `rs->rtt_us` が現在の `ca->min_rtt_us` より**厳密に小さい**（`rs->rtt_us < ca->min_rtt_us`）場合、`ca->min_rtt_us = rs->rtt_us` に更新し、更新時刻 `ca->min_rtt_stamp = tp->tcp_mstamp` を記録します。ここで `<=` ではなく厳密な `<` を使う理由は、同じ RTT 値が連続したときにタイムスタンプが延々と更新され、フィルタが永久に失効しなくなるのを防ぐためです。
+  新しい ACK から得られた RTT サンプル `rs->rtt_us` が現在の `ca->min_rtt_us` より **厳密に小さい**（`rs->rtt_us < ca->min_rtt_us`）場合、`ca->min_rtt_us = rs->rtt_us` に更新し、更新時刻 `ca->min_rtt_stamp = tp->tcp_mstamp` を記録します。ここで `<=` ではなく厳密な `<` を使う理由は、同じ RTT 値が連続したときにタイムスタンプが延々と更新され、フィルタが永久に失効しなくなるのを防ぐためです。
 - **ウィンドウ失効（`filter_expired`）の判定**:
   最後に `ca->min_rtt_us` を更新してから `BBR_MIN_RTT_WIN_US` を超えて時間が経過した場合、フィルタが失効したと判定します。
   $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
@@ -32,18 +32,18 @@ BBR はネットワーク経路の帯域遅延積（ $\text{BDP} = \text{BtlBw} 
 
 ### なぜ `cwnd = 4` に絞り、「200 ms かつ 1 ラウンド」待つのか？
 
-`BBR_PROBE_RTT` に入ると、BBR は現在の輻輳ウィンドウを `ca->prior_cwnd` に退避した上で、`pacing_gain = 1.0`（`BBR_UNIT`）、`cwnd_gain = 1.0`（`BBR_UNIT`）に設定し、輻輳ウィンドウ `tp->snd_cwnd` を最小パイプサイズ **`BBR_MIN_PIPE_CWND = 4` パケット**に強制クランプします。
+`BBR_PROBE_RTT` に入ると、BBR は現在の輻輳ウィンドウを `ca->prior_cwnd` に退避した上で、`pacing_gain = 1.0`（`BBR_UNIT`）、`cwnd_gain = 1.0`（`BBR_UNIT`）に設定し、輻輳ウィンドウ `tp->snd_cwnd` を最小パイプサイズ **`BBR_MIN_PIPE_CWND = 4` パケット** に強制クランプします。
 
 - **なぜ 1 パケットではなく 4 パケットなのか？**:
   標準的な TCP 受信側は遅延 ACK（Delayed ACK：2 パケットごとに 1 回 ACK を返す仕組み）を使用します。もし `snd_cwnd` を 1〜2 パケットまで絞ってしまうと、受信側で最大 40〜200 ms の Delayed ACK タイマー待ちが発生して ACK クロックが止まってしまいます。`BBR_MIN_PIPE_CWND = 4` パケットを確保すれば、少なくとも 2 回の即時 ACK トリガーが発生し、パイプを失速させずにキューを排出できます。
 - **なぜ `tp->app_limited` をセットするのか？**:
   `snd_cwnd = 4` に絞っている間は、ネットワークの帯域上限ではなくウィンドウ制限によって送信レートが極端に低くなります。この期間の低い配送レートサンプルで最大帯域 `ca->max_bw` が汚染されないよう、ソケットをアプリケーション制限状態（`tp->app_limited = (tp->delivered + tcp_packets_in_flight(tp)) ? : 1`）としてマークします（`0` は「制限なし」を意味するため、万一和が `0` になる場合は `1` にフォールバックします）。
 - **滞在期間の開始条件と 2 つの完了条件**:
-  `tp->snd_cwnd = 4` に設定した直後は、それ以前に送信した数十〜数百個のパケットがまだネットワーク内を飛行中です（`tcp_packets_in_flight(tp) > 4`）。それらが受信側に届いてパイプから抜け、**実際にインフライト数が 4 パケット以下（`tcp_packets_in_flight(tp) <= BBR_MIN_PIPE_CWND`）に減少した瞬間**に初めて、200 ms の滞在タイマーとパケット往復ラウンドの計測を開始します。
+  `tp->snd_cwnd = 4` に設定した直後は、それ以前に送信した数十〜数百個のパケットがまだネットワーク内を飛行中です（`tcp_packets_in_flight(tp) > 4`）。それらが受信側に届いてパイプから抜け、**実際にインフライト数が 4 パケット以下（`tcp_packets_in_flight(tp) <= BBR_MIN_PIPE_CWND`）に減少した瞬間** に初めて、200 ms の滞在タイマーとパケット往復ラウンドの計測を開始します。
   - **条件 A（時間条件：200 ms 経過）**: `ca->probe_rtt_done_stamp = tp->tcp_mstamp + BBR_PROBE_RTT_MODE_US`（`200 ms`）を設定し、`tp->tcp_mstamp > ca->probe_rtt_done_stamp` となるまで待ちます。複数の競合フローが少しずつ異なるタイミングで `BBR_PROBE_RTT` に入っても、200 ms 維持することで互いの排出期間が重なりやすくなります。なお、カーネル標準の 10 秒周期で 200 ms 滞在する場合、帯域利用のオーバーヘッドは $\frac{200\text{ ms}}{10\text{ s}} = 2\%$ に抑えられます。
   - **条件 B（ラウンド条件：1 ラウンド完了）**: インフライトが 4 以下になった時点の `tp->delivered` を `ca->next_rtt_delivered` に記録し、`ca->probe_rtt_round_done = 0` とします。その後、1 往復分のパケットが配送されて `ca->round_start` が立った時点で `ca->probe_rtt_round_done = 1` とします。これは RTT が 200 ms を超える長遅延経路（衛星回線など）において、「キューが空になった状態で送ったパケットの ACK」が確実に返ってくるまで待つためです。
 - **モード脱出と `prior_cwnd` の復元**:
-  条件 A と条件 B の**両方**が満たされると（`bbr_check_probe_rtt_done()`）、`ca->min_rtt_stamp = tp->tcp_mstamp` に更新して直後の再突入を防ぎ、`tp->snd_cwnd = max(tp->snd_cwnd, ca->prior_cwnd)` で突入前のウィンドウサイズを一気に復元した上で、`bbr_reset_mode()` により元のモード（`full_bw_reached` が真なら `BBR_PROBE_BW`、偽なら `BBR_STARTUP`）へ復帰します。
+  条件 A と条件 B の **両方** が満たされると（`bbr_check_probe_rtt_done()`）、`ca->min_rtt_stamp = tp->tcp_mstamp` に更新して直後の再突入を防ぎ、`tp->snd_cwnd = max(tp->snd_cwnd, ca->prior_cwnd)` で突入前のウィンドウサイズを一気に復元した上で、`bbr_reset_mode()` により元のモード（`full_bw_reached` が真なら `BBR_PROBE_BW`、偽なら `BBR_STARTUP`）へ復帰します。
 
 ```
 [BBR_STARTUP / BBR_PROBE_BW] (cwnd = 20, min_rtt_us = 10 ms)

@@ -15,7 +15,7 @@
 - しばらく発送を休んでいたら、道路の様子はもう分からないので、台数を初期値近くまで戻してからやり直します（restart after idle）。
 - 荷物が少なくて、決められた台数を使い切っていないのに台数だけを増やすのは危険なので、「本当に台数いっぱい使っていたときだけ増やす」というルールもあります（cwnd validation）。
 
-この「何台出すか」を決める**配車係**は交換可能です。Reno 係、CUBIC 係、BBR 係……と入れ替えられ、本部（TCP コア）は「受領印が届いた」「休み明けで最初の発送をした」「事故が起きた」といった**出来事を配車係に知らせる窓口**だけを持っています。この窓口の一覧が `struct tcp_congestion_ops` です。
+この「何台出すか」を決める **配車係** は交換可能です。Reno 係、CUBIC 係、BBR 係……と入れ替えられ、本部（TCP コア）は「受領印が届いた」「休み明けで最初の発送をした」「事故が起きた」といった **出来事を配車係に知らせる窓口** だけを持っています。この窓口の一覧が `struct tcp_congestion_ops` です。
 
 ---
 
@@ -93,7 +93,7 @@ Linux の fast recovery は inflation/deflation ではなく **PRR (RFC 6937)** 
 - [RFC 3465 §2.2](https://www.rfc-editor.org/rfc/rfc3465#section-2.2): slow start では ACK ごとに「新たに ACK されたバイト数」だけ増やすが、上限 `L` を設ける。
 - [RFC 3465 §2.3](https://www.rfc-editor.org/rfc/rfc3465#section-2.3): `L = 2*SMSS` を MAY、`L > 2*SMSS` は MUST NOT。delayed ACK（2 セグメントに 1 ACK）を相殺しつつ、stretch ACK による大きなバーストを防ぐためです。
 
-Linux の `tcp_cong_avoid_ai()` の `snd_cwnd_cnt` は §2.1 の `bytes_acked` を**パケット単位**にしたものとそっくりです。一方 slow start では `L` 相当の上限を持たず、stretch ACK に対しても ACK されたパケット数だけ増やします（後述）。
+Linux の `tcp_cong_avoid_ai()` の `snd_cwnd_cnt` は §2.1 の `bytes_acked` を **パケット単位** にしたものとそっくりです。一方 slow start では `L` 相当の上限を持たず、stretch ACK に対しても ACK されたパケット数だけ増やします（後述）。
 
 ### アイドル後の再始動と CWV（RFC 5681 §4.1, RFC 2861, RFC 7661）
 
@@ -153,10 +153,10 @@ flowchart TD
 | フック | 必須? | 主な呼び出し元 | タイミング |
 | --- | --- | --- | --- |
 | `cong_avoid` | `cong_control` とどちらか | `tcp_cong_avoid()` ← `tcp_cong_control()` | ACK 処理の最後、Open/Disorder/Loss 状態で data が ACK されたとき |
-| `cong_control` | `cong_avoid` とどちらか | `tcp_cong_control()` | ACK 処理の最後、**全状態**で毎回 |
+| `cong_control` | `cong_avoid` とどちらか | `tcp_cong_control()` | ACK 処理の最後、**全状態** で毎回 |
 | `ssthresh` | 必須 | `tcp_init_cwnd_reduction()`, `tcp_enter_loss()` | fast recovery / CWR 開始時、RTO 時 |
 | `undo_cwnd` | 必須 | `tcp_undo_cwnd_reduction()` | ロス回復が spurious と判明したとき |
-| `set_state` | 任意 | `tcp_set_ca_state()` | `icsk_ca_state` を書き換える**直前** |
+| `set_state` | 任意 | `tcp_set_ca_state()` | `icsk_ca_state` を書き換える **直前** |
 | `cwnd_event` | 任意 | `tcp_ca_event()` | `CA_EVENT_*`（TX_START 以外） |
 | `cwnd_event_tx_start` | 任意 | `tcp_ca_event()` ← `tcp_event_data_sent()` | 飛行中 0 の状態から最初にデータを送るとき |
 | `in_ack_event` | 任意 | `tcp_in_ack_event()` ← `tcp_ack()` | ACK ごと（`tcp_fastretrans_alert()` より前） |
@@ -217,10 +217,10 @@ struct tcp_congestion_ops {
 ```
 
 - 先頭コメント「fast path fields are put first to fill one cache line」が構造体全体の設計方針です。ACK ごと・送信ごとに引かれる関数ポインタを先頭 64 バイトに詰め、`name` や `list` のような制御パス用のフィールドは後ろへ追いやっています。構造体は `____cacheline_aligned_in_smp` なので、先頭が必ずキャッシュラインの頭に来ます。
-- `cong_avoid(sk, ack, acked)`: 「古典的」CC の本体です。`ack` は今回の累積 ACK 番号、`acked` は**今回新たに配送されたパケット数**（`tcp_newly_delivered()` が返す `tp->delivered` の差分で、累積 ACK 分と SACK 分の合計）です。名前は "congestion avoidance" ですが、slow start もここで処理します。呼ばれるのは「cwnd を増やしてよい」とコアが判断したときだけです（Step 5）。
-- `cong_control(sk, ack, flag, rs)`: 「全権委任」型です。これを持つ CC は、ロス回復中の PRR、アイドル後の再始動、application-limited 減衰、既定の pacing rate 計算をすべて**スキップされ**、自分で cwnd と `sk_pacing_rate` を決めます。`rs` は `tcp_rate_gen()` が作った配送レートのサンプルです。BBR がこちらを使います（第 13 章）。`ack` と `flag` は 2024 年に追加された引数です（後述の歴史を参照）。
+- `cong_avoid(sk, ack, acked)`: 「古典的」CC の本体です。`ack` は今回の累積 ACK 番号、`acked` は **今回新たに配送されたパケット数**（`tcp_newly_delivered()` が返す `tp->delivered` の差分で、累積 ACK 分と SACK 分の合計）です。名前は "congestion avoidance" ですが、slow start もここで処理します。呼ばれるのは「cwnd を増やしてよい」とコアが判断したときだけです（Step 5）。
+- `cong_control(sk, ack, flag, rs)`: 「全権委任」型です。これを持つ CC は、ロス回復中の PRR、アイドル後の再始動、application-limited 減衰、既定の pacing rate 計算をすべて **スキップされ**、自分で cwnd と `sk_pacing_rate` を決めます。`rs` は `tcp_rate_gen()` が作った配送レートのサンプルです。BBR がこちらを使います（第 13 章）。`ack` と `flag` は 2024 年に追加された引数です（後述の歴史を参照）。
 - `ssthresh(sk)`: 必須です。ロスや ECE で「減らす」ときに新しい ssthresh を返します。cwnd 自体は書き換えません（書き換えるのはコア）。
-- `set_state(sk, new_state)`: `icsk_ca_state` が書き換わる**直前**に呼ばれます。旧状態は `inet_csk(sk)->icsk_ca_state` でまだ読めます。
+- `set_state(sk, new_state)`: `icsk_ca_state` が書き換わる **直前** に呼ばれます。旧状態は `inet_csk(sk)->icsk_ca_state` でまだ読めます。
 - `cwnd_event(sk, ev)` と `cwnd_event_tx_start(sk)`: 後者は 2026 年に分離された専用フックです。前者を毎回 `switch (ev)` で振り分けると分岐予測に悪いため、最も頻繁な `CA_EVENT_TX_START` だけを別ポインタにしました（Step 10）。
 - `in_ack_event(sk, flags)`: ACK ごとに呼ばれ、`CA_ACK_SLOWPATH` / `CA_ACK_WIN_UPDATE` / `CA_ACK_ECE` を渡します。DCTCP や Westwood が使います。
 - `pkts_acked(sk, sample)`: `struct ack_sample { pkts_acked, rtt_us, in_flight }` を受け取ります。CUBIC の HyStart や Vegas 系の遅延ベース CC が RTT サンプルを得る場所です。
@@ -343,7 +343,7 @@ CC は `tcp_cong_list` という RCU リストに登録されます。`tcp_ca_fi
 ```
 
 - `request_module()` は眠るので、いったん RCU を抜けています。呼び出し元は「RCU の中で呼んだのに戻ったときにはいったん抜けている」ことを前提にしなければならず、RCU 区間をまたいでポインタを保持していないことが重要です（呼び出し元はすべて戻り値の `ca` だけを使います）。
-- `capable(CAP_NET_ADMIN)` は**初期 user namespace での** capability です。非特権コンテナからモジュールを勝手にロードさせないための制限です。後で見る `tcp_set_congestion_control()` の `cap_net_admin` 引数（netns の user_ns に対する `ns_capable`）とは別物である点に注意してください。
+- `capable(CAP_NET_ADMIN)` は **初期 user namespace での** capability です。非特権コンテナからモジュールを勝手にロードさせないための制限です。後で見る `tcp_set_congestion_control()` の `cap_net_admin` 引数（netns の user_ns に対する `ns_capable`）とは別物である点に注意してください。
 
 `tcp_validate_congestion_control()`（[net/ipv4/tcp_cong.c#L78](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n78)）と `tcp_register_congestion_control()`（[net/ipv4/tcp_cong.c#L93](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n93)）:
 
@@ -389,7 +389,7 @@ int tcp_register_congestion_control(struct tcp_congestion_ops *ca)
 ```
 
 - 必須フックは `ssthresh`、`undo_cwnd`、そして `cong_avoid` か `cong_control` のどちらかです。コアはこの 3 つを NULL チェックなしで呼びます（`tcp_cong_avoid()` は `cong_avoid` を無条件に呼びますが、`cong_control` があるとそもそも到達しないので、`cong_control` だけの CC は `cong_avoid` が NULL でも安全です）。
-- `key` は `jhash(name, sizeof(name), strlen(name))`。`sizeof(ca->name)` は 16 なので、**NUL の後ろのゴミも含めてハッシュされる**点に注意してください。CC の `name` は静的初期化されているので残りは 0 で埋まり、問題になりません。
+- `key` は `jhash(name, sizeof(name), strlen(name))`。`sizeof(ca->name)` は 16 なので、**NUL の後ろのゴミも含めてハッシュされる** 点に注意してください。CC の `name` は静的初期化されているので残りは 0 で埋まり、問題になりません。
 - キーの衝突（または 0 = `TCP_CA_UNSPEC`）は `-EEXIST` で拒否されます。キーは route メトリックに保存されるので、2 つの CC が同じキーを持つと route から一意に引けなくなるからです。
 - 名前の重複チェックが `tcp_ca_find_key()` だけで済んでいるのは、同名なら同じキーになるからです。
 
@@ -445,7 +445,7 @@ void tcp_assign_congestion_control(struct sock *sk)
 }
 ```
 
-- 既定 CC は **netns ごと**の `net->ipv4.tcp_congestion_control` です。`sysctl net.ipv4.tcp_congestion_control` で変わります。
+- 既定 CC は **netns ごと** の `net->ipv4.tcp_congestion_control` です。`sysctl net.ipv4.tcp_congestion_control` で変わります。
 - `bpf_try_module_get()` が失敗するのは、既定 CC のモジュールが今まさにアンロード中（"going" 状態）か、BPF CC の map が解放中のときです。そのときは組み込みで絶対に消えない `tcp_reno` にフォールバックします。**Reno が「フォールバック」と呼ばれるのはこのためです。** `tcp_reno` は `tcp_init()` で `BUG_ON(tcp_register_congestion_control(&tcp_reno) != 0)` として必ず登録されています。
 - `icsk_ca_priv` のゼロクリアは、`init()` がまだ呼ばれていなくても私有領域が既知の状態であることを保証します。`init()` は ESTABLISHED まで呼ばれないので、その前に呼ばれうるフック（たとえば `get_info()`）が未初期化メモリを読まないためです。
 - `TCP_CONG_NEEDS_ECN` な CC（DCTCP）なら SYN の段階から ECT を付ける準備をします。
@@ -490,7 +490,7 @@ int tcp_set_default_congestion_control(struct net *net, const char *name)
 - 細かい点ですが、コードを読む限り `-EPERM` の分岐では直前の `bpf_try_module_get()` で取った参照が解放されません。モジュール製の CC を非 init netns の既定値にしようとして拒否されると、そのモジュールの参照が 1 つ残ります。読むときに気にしておく価値のある非対称です。
 - 新しい netns の既定値は `tcp_sk_init()`（[net/ipv4/tcp_ipv4.c#L3440](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_ipv4.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3440)）で init_net の既定値を継承し、参照が取れなければ Reno になります。
 
-`tcp_set_allowed_congestion_control()`（[net/ipv4/tcp_cong.c#L369](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n369)）は `tcp_allowed_congestion_control` sysctl の書き込みで、「全部検査 → 全部クリア → 指定分を立てる」の 3 パスで `TCP_CONG_NON_RESTRICTED` を付け直します。このフラグは **ops 構造体そのもの**に付くので、netns をまたいだグローバルな設定です（sysctl 自体も init_net にしか見えません）。
+`tcp_set_allowed_congestion_control()`（[net/ipv4/tcp_cong.c#L369](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n369)）は `tcp_allowed_congestion_control` sysctl の書き込みで、「全部検査 → 全部クリア → 指定分を立てる」の 3 パスで `TCP_CONG_NON_RESTRICTED` を付け直します。このフラグは **ops 構造体そのもの** に付くので、netns をまたいだグローバルな設定です（sysctl 自体も init_net にしか見えません）。
 
 #### setsockopt: `tcp_set_congestion_control()`
 
@@ -580,11 +580,11 @@ static void tcp_reinit_congestion_control(struct sock *sk,
 
 - 旧 CC の `release()` → ポインタ差し替え → 私有領域クリア、の順です。`WRITE_ONCE()` はロックなしの読み手（`do_tcp_getsockopt()` や inet_diag）向けです。
 - **途中切り替え**（ESTABLISHED などで呼ばれた場合）だけ、その場で `tcp_init_congestion_control()` を呼びます。CLOSE / LISTEN ではまだ接続がないので、ESTABLISHED 時の `tcp_init_transfer()` に任せます。
-- 注意: 切り替えでは `snd_cwnd` も `snd_ssthresh` も**そのまま引き継がれます**。新しい CC は前の CC が残した cwnd から始めます。`tcp_init_congestion_control()` が `prior_ssthresh = 0` にするのは、前の CC が保存した ssthresh へ undo で戻ってしまうのを防ぐためです（Step 4）。
+- 注意: 切り替えでは `snd_cwnd` も `snd_ssthresh` も **そのまま引き継がれます**。新しい CC は前の CC が残した cwnd から始めます。`tcp_init_congestion_control()` が `prior_ssthresh = 0` にするのは、前の CC が保存した ssthresh へ undo で戻ってしまうのを防ぐためです（Step 4）。
 
 #### route ごとの CC: `tcp_ca_dst_init()` と `tcp_ca_openreq_child()`
 
-`ip route add ... congctl [lock] dctcp` で指定した CC は `RTAX_CC_ALGO` メトリックに**キー**として保存されます。能動オープン側は `tcp_connect_init()` から呼ばれる `tcp_ca_dst_init()`（[net/ipv4/tcp_output.c#L4092](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4092)）で反映します。
+`ip route add ... congctl [lock] dctcp` で指定した CC は `RTAX_CC_ALGO` メトリックに **キー** として保存されます。能動オープン側は `tcp_connect_init()` から呼ばれる `tcp_ca_dst_init()`（[net/ipv4/tcp_output.c#L4092](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4092)）で反映します。
 
 ```c
 static void tcp_ca_dst_init(struct sock *sk, const struct dst_entry *dst)
@@ -607,7 +607,7 @@ static void tcp_ca_dst_init(struct sock *sk, const struct dst_entry *dst)
 }
 ```
 
-- route の指定は **setsockopt より強い**ことに注意してください。connect() の前に `TCP_CONGESTION` で選んでいても、route に `congctl` があれば上書きされます。`release()` を呼ばずに参照だけ付け替えているのは、この時点ではまだ `init()` が呼ばれていない（SYN 送信前）からです。
+- route の指定は **setsockopt より強い** ことに注意してください。connect() の前に `TCP_CONGESTION` で選んでいても、route に `congctl` があれば上書きされます。`release()` を呼ばずに参照だけ付け替えているのは、この時点ではまだ `init()` が呼ばれていない（SYN 送信前）からです。
 - 受動オープン側は `tcp_v4_syn_recv_sock()` / `tcp_v6_syn_recv_sock()` から `tcp_ca_openreq_child()`（[net/ipv4/tcp_minisocks.c#L497](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_minisocks.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n497)）を呼びます。
 
 ```c
@@ -641,7 +641,7 @@ void tcp_ca_openreq_child(struct sock *sk, const struct dst_entry *dst)
 ```
 
 - 子ソケットは親リスナーを `sk_clone_lock()` でコピーしたものなので、`icsk_ca_ops` は親のポインタが入っていますが、**参照はまだ取っていません**。ここで改めて参照を取ります。
-- 優先順位は route の `congctl` > リスナーで明示的に選んだ CC (`icsk_ca_setsockopt`) > **子の生成時点**のシステム既定値です。リスナー作成後に sysctl で既定値を変えれば、明示的に選んでいないリスナーの子には新しい既定値が適用されます。
+- 優先順位は route の `congctl` > リスナーで明示的に選んだ CC (`icsk_ca_setsockopt`) > **子の生成時点** のシステム既定値です。リスナー作成後に sysctl で既定値を変えれば、明示的に選んでいないリスナーの子には新しい既定値が適用されます。
 - ここで `tcp_set_ca_state(sk, TCP_CA_Open)` を呼ぶのは、新しい CC の `set_state()` に初期状態を通知するためです。
 
 ---
@@ -681,7 +681,7 @@ void tcp_init_transfer(struct sock *sk, int bpf_op, struct sk_buff *skb)
 ```
 
 - `tcp_init_metrics()` が先に走るので、`tcp_metrics` にキャッシュされた前回の ssthresh（`TCP_METRIC_SSTHRESH`）があれば `snd_ssthresh` が初期化されます。これは無限大ではない ssthresh から始まる例外的なケースです。
-- **SYN / SYN-ACK 再送時の IW = 1**: RFC 5681 §3.1 は「SYN か SYN-ACK が失われたら IW は 1」と定めていますが、Linux は RFC 6298 で初期 RTO が 1 秒に短縮されたことを考慮し、**2 回以上**再送したときだけ 1 に落とします。1 回の再送は「初期 RTO が短すぎただけ」かもしれないからです。さらに `tp->undo_marker` が条件に入っているのは、SYN の再送が spurious だった（元の SYN への応答だった）と判明した場合には `undo_marker` がクリアされ、IW を落とさずに済むようにするためです（2019 年の Yuchung Cheng による一連の修正）。
+- **SYN / SYN-ACK 再送時の IW = 1**: RFC 5681 §3.1 は「SYN か SYN-ACK が失われたら IW は 1」と定めていますが、Linux は RFC 6298 で初期 RTO が 1 秒に短縮されたことを考慮し、**2 回以上** 再送したときだけ 1 に落とします。1 回の再送は「初期 RTO が短すぎただけ」かもしれないからです。さらに `tp->undo_marker` が条件に入っているのは、SYN の再送が spurious だった（元の SYN への応答だった）と判明した場合には `undo_marker` がクリアされ、IW を落とさずに済むようにするためです（2019 年の Yuchung Cheng による一連の修正）。
 - `bpf_skops_established()` の中で BPF が `bpf_setsockopt(TCP_CONGESTION)` を呼ぶと、その時点で `tcp_reinit_congestion_control()` → `tcp_init_congestion_control()` が走り `icsk_ca_initialized = 1` になります。続く `if (!icsk->icsk_ca_initialized)` は、BPF が設定した CC 固有の値を二重初期化で消さないための条件です。
 
 `tcp_init_cwnd()`（[net/ipv4/tcp_input.c#L1202](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1202)）:
@@ -697,7 +697,7 @@ __u32 tcp_init_cwnd(const struct tcp_sock *tp, const struct dst_entry *dst)
 }
 ```
 
-- route の `initcwnd` があればそれを、なければ `TCP_INIT_CWND`（[include/net/tcp.h#L269](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n269)）= 10 を使います。RFC 6928 の `min(10*MSS, max(2*MSS, 14600))` のバイト上限は**実装していません**。MSS が 9000 のジャンボフレーム経路でも 10 パケット = 90KB を最初に送ります。
+- route の `initcwnd` があればそれを、なければ `TCP_INIT_CWND`（[include/net/tcp.h#L269](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n269)）= 10 を使います。RFC 6928 の `min(10*MSS, max(2*MSS, 14600))` のバイト上限は **実装していません**。MSS が 9000 のジャンボフレーム経路でも 10 パケット = 90KB を最初に送ります。
 - この関数は初期化だけでなく、`tcp_cwnd_restart()` と `tcp_cwnd_application_limited()` でも「下限」として再利用されます。
 
 `tcp_init_congestion_control()`（[net/ipv4/tcp_cong.c#L236](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n236)）:
@@ -736,7 +736,7 @@ void tcp_cleanup_congestion_control(struct sock *sk)
 }
 ```
 
-- `release()` は `init()` を呼んだ場合にだけ呼びます。`init()` が確保したものを解放する対称性のためです。一方、参照の解放は**常に**行います。参照は `init()` ではなく `tcp_assign_congestion_control()` などで取っているからです。
+- `release()` は `init()` を呼んだ場合にだけ呼びます。`init()` が確保したものを解放する対称性のためです。一方、参照の解放は **常に** 行います。参照は `init()` ではなく `tcp_assign_congestion_control()` などで取っているからです。
 - `tcp_disconnect()`（[net/ipv4/tcp.c#L3365](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3365)）は CC を外さずに `release()` だけ呼び、`snd_cwnd = TCP_INIT_CWND`、`snd_ssthresh = TCP_INFINITE_SSTHRESH`、`snd_cwnd_cnt = 0`、`is_cwnd_limited = 0`、`max_packets_out = 0` に戻してから `tcp_set_ca_state(sk, TCP_CA_Open)` を呼びます。同じソケットで `connect()` し直したときに、前の接続の cwnd を引きずらないためです。
 
 ---
@@ -785,7 +785,7 @@ CC フックの呼び出し順はこの抜粋の順そのものです。
 3. `tcp_fastretrans_alert()` の中で、状態遷移に応じて `ssthresh()`、`set_state()`、`undo_cwnd()`、`cwnd_event(CA_EVENT_COMPLETE_CWR)`。
 4. `tcp_cong_control()` で `cong_control()` または `cong_avoid()`。
 
-**「状態を決めてから増減する」順序**が重要です。たとえば SACK でロスを検出した ACK では、先に `tcp_fastretrans_alert()` が Recovery に入って ssthresh を下げ、その後の `tcp_cong_control()` は Recovery 中なので `cong_avoid()` ではなく PRR を走らせます。逆に Recovery を抜けた ACK では、`tcp_end_cwnd_reduction()` で cwnd = ssthresh にした後、同じ ACK で `cong_avoid()` が少し増やすことがあります。
+**「状態を決めてから増減する」順序** が重要です。たとえば SACK でロスを検出した ACK では、先に `tcp_fastretrans_alert()` が Recovery に入って ssthresh を下げ、その後の `tcp_cong_control()` は Recovery 中なので `cong_avoid()` ではなく PRR を走らせます。逆に Recovery を抜けた ACK では、`tcp_end_cwnd_reduction()` で cwnd = ssthresh にした後、同じ ACK で `cong_avoid()` が少し増やすことがあります。
 
 `delivered`（`tcp_newly_delivered()`、[net/ipv4/tcp_input.c#L4213](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4213)）は `tp->delivered` の差分です。`tp->delivered` は累積 ACK で外れたパケット、新たに SACK されたパケット、そして非 SACK 接続では dupACK ごとに「1 つ届いた」とみなした分（`tcp_add_reno_sack()`）で増えます。つまり `cong_avoid()` の `acked` は「この ACK で受信側に届いたと分かったパケット数」であり、**バイト数でも ACK の個数でもありません。** RFC 3465 の「ACK された量で数える」をパケット粒度で実装したものです。
 
@@ -845,12 +845,12 @@ static void tcp_cong_control(struct sock *sk, u32 ack, u32 acked_sacked,
 }
 ```
 
-- コメントの「All transmission or retransmission are delayed afterwards」が設計の要です。`tcp_fastretrans_alert()` は再送すべきものを `rexmit` に記録するだけで、実際の再送は `tcp_cong_control()` の**後**の `tcp_xmit_recovery()` で行います。cwnd が確定してから送るためです。
+- コメントの「All transmission or retransmission are delayed afterwards」が設計の要です。`tcp_fastretrans_alert()` は再送すべきものを `rexmit` に記録するだけで、実際の再送は `tcp_cong_control()` の **後** の `tcp_xmit_recovery()` で行います。cwnd が確定してから送るためです。
 - `cong_control` があれば即座に委譲して `return`。PRR も `tcp_update_pacing_rate()` も走りません。BBR は自分で pacing rate を設定するので、コアに上書きされては困るからです。
 - `tcp_in_cwnd_reduction()` は `icsk_ca_state` が `CWR` か `Recovery` のとき真です（[include/net/tcp.h#L1577](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1577)）。**Loss 状態は含まれません。** RTO 後は `tcp_enter_loss()` が cwnd を `in_flight + 1` まで一気に落としているので、そこから先は通常の slow start（`cong_avoid()`）で増やします。これが RFC 5681 §3.1 の「RTO 後は LW から slow start」です。
 - `tcp_cwnd_reduction()` は PRR です。`acked_sacked`（届いた量）と `rs->losses`（新たにロス判定された量）を使い、cwnd を `ssthresh` まで 1 RTT かけて下げます（第 8 章）。
 - `tcp_may_raise_cwnd()` が偽なら、Open / Disorder / Loss 状態でも cwnd を増やしません（すぐ下で読みます）。
-- `tcp_update_pacing_rate()` は `cong_avoid` 型 CC のための既定 pacing rate を計算します。slow start 中（`cwnd < ssthresh/2`）は `mss * cwnd / srtt` の 200%（`tcp_pacing_ss_ratio`）、それ以外は 120%（`tcp_pacing_ca_ratio`）です。`sch_fq` やTCP 内部 pacing がこれを使います。
+- `tcp_update_pacing_rate()` は `cong_avoid` 型 CC のための既定 pacing rate を計算します。slow start 中（`cwnd < ssthresh/2`）は `mss * cwnd / srtt` の 200%（`tcp_pacing_ss_ratio`）、それ以外は 120%（`tcp_pacing_ca_ratio`）です。`sch_fq` や TCP 内部 pacing がこれを使います。
 
 `tcp_may_raise_cwnd()`（[net/ipv4/tcp_input.c#L3838](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3838)）:
 
@@ -872,9 +872,9 @@ static inline bool tcp_may_raise_cwnd(const struct sock *sk, const int flag)
 }
 ```
 
-- 通常は `FLAG_DATA_ACKED`、つまり**累積 ACK が新しいデータを ACK したとき**だけ増やします。RFC 5681 §3.1 の「新しいデータを ACK する ACK を受け取ったら」に忠実です。SACK だけが増えた ACK（穴が残っている状態）では増やしません。
-- 接続ごとの `tp->reordering` が sysctl の既定値（3）より大きい、つまり**この経路はリオーダが多い**と学習済みなら、SACK による前進（`FLAG_FORWARD_PROGRESS` = ACKed | SACKed）でも増やします。リオーダの多い経路では SACK ブロックが常に存在するため、累積 ACK の前進だけを待っていると cwnd がほとんど増えなくなるからです。
-- コメント後半は、stretch ACK に新しい SACK や ECE が乗っている場合に「ここで先に cwnd を増やし、後で `tcp_fastretrans_alert()` が下げる」順序になりうる、と注意しています。ただし Step 5 で見たとおり、現行の `tcp_ack()` では `tcp_fastretrans_alert()` が `tcp_cong_control()` より**先に**呼ばれます。ECE や SACK でロスを検出した ACK はすでに CWR / Recovery に入っているので、`tcp_in_cwnd_reduction()` が真になって増加側には来ません。このコメントは、呼び出し順が今と違っていた頃の記述と読むのが妥当です。
+- 通常は `FLAG_DATA_ACKED`、つまり **累積 ACK が新しいデータを ACK したとき** だけ増やします。RFC 5681 §3.1 の「新しいデータを ACK する ACK を受け取ったら」に忠実です。SACK だけが増えた ACK（穴が残っている状態）では増やしません。
+- 接続ごとの `tp->reordering` が sysctl の既定値（3）より大きい、つまり **この経路はリオーダが多い** と学習済みなら、SACK による前進（`FLAG_FORWARD_PROGRESS` = ACKed | SACKed）でも増やします。リオーダの多い経路では SACK ブロックが常に存在するため、累積 ACK の前進だけを待っていると cwnd がほとんど増えなくなるからです。
+- コメント後半は、stretch ACK に新しい SACK や ECE が乗っている場合に「ここで先に cwnd を増やし、後で `tcp_fastretrans_alert()` が下げる」順序になりうる、と注意しています。ただし Step 5 で見たとおり、現行の `tcp_ack()` では `tcp_fastretrans_alert()` が `tcp_cong_control()` より **先に** 呼ばれます。ECE や SACK でロスを検出した ACK はすでに CWR / Recovery に入っているので、`tcp_in_cwnd_reduction()` が真になって増加側には来ません。このコメントは、呼び出し順が今と違っていた頃の記述と読むのが妥当です。
 - `READ_ONCE()` は sysctl をロックなしで読むためです（2022 年の sysctl データ競合修正シリーズで一斉に付けられたものの 1 つです）。
 
 `tcp_cong_avoid()`（[net/ipv4/tcp_input.c#L3513](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3513)）:
@@ -1002,7 +1002,7 @@ EXPORT_SYMBOL_GPL(tcp_slow_start);
 
 本体の 3 行です。
 
-- `cwnd = min(snd_cwnd + acked, snd_ssthresh)`: RFC 5681 式 (2) の `cwnd += min(N, SMSS)` を「ACK 1 パケットにつき cwnd +1」として N 個分まとめて適用し、ssthresh で頭打ちにします。式 (2) の `min(N, SMSS)` は「1 ACK あたり最大 1 SMSS」の意味でしたが、Linux は**ACK の個数ではなく届いたパケット数**で数えるので、この上限は「1 パケットあたり最大 1」に置き換わっています。
+- `cwnd = min(snd_cwnd + acked, snd_ssthresh)`: RFC 5681 式 (2) の `cwnd += min(N, SMSS)` を「ACK 1 パケットにつき cwnd +1」として N 個分まとめて適用し、ssthresh で頭打ちにします。式 (2) の `min(N, SMSS)` は「1 ACK あたり最大 1 SMSS」の意味でしたが、Linux は **ACK の個数ではなく届いたパケット数** で数えるので、この上限は「1 パケットあたり最大 1」に置き換わっています。
 - `acked -= cwnd - snd_cwnd`: 実際に増やした量を引き、余りを残します。`tcp_in_slow_start()` が真のときだけ呼ばれるので `cwnd >= snd_cwnd` が保証され、引き算は負になりません。ssthresh で頭打ちになったときだけ余りが正になります。
 - `tcp_snd_cwnd_set(tp, min(cwnd, snd_cwnd_clamp))`: clamp で抑えます。clamp で抑えた分は `acked` に戻していない点に注意してください。clamp に当たったら、余りは CA でも使われますが、`tcp_cong_avoid_ai()` の最後でも同じ clamp が効くので結果は変わりません。
 
@@ -1052,7 +1052,7 @@ EXPORT_SYMBOL_GPL(tcp_cong_avoid_ai);
 - `snd_cwnd_cnt -= delta * w`: `%` の代わりに乗算と減算で余りを求めています。直前の除算の結果を再利用するためです。
 - 最後に clamp。増やした後で clamp するので、clamp に当たっている間は `snd_cwnd_cnt` だけが回り続けます。
 
-ここで、cwnd を**減らす**側（`tcp_init_cwnd_reduction()`、`tcp_enter_loss()`）は `snd_cwnd_cnt = 0` にしています。半減した cwnd に、半減前の端数を持ち越さないためです。
+ここで、cwnd を **減らす** 側（`tcp_init_cwnd_reduction()`、`tcp_enter_loss()`）は `snd_cwnd_cnt = 0` にしています。半減した cwnd に、半減前の端数を持ち越さないためです。
 
 数値例（Reno、`w = cwnd`）:
 
@@ -1096,14 +1096,14 @@ struct tcp_congestion_ops tcp_reno = {
 };
 ```
 
-- `tcp_reno_ssthresh()` は RFC 5681 式 (4) の `max(FlightSize/2, 2*SMSS)` を**`cwnd/2`** で実装しています。RFC が「よくある間違い」と呼ぶ形ですが、Linux では次の理由でほぼ問題になりません。
+- `tcp_reno_ssthresh()` は RFC 5681 式 (4) の `max(FlightSize/2, 2*SMSS)` を **`cwnd/2`** で実装しています。RFC が「よくある間違い」と呼ぶ形ですが、Linux では次の理由でほぼ問題になりません。
   - Step 6 の `tcp_is_cwnd_limited()` のおかげで、CA 中の cwnd は「実際に使い切った値」からしか増えません。application-limited な接続で cwnd だけが膨らみ、`cwnd/2` が `FlightSize/2` より大きくなりすぎる、という RFC が恐れた状況が起きにくいのです。
   - 削減そのものは PRR が実際の in-flight を見ながら行うので、ssthresh が多少大きくても一度にバーストすることはありません。
   - 一方で slow start 中は cwnd が `2 * max_packets_out` まで先行できるため、`cwnd/2` は実際の FlightSize と同程度か少し大きくなりえます。これは slow start の「最大 100% overshoot」の範囲内として許容されています。
 - `>> 1U` は除算の代わりのシフトで、`2U` の下限は式 (4) の `2*SMSS` です。
 - `tcp_reno_undo_cwnd()`: undo のときに戻す cwnd です。`prior_cwnd` は「削減を始める直前の cwnd」で、`tcp_init_cwnd_reduction()` と `tcp_enter_loss()` が保存します。`max` を取るのは、誤検出の回復中にすでに cwnd が `prior_cwnd` を超えて回復していたら、それを下げないためです。
 - `.flags = TCP_CONG_NON_RESTRICTED`: Reno は誰でも選べます。
-- Reno は `init` / `release` / `set_state` / `cwnd_event` / `pkts_acked` を持ちません。**私有データを一切使わない**唯一の組み込み CC です。必要な状態はすべて `tcp_sock` 側（`snd_cwnd`, `snd_ssthresh`, `snd_cwnd_cnt`, `prior_cwnd`）にあります。
+- Reno は `init` / `release` / `set_state` / `cwnd_event` / `pkts_acked` を持ちません。**私有データを一切使わない** 唯一の組み込み CC です。必要な状態はすべて `tcp_sock` 側（`snd_cwnd`, `snd_ssthresh`, `snd_cwnd_cnt`, `prior_cwnd`）にあります。
 
 これらが呼ばれる場所（いずれも第 8 章で詳しく扱います）を、CC との接点に絞って見ておきます。`tcp_init_cwnd_reduction()`（[net/ipv4/tcp_input.c#L2971](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2971)）は fast recovery と CWR の入口です。
 
@@ -1309,7 +1309,7 @@ static void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
 
 この if 文が「1 ウィンドウ（≒ 1 RTT）単位で cwnd の使用度を覚える」仕組みの全部です。3 つの更新条件を読み解きます。
 
-- `!before(snd_una, cwnd_usage_seq)`: 前回記録したときの `snd_nxt` まで ACK が進んだ、つまり**前のウィンドウが終わった**。新しいウィンドウの記録を、今回の値で始め直します。これで `is_cwnd_limited` は「最後に送ったウィンドウの間に 1 度でも cwnd-limited だったか」という意味になり、ACK が 1 RTT 分返ってくる間は保持されます。
+- `!before(snd_una, cwnd_usage_seq)`: 前回記録したときの `snd_nxt` まで ACK が進んだ、つまり **前のウィンドウが終わった**。新しいウィンドウの記録を、今回の値で始め直します。これで `is_cwnd_limited` は「最後に送ったウィンドウの間に 1 度でも cwnd-limited だったか」という意味になり、ACK が 1 RTT 分返ってくる間は保持されます。
 - `is_cwnd_limited`: 今回 cwnd-limited だった。これは「最も強い信号」なので、ウィンドウの途中でも即座に真にします。
 - `!tp->is_cwnd_limited && packets_out > max_packets_out`: まだこのウィンドウで cwnd-limited になっていないなら、飛行中の最大数を更新します。ここで `!tp->is_cwnd_limited` が付いているのが 2022 年の修正の核心です。これがないと、ウィンドウ前半で cwnd-limited（真）になった後、後半で pacing に律速されて（偽で）`packets_out` が増えたときに、真が偽で上書きされていました。
 - どの条件でも、3 つのフィールドをまとめて上書きします。`cwnd_usage_seq = snd_nxt` は「今送ったものが全部 ACK されたら次のウィンドウ」という境界です。
@@ -1503,7 +1503,7 @@ void tcp_enter_cwr(struct sock *sk)
 - `prior_ssthresh = 0` と `undo_marker = 0`: ECN による削減は undo しません（Step 9）。
 - `icsk_ca_state < TCP_CA_CWR` のときだけ削減を始めます。すでに CWR / Recovery / Loss なら何もしません。これが RFC 3168 §6.1.2 の「1 ウィンドウに 1 回まで」の実装で、CWR を抜ける（`snd_una` が `high_seq` を超える）までは追加の ECE で再度削減しません。
 - 削減量は CC の `ssthresh()` が決め（Reno なら半分）、削減の速さは PRR が決めます。RFC 3168 は「cwnd を半分に」としていますが、Linux は ssthresh だけを半分にし、cwnd は 1 RTT かけて PRR で下げます。
-- `tcp_enter_cwr()` は ECE 以外に、**ローカルの輻輳**でも呼ばれます。`__tcp_transmit_skb()` で `queue_xmit()` が正の値（`NET_XMIT_CN` など、qdisc が輻輳を通知した）を返したときです。自ホストの qdisc で詰まったのも輻輳の一種として cwnd を下げます。
+- `tcp_enter_cwr()` は ECE 以外に、**ローカルの輻輳** でも呼ばれます。`__tcp_transmit_skb()` で `queue_xmit()` が正の値（`NET_XMIT_CN` など、qdisc が輻輳を通知した）を返したときです。自ホストの qdisc で詰まったのも輻輳の一種として cwnd を下げます。
 
 DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量」に差し替えれば、同じ `tcp_enter_cwr()` の流れのまま、反応の強さだけを変えられます。これが CC フレームワークの典型的な使い方です。
 
@@ -1513,7 +1513,7 @@ DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量
 
 `net/ipv4/bpf_tcp_ca.c` は `struct tcp_congestion_ops` を BPF の struct_ops（`bpf_tcp_congestion_ops`、[net/ipv4/bpf_tcp_ca.c#L333](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/bpf_tcp_ca.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n333)）として公開します。
 
-- `.reg` / `.unreg` / `.update` / `.validate` はそれぞれ `tcp_register_congestion_control()` / `tcp_unregister_congestion_control()` / `tcp_update_congestion_control()` / `tcp_validate_congestion_control()` を呼ぶだけです（`bpf_tcp_ca_reg()`、[net/ipv4/bpf_tcp_ca.c#L239](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/bpf_tcp_ca.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n239)）。BPF CC はカーネルモジュールの CC と**まったく同じリストに、同じ規則で**登録されます。
+- `.reg` / `.unreg` / `.update` / `.validate` はそれぞれ `tcp_register_congestion_control()` / `tcp_unregister_congestion_control()` / `tcp_update_congestion_control()` / `tcp_validate_congestion_control()` を呼ぶだけです（`bpf_tcp_ca_reg()`、[net/ipv4/bpf_tcp_ca.c#L239](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/bpf_tcp_ca.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n239)）。BPF CC はカーネルモジュールの CC と **まったく同じリストに、同じ規則で** 登録されます。
 - BPF CC の `owner` には特別な値 `BPF_MODULE_OWNER` が入り、`bpf_try_module_get()` / `bpf_module_put()` はモジュール参照の代わりに struct_ops map の参照カウントを扱います。これにより、BPF CC を使っているソケットがある間は map が解放されません。
 - `tcp_reno_ssthresh` / `tcp_reno_cong_avoid` / `tcp_reno_undo_cwnd` / `tcp_slow_start` / `tcp_cong_avoid_ai` / `tcp_tso_autosize` は kfunc として BPF から呼べるよう登録されています。BPF で書く CC はこれらを部品として再利用できます。
 - `cfi_stubs` は、kCFI 有効カーネルで BPF トランポリン経由の間接呼び出しの型ハッシュを合わせるためのダミー実装です。新しいフック（たとえば `cwnd_event_tx_start`）を追加したときは、ここにもスタブが必要になります。
@@ -1535,7 +1535,7 @@ DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量
 | fast recovery の cwnd | `ssthresh + 3` → dupACK ごとに inflate → `ssthresh` に deflate | PRR（RFC 6937）で in-flight を ssthresh へ滑らかに近づける | バーストを避け、回復終了時に cwnd が ssthresh 付近になることを保証 |
 | ロス回復の取り消し | 規定なし（RFC 3522 Eifel / RFC 5682 F-RTO は別文書） | `undo_cwnd()` と `prior_ssthresh` で戻す。ECN による削減は戻さない | spurious retransmission 後に性能を回復するため |
 | 初期ウィンドウ | `min(10*MSS, max(2*MSS, 14600))`（RFC 6928） | 10 パケット（route の `initcwnd` で変更可） | 実装の簡潔さ。MSS が大きい経路ではバイト上限を超える |
-| SYN 損失時の IW | 1 SMSS（RFC 5681 §3.1） | SYN / SYN-ACK を **2 回以上**再送したときだけ 1 | 初期 RTO が 1 秒（RFC 6298）になり、1 回の再送は spurious なことが多いため |
+| SYN 損失時の IW | 1 SMSS（RFC 5681 §3.1） | SYN / SYN-ACK を **2 回以上** 再送したときだけ 1 | 初期 RTO が 1 秒（RFC 6298）になり、1 回の再送は spurious なことが多いため |
 | アイドル後の再始動 | `cwnd = min(IW, cwnd)`（RFC 5681 §4.1） | RTO ごとに cwnd を半減、下限 `min(IW, cwnd)`、ssthresh に 3/4 cwnd を記録（RFC 2861 方式）。sysctl で無効化可、`cong_control` 型 CC には適用しない | 短いアイドルで cwnd を全部捨てるのはもったいない |
 | application-limited | RFC 7661: NVP の間は cwnd 維持、`pipeACK < cwnd/2` なら増やさない | 増やさない部分は常に有効（SS は `2*max_packets_out` まで）。減らす部分は RFC 2861 方式で sysctl 連動 | RFC 7661 より前から独自に発展した実装。CA では「使い切ったときだけ」とより保守的 |
 | ECN への反応 | cwnd と ssthresh を半分、1 RTT に 1 回（RFC 3168 §6.1.2） | `tcp_enter_cwr()` で CWR 状態、ssthresh は CC が決め、cwnd は PRR で下げる。undo しない | 削減量を CC で差し替え可能にする（DCTCP） |
@@ -1577,7 +1577,7 @@ DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量
 
 ### フックの拡張
 
-- `d452e6caf836` "tcp: tcp_cong_control helper" と `c0402760f565` "tcp: new CC hook to set sending rate with rate_sample in any CA state"（Yuchung Cheng, 2016）: cwnd の増減を `tcp_cong_control()` に集約し、「全権委任」の `cong_control()` フックを追加しました。ACK 処理の**最後**（SACK スコアボードとロス検出の後）で呼ぶので正確な配送レートを使えます。直前の F-RTO などの変更で「再送や新規送信を `tcp_cong_control()` の後まで遅らせる」ようになっていたことを利用しています。BBR のための下準備です。
+- `d452e6caf836` "tcp: tcp_cong_control helper" と `c0402760f565` "tcp: new CC hook to set sending rate with rate_sample in any CA state"（Yuchung Cheng, 2016）: cwnd の増減を `tcp_cong_control()` に集約し、「全権委任」の `cong_control()` フックを追加しました。ACK 処理の **最後**（SACK スコアボードとロス検出の後）で呼ぶので正確な配送レートを使えます。直前の F-RTO などの変更で「再送や新規送信を `tcp_cong_control()` の後まで遅らせる」ようになっていたことを利用しています。BBR のための下準備です。
 - `57bfc7605ca5` "tcp: Add new args for cong_control in tcp_congestion_ops"（Miao Xu, 2024）: `cong_control()` に `ack` と `flag` を追加し、CC が「この ACK で増やすべきか」を判断できるようにしました。
 - `d1e59a469737` "tcp: add cwnd_event_tx_start to tcp_congestion_ops"（Eric Dumazet, 2026）: `cwnd_event()` の `event` が `CA_EVENT_TX_START` と他の値の間で揺れ、分岐予測に悪いため、TX_START 専用のポインタを分けました。CUBIC と BBR は TX_START にしか興味がないので `cwnd_event()` 自体が不要になり、カーネルサイズも 4 バイト減っています。
 
@@ -1587,7 +1587,7 @@ DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量
 - `4faf783998b8` "tcp: fix cwnd undo in Reno and HTCP congestion controls"（Yuchung Cheng, 2017）: ssthresh から cwnd を復元すると、ssthresh が下限 2 に張り付いているときに正しく戻らないため、削減直前の `prior_cwnd` を使うよう変えました。
 - `44abafc4cc09` "tcp: disallow cwnd undo when switching congestion control"（Yuchung Cheng, 2017）: BBR（ssthresh 無限大）から切り替えた後に undo が走ると cwnd が無限大になる問題への対処で、`tcp_init_congestion_control()` の `prior_ssthresh = 0` がそれです。
 - `81164413ad09` "net: tcp: add per route congestion control" と `c5c6a8ab45ec` "net: tcp: add key management to congestion control"（Daniel Borkmann, 2015）: DCTCP を「データセンター内の宛先にだけ」使えるよう、route ごとの CC と名前→32 ビットキーの仕組みを導入しました。netns ごとではなく route にしたのは「どの CC が適切かはリンクの性質だから」です。
-- `9f950415e4e2` "tcp: fix child sockets to use system default congestion control if not set"（Neal Cardwell, 2015）: 子ソケットは「リスナーが明示的に選んでいなければ、**子の生成時点**のシステム既定」を使う、という 2007 年以来の意味論を復元しました。`icsk_ca_setsockopt` ビットはこのためにあります。
+- `9f950415e4e2` "tcp: fix child sockets to use system default congestion control if not set"（Neal Cardwell, 2015）: 子ソケットは「リスナーが明示的に選んでいなければ、**子の生成時点** のシステム既定」を使う、という 2007 年以来の意味論を復元しました。`icsk_ca_setsockopt` ビットはこのためにあります。
 - `8919a9b31eb4` "tcp: Only init congestion control if not initialized already" と `29a949325c6c` "tcp: simplify tcp_set_congestion_control(): Always reinitialize"（Neal Cardwell, 2020）: `BPF_SOCK_OPS_*_ESTABLISHED_CB` で設定した CC が、直後の `tcp_init_transfer()` の再初期化で消される問題を、`icsk_ca_initialized` を見ることで解決しました。
 - `0baf26b0fcd7` "bpf: tcp: Support tcp_congestion_ops in bpf"（Martin KaFai Lau, 2020）と `8fb1a76a0f35` "net: Update an existing TCP congestion control algorithm."（Kui-Feng Lee, 2023）: BPF struct_ops による CC と同名 CC の無停止差し替えを導入しました。後者で必須フックの検査が `tcp_validate_congestion_control()` に切り出されています。
 - `5271b79b7ad6` "tcp: fix use-after-free in do_tcp_getsockopt(TCP_CONGESTION)"（Cen Zhang, 2026）: BPF CC は動的に解放されうるため、`getsockopt()` がロックなしで `icsk_ca_ops->name` を読んでいる間に `setsockopt()` で差し替えられると UAF になっていました。読み手を `rcu_read_lock()` + `READ_ONCE()` でコピーするよう直し、`icsk_ca_ops` への代入をすべて `WRITE_ONCE()` にしました。
@@ -1610,7 +1610,7 @@ DCTCP のように `ssthresh()` を「CE マークの割合に応じた削減量
 | `tcp_write_xmit()` → `tcp_cwnd_validate()` | プロセス（sendmsg）、softirq（ACK 後、TSQ tasklet、pacing hrtimer） | 同上 |
 | `tcp_skb_entail()` → `tcp_cwnd_restart()` | プロセス（sendmsg） | ソケットロック |
 
-すべてのフックは「ソケットを所有している 1 つの実行主体」から呼ばれます。そのため `tcp_slow_start()` も `tcp_cong_avoid_ai()` も、`snd_cwnd_cnt` を普通の `+=` で更新しています。`snd_cwnd` と `snd_ssthresh` だけが `WRITE_ONCE()` で書かれるのは、`tcp_get_info()`（`ss -ti`）、inet_diag、`tcp_probe` tracepoint、BPF iterator などの**ロックを取らない読み手**がいるからです。`snd_cwnd_cnt` や `prior_cwnd` はそうした読み手に公開されていないので素の代入です。
+すべてのフックは「ソケットを所有している 1 つの実行主体」から呼ばれます。そのため `tcp_slow_start()` も `tcp_cong_avoid_ai()` も、`snd_cwnd_cnt` を普通の `+=` で更新しています。`snd_cwnd` と `snd_ssthresh` だけが `WRITE_ONCE()` で書かれるのは、`tcp_get_info()`（`ss -ti`）、inet_diag、`tcp_probe` tracepoint、BPF iterator などの **ロックを取らない読み手** がいるからです。`snd_cwnd_cnt` や `prior_cwnd` はそうした読み手に公開されていないので素の代入です。
 
 ### キャッシュライン
 
@@ -1782,7 +1782,7 @@ ECN の CE マークは「ルータが実際に輻輳を観測した」という
 - `struct tcp_congestion_ops` は「CC が決め、コアが送る」契約です。必須は `ssthresh`、`undo_cwnd`、そして `cong_avoid` か `cong_control` のどちらか。`cong_control` を持つ CC は PRR、アイドル後の再始動、application-limited 減衰、既定の pacing 計算をすべてスキップします。
 - CC の選択の優先順位は、route の `congctl` > 明示的な `TCP_CONGESTION`（子ソケットではリスナーの選択）> netns の既定値。非特権ユーザーは `tcp_allowed_congestion_control` の CC しか選べず、モジュールの自動ロードには初期 user namespace の `CAP_NET_ADMIN` が必要です。フォールバックは常に組み込みの `tcp_reno` です。
 - ACK 処理では `pkts_acked()` → `in_ack_event()` → `tcp_fastretrans_alert()`（`ssthresh()` / `set_state()` / `undo_cwnd()`）→ `tcp_cong_control()` の順にフックが呼ばれます。cwnd が決まってから再送・送信が行われます。
-- Linux の cwnd は**パケット単位**で、`acked` は「完全に ACK / SACK されたパケット数」です。これにより ACK division に強く、stretch ACK を N 個の ACK として正しく扱えます。
+- Linux の cwnd は **パケット単位** で、`acked` は「完全に ACK / SACK されたパケット数」です。これにより ACK division に強く、stretch ACK を N 個の ACK として正しく扱えます。
 - `tcp_slow_start()` は RFC 5681 式 (2) をパケット単位で、ABC の上限なしに実装し、ssthresh を超えた余りを返します。`tcp_cong_avoid_ai()` は式 (3) を `snd_cwnd_cnt` による正確な計数で実装し、`w` が減ったときの credit 暴発を防ぎます。
 - `tcp_reno_ssthresh()` は `max(cwnd/2, 2)`、`tcp_reno_undo_cwnd()` は `max(cwnd, prior_cwnd)`。
 - cwnd を増やすのは `tcp_is_cwnd_limited()` が真のときだけです。CA では「直近のウィンドウで cwnd を使い切った」、slow start では「`2 * max_packets_out` 未満」。これを `tcp_cwnd_validate()` が送信側で記録します。

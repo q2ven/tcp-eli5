@@ -8,20 +8,20 @@
 
 ## たとえ話で言うと
 
-建物の各部屋（ソケット）にある**発送待ちの棚（TCP 送信キュー）**から出された**伝票付きの小包（`sk_buff`）**は、建物の 1 階にある配送センターのトラック乗り場へと運ばれてきます。外には道路へ出ていく**配送トラック（NIC のハードウェア TX リング）**が停まっています。
+建物の各部屋（ソケット）にある **発送待ちの棚（TCP 送信キュー）** から出された **伝票付きの小包（`sk_buff`）** は、建物の 1 階にある配送センターのトラック乗り場へと運ばれてきます。外には道路へ出ていく **配送トラック（NIC のハードウェア TX リング）** が停まっています。
 
 もし各部屋の発送係が、自分の小包をトラックの荷台へ直接どんどん放り込めたとしたらどうなるでしょうか。
 
 - **荷台がすぐ満杯になり、後から来た緊急の小包が追い越せない**: 巨大な荷物を大量に送る部屋がトラックの荷台（NIC の FIFO リング）を何百個もの小包で埋め尽くしてしまうと、別の部屋から出た「至急」の伝票（高優先度 TOS や ACK、DNS クエリ）が付いた小包も、その長い列の後ろに並ぶしかありません。これが **Bufferbloat（バッファ肥大化）** です。
 - **一度トラックの荷台に積んだ小包は、順番を変えたり間引いたりできない**: トラックの荷台（NIC の DMA リング）はただの単純なベルトコンベアです。積んでしまった後では、「やはりこちらの小包を先に出す」「混んできたので古い小包を諦める（AQM）」「出発時刻（EDT）まで待つ」といった賢い判断はできません。
 
-そこで Linux は、トラックの荷台のすぐ手前に**仕分けゲート（Qdisc）**を置きます。そして 3 つのルールで荷物の流れを管理します。
+そこで Linux は、トラックの荷台のすぐ手前に **仕分けゲート（Qdisc）** を置きます。そして 3 つのルールで荷物の流れを管理します。
 
 1. **トラックの荷台には「今すぐ出発できる最小限の量」しか積まない（BQL: Byte Queue Limits）**: 荷台に一定バイト数以上の小包が載ったら、すぐに「荷台ストップ」の札（`QUEUE_STATE_STACK_XOFF`）を立てます。残りの小包はすべて手前の仕分けゲート（Qdisc）で待機させます。これにより、賢い仕分け係（Qdisc）が常に主導権を握ることができます。
 2. **1 つの部屋が仕分けゲートに置ける小包の数を制限する（TSQ: TCP Small Queues）**: ある部屋の小包がまだ仕分けゲートやトラックの荷台に一定量残っていたら、その部屋の発送係には「トラックから発送完了の連絡（`tcp_wfree()`）が来るまで、次の小包を下ろしてこないで」と伝えます。これで 1 つの部屋が仕分けゲートを独占するのを防ぎます。
 3. **仕分けゲートが混雑したら、発送係に「トラックの台数を減らせ」と直接伝える（`NET_XMIT_CN`）**: 仕分けゲートで小包が溢れそうになったり、古い小包を押し出して捨てたりしたときは、発送係へ即座に「構内が混んでいる」という黄色信号（`NET_XMIT_CN`）を返します。発送係（TCP）はそれを見て、道路へ出すトラックの台数（`snd_cwnd`）を自ら減らします（`tcp_enter_cwr()`）。
 
-この仕分けゲート（`struct Qdisc`）の仕組みは、TCP の輻輳制御と同じく**差し替え可能（プラガブル）**です。来た順に並べるだけの単純な係（`pfifo` / `bfifo`）、伝票の優先度で 3 列に分ける高速な係（`pfifo_fast`）、複数のトラック乗り場（マルチキュー NIC の各 TX キュー）ごとに独立した仕分け係を配置する元締め（`mq`）、さらには利用者が BPF プログラムで自由に仕分けルールを書ける仕組み（`bpf_qdisc`）まで、すべて同じ `struct Qdisc_ops` の契約の上で動いています。
+この仕分けゲート（`struct Qdisc`）の仕組みは、TCP の輻輳制御と同じく **差し替え可能（プラガブル）** です。来た順に並べるだけの単純な係（`pfifo` / `bfifo`）、伝票の優先度で 3 列に分ける高速な係（`pfifo_fast`）、複数のトラック乗り場（マルチキュー NIC の各 TX キュー）ごとに独立した仕分け係を配置する元締め（`mq`）、さらには利用者が BPF プログラムで自由に仕分けルールを書ける仕組み（`bpf_qdisc`）まで、すべて同じ `struct Qdisc_ops` の契約の上で動いています。
 
 ---
 
@@ -46,7 +46,7 @@ NIC のハードウェアリングは以下の理由から「スケジューリ�
 
 1. **BQL（Qdisc ⇄ NIC ドライバ間）**
    各ハードウェア TX キュー（`struct netdev_queue`）は DQL（Dynamic Queue Limits、`struct dql`）状態を持ちます。ドライバは `ndo_start_xmit()` でハードウェアリングにパケットを積むたびに `netdev_tx_sent_queue()` でバイト数を加算し、TX 完了割り込み（NAPI poll）で `netdev_tx_completed_queue()` を呼んで完了バイト数を減算します。
-   現在ハードウェアリング上に滞留している未完了バイト数を $B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$、DQL が動的に調整する上限を $L_{\text{BQL}}$ とすると、利用可能残量は次の式で表されます。
+   現在ハードウェアリング上に滞留している未完了バイト数を $B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$ 、DQL が動的に調整する上限を $L_{\text{BQL}}$ とすると、利用可能残量は次の式で表されます。
 
    $$\text{avail} = L_{\text{BQL}} - B_{\text{inflight}}$$
 
@@ -69,7 +69,7 @@ Qdisc の `enqueue()` メソッドは、結果を以下のリターンコード�
 `NET_XMIT_CN`（Congestion Notification）は、「今回のパケット自体は受け入れたが、代わりにキュー先頭の古いパケットを捨てた（`pfifo_head_drop` など）」あるいは「AQM しきい値を超えた」ことを送信元ソケットへ知らせる仕組みです。
 `__tcp_transmit_skb()` は `queue_xmit()` の戻り値 `err` に対して以下のように反応します。
 
-- `err > 0`（`NET_XMIT_DROP` または `NET_XMIT_CN`）ならば、**自ホスト内の Qdisc で輻輳が起きた**と判断し、即座に `tcp_enter_cwr(sk)` を呼んで `TCP_CA_CWR` 状態へ遷移し、`snd_cwnd` を削減します（第 11 章 Step 13）。
+- `err > 0`（`NET_XMIT_DROP` または `NET_XMIT_CN`）ならば、**自ホスト内の Qdisc で輻輳が起きた** と判断し、即座に `tcp_enter_cwr(sk)` を呼んで `TCP_CA_CWR` 状態へ遷移し、`snd_cwnd` を削減します（第 11 章 Step 13）。
 - その後 `err = net_xmit_eval(err)` を通すことで、`NET_XMIT_CN` は `0`（送信成功）に変換され、TCP の送信シーケンス番号（`snd_nxt`）や RTT サンプルは通常どおり前進します。一方 `NET_XMIT_DROP` は非 0 のまま返るため、TCP はそのパケットを送れなかったものとして送信ループを中断します。
 
 ### IP TOS フィールドと `pfifo_fast` の 3 バンド優先度マッピング
@@ -94,7 +94,7 @@ IP 層は TOS バイトから `rt_tos2priority()` で `TC_PRIO_*`（`0`〜`15`�
 | `6`, `7` | `TC_PRIO_INTERACTIVE`, `TC_PRIO_CONTROL` | Minimize Delay / 制御パケット | **Band 0**（最高優先度） |
 | `8`〜`15` | — | 未割り当て | **Band 1**（中間） |
 
-Band 0 にパケットが 1 つでもある限り Band 1 や Band 2 は一切 dequeue されない**厳密優先度（Strict Priority）スケジューリング**です。
+Band 0 にパケットが 1 つでもある限り Band 1 や Band 2 は一切 dequeue されない **厳密優先度（Strict Priority）スケジューリング** です。
 
 ### Work-Conserving と Non-Work-Conserving、および Qdisc バイパス
 
@@ -103,7 +103,7 @@ Band 0 にパケットが 1 つでもある限り Band 1 や Band 2 は一切 de
 - **Work-conserving（仕事保存型）**: キュー内に送信可能なパケットが存在し、かつ出力リンク（NIC TX キュー）が空いている限り、決してリンクを遊ばせずに即座にパケットを送り出すスケジューラです（`pfifo`, `bfifo`, `pfifo_fast`, `fq_codel` など）。
 - **Non-work-conserving（非仕事保存型）**: キュー内にパケットがあっても、トークンバケットのレート制限や EDT（Earliest Departure Time）の出発時刻に達していない場合は、リンクが空いていても意図的に送信を遅らせるスケジューラです（`tbf`, ペーシング有効時の `fq`, `htb` など）。このとき、指定時刻に再度 dequeue を駆動するために高精度タイマである `struct qdisc_watchdog`（内部は `hrtimer`）が使われます。
 
-Work-conserving な単純 Qdisc（`pfifo`, `bfifo`, `pfifo_fast`）において、**現在キューが空であり、かつ他の CPU がその Qdisc を実行していない**場合、わざわざ `q->enqueue()` でリングやリストに skb を格納して直後に `q->dequeue()` で取り出すのは無駄です。Linux はこの性質を利用し、`TCQ_F_CAN_BYPASS` フラグを持つ Qdisc が空のときは `enqueue()` / `dequeue()` を完全にスキップして直接 `sch_direct_xmit()` を呼ぶ**空キュー高速パス（Qdisc bypass）**を備えています。
+Work-conserving な単純 Qdisc（`pfifo`, `bfifo`, `pfifo_fast`）において、**現在キューが空であり、かつ他の CPU がその Qdisc を実行していない** 場合、わざわざ `q->enqueue()` でリングやリストに skb を格納して直後に `q->dequeue()` で取り出すのは無駄です。Linux はこの性質を利用し、`TCQ_F_CAN_BYPASS` フラグを持つ Qdisc が空のときは `enqueue()` / `dequeue()` を完全にスキップして直接 `sch_direct_xmit()` を呼ぶ **空キュー高速パス（Qdisc bypass）** を備えています。
 
 ---
 
@@ -138,9 +138,9 @@ flowchart TD
 
 この図から分かるとおり、Linux の Qdisc 層は単に「`enqueue()` して `dequeue()` する」だけではありません。
 
-- **ロック型 Qdisc（`!TCQ_F_NOLOCK`）**では、複数 CPU が同時に送信したとき `qdisc_lock(q)`（`root_lock`）の奪い合いを避けるため、まずロックレス単方向リスト `q->defer_list` に `try_cmpxchg()` でパケットを積み、リストの先頭を入れた 1 つの CPU だけがロックを取って他 CPU の分までまとめて処理します。
-- **ロックレス Qdisc（`TCQ_F_NOLOCK`、`pfifo_fast` など）**では、`enqueue()` は `skb_array`（内部は `ptr_ring` の producer spinlock）だけで並行に動き、dequeue 側だけを `q->seqlock` の `spin_trylock()` で単一実行主体に絞ります。
-- **GSO 分割やソフトウェアチェックサム計算（`validate_xmit_skb_list()`）**は、Qdisc の `root_lock` を一旦外し、かつドライバの `HARD_TX_LOCK` を取る**前**のロックなし区間で行われます。重い分割処理中に他の CPU の `enqueue()` をブロックしないための工夫です。
+- **ロック型 Qdisc（`!TCQ_F_NOLOCK`）** では、複数 CPU が同時に送信したとき `qdisc_lock(q)`（`root_lock`）の奪い合いを避けるため、まずロックレス単方向リスト `q->defer_list` に `try_cmpxchg()` でパケットを積み、リストの先頭を入れた 1 つの CPU だけがロックを取って他 CPU の分までまとめて処理します。
+- **ロックレス Qdisc（`TCQ_F_NOLOCK`、`pfifo_fast` など）** では、`enqueue()` は `skb_array`（内部は `ptr_ring` の producer spinlock）だけで並行に動き、dequeue 側だけを `q->seqlock` の `spin_trylock()` で単一実行主体に絞ります。
+- **GSO 分割やソフトウェアチェックサム計算（`validate_xmit_skb_list()`）** は、Qdisc の `root_lock` を一旦外し、かつドライバの `HARD_TX_LOCK` を取る **前** のロックなし区間で行われます。重い分割処理中に他の CPU の `enqueue()` をブロックしないための工夫です。
 
 ---
 
@@ -248,7 +248,7 @@ Qdisc のリターンコードは `include/linux/netdevice.h`（[include/linux/n
 	return err;
 ```
 
-- L3 経路エラー時は `-EHOSTUNREACH` や `-ENOMEM` のような**負のエラー値**が返ります。一方、Qdisc の `enqueue()` が返した `NET_XMIT_DROP` (`1`) や `NET_XMIT_CN` (`2`) は**正の整数**です。
+- L3 経路エラー時は `-EHOSTUNREACH` や `-ENOMEM` のような **負のエラー値** が返ります。一方、Qdisc の `enqueue()` が返した `NET_XMIT_DROP` (`1`) や `NET_XMIT_CN` (`2`) は **正の整数** です。
 - したがって `unlikely(err > 0)` は「Qdisc 層でドロップまたは輻輳通知が発生した」ことを正確に意味します。このとき TCP は `tcp_enter_cwr(sk)`（[net/ipv4/tcp_input.c#L3030](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3030)）を呼び、ECN の ECE を受け取ったときと同様に `TCP_CA_CWR` 状態へ入って `snd_cwnd` を減らします。
 - 直後の `err = net_xmit_eval(err)` により、`NET_XMIT_CN` だった場合は `err` が `0` になります。すると下の `if (!err && oskb)` に進み、`tcp_update_skb_after_send()` と `tcp_rate_skb_sent()` が呼ばれて、呼び出し元の `tcp_write_xmit()` でも `snd_nxt` が進められます。後で見る `pfifo_tail_enqueue()`（`pfifo_head_drop`）が古い先頭パケットを捨てて今回の新パケットを入れたときに `NET_XMIT_CN` を返すのは、「今回のパケット自体はキューに入ったので未送信扱いにせず、しかし cwnd は下げさせる」ためです。
 
@@ -669,8 +669,8 @@ struct netdev_queue {
 ```
 
 - **なぜ `qdisc` と `qdisc_sleeping` の 2 つのポインタがあるのか**:
-  - `qdisc` は**データパス（`__dev_queue_xmit()`）が参照する現在有効な Qdisc** です。デバイスが `IFF_UP` でリンクアップ（carrier ok）している間だけ実体の Qdisc を指し、デバイスがダウンしている間や Qdisc 切り替え中（`dev_deactivate()` 中）は、すべてのパケットを即座に破棄する組み込みの `&noop_qdisc` を指します。
-  - `qdisc_sleeping` は**コントロールプレーン（`tc` コマンドによる設定や統計ダンプ）が参照する保持用のポインタ**です。インターフェースが `ip link set dev eth0 down` の状態でも `tc qdisc add` で Qdisc を設定・保持できるよう、作られた Qdisc はまず `qdisc_sleeping` に保存され、`dev_activate()`（リンクアップ時）の `transition_one_qdisc()` で初めて `dev_queue->qdisc = dev_queue->qdisc_sleeping` とアクティブ化されます。
+  - `qdisc` は **データパス（`__dev_queue_xmit()`）が参照する現在有効な Qdisc** です。デバイスが `IFF_UP` でリンクアップ（carrier ok）している間だけ実体の Qdisc を指し、デバイスがダウンしている間や Qdisc 切り替え中（`dev_deactivate()` 中）は、すべてのパケットを即座に破棄する組み込みの `&noop_qdisc` を指します。
+  - `qdisc_sleeping` は **コントロールプレーン（`tc` コマンドによる設定や統計ダンプ）が参照する保持用のポインタ** です。インターフェースが `ip link set dev eth0 down` の状態でも `tc qdisc add` で Qdisc を設定・保持できるよう、作られた Qdisc はまず `qdisc_sleeping` に保存され、`dev_activate()`（リンクアップ時）の `transition_one_qdisc()` で初めて `dev_queue->qdisc = dev_queue->qdisc_sleeping` とアクティブ化されます。
 - **`write-mostly part` の分離**: `dql`（BQL 状態）、`_xmit_lock`（ドライバの `ndo_start_xmit()` を守る `HARD_TX_LOCK`）、`trans_start`（TX タイムアウト監視用の最終送信時刻）、`state`（`QUEUE_STATE_DRV_XOFF` / `QUEUE_STATE_STACK_XOFF` / `QUEUE_STATE_FROZEN`）はパケット送信ごとに書き換えられるため、上部の `read-mostly part`（`dev` や `qdisc` ポインタ）とは別キャッシュラインに分離されています。
 
 ---
@@ -755,9 +755,9 @@ int __dev_queue_xmit(struct sk_buff *skb, struct net_device *sb_dev)
 ```
 
 - `skb_reset_mac_header(skb)`: `neigh_hh_output()` 等ですでに L2 ヘッダが先頭に push されているため、現在の `skb->data` を MAC ヘッダ開始位置として記録します。
-- `SKBTX_SCHED_TSTAMP`: アプリが `SOF_TIMESTAMPING_TX_SCHED` を要求していた場合、**Qdisc に入る直前**のタイムスタンプをここで採取します。ドライバ送信直前の `SCM_TSTAMP_SND` との差を見ることで、Qdisc 内部での滞在時間をユーザ空間から正確に測定できます。
+- `SKBTX_SCHED_TSTAMP`: アプリが `SOF_TIMESTAMPING_TX_SCHED` を要求していた場合、**Qdisc に入る直前** のタイムスタンプをここで採取します。ドライバ送信直前の `SCM_TSTAMP_SND` との差を見ることで、Qdisc 内部での滞在時間をユーザ空間から正確に測定できます。
 - `qdisc_pkt_len_segs_init(skb)`（[net/core/dev.c#L4282](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/core/dev.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4282)）: GSO パケットの場合に分割後の総ヘッダサイズ `(gso_segs - 1) * hdr_len` を計算して `qdisc_skb_cb(skb)->pkt_len` と `pkt_segs` を初期化します。悪意ある（`SKB_GSO_DODGY`）パケットでヘッダが壊れていればここで `SKB_DROP_REASON_SKB_BAD_GSO` として弾きます。
-- **`rcu_read_lock_bh()`**: ここが Qdisc 層の重要な実行コンテキストの境界です。移行後のすべての処理（`txq->qdisc` の RCU 参照、`qdisc_lock(q)` の取得、`HARD_TX_LOCK` の取得）は **BH（softirq）無効化かつ RCU 読み出し区間内**で走ります。そのため下位では `spin_lock_bh()` ではなく素の `spin_lock()` が使われ、`smp_processor_id()` もプリエンプションを気にせず安全に呼べます。
+- **`rcu_read_lock_bh()`**: ここが Qdisc 層の重要な実行コンテキストの境界です。移行後のすべての処理（`txq->qdisc` の RCU 参照、`qdisc_lock(q)` の取得、`HARD_TX_LOCK` の取得）は **BH（softirq）無効化かつ RCU 読み出し区間内** で走ります。そのため下位では `spin_lock_bh()` ではなく素の `spin_lock()` が使われ、`smp_processor_id()` もプリエンプションを気にせず安全に呼べます。
 - `skb_update_prio(skb)`: netprio cgroup が有効なら、ソケットの cgroup に応じて `skb->priority` を更新します。
 - `CONFIG_NET_EGRESS`: `tc filter ... egress`（`clsact` や `tcx`）や `nf_hook_egress` が使われている場合だけ、Static Key（`egress_needed_key`）が開いてここで実行されます。未使用時は NOP 命令 1 つでコストゼロです。BPF プログラムが `skb->queue_mapping` を指定して `netdev_xmit_skip_txqueue` を立てた場合は、`netdev_core_pick_tx()` をスキップしてその TX キューを使います。
 - `IFF_XMIT_DST_RELEASE`: 通常の NIC ドライバや Qdisc はもう `skb_dst(skb)`（ルーティングキャッシュ）を必要としません。そのため、この CPU のキャッシュに乗っていて温かいうちに `skb_dst_drop(skb)` で解放します。もし参照カウント付きの dst ではなく `__ip_queue_xmit()` が付けた `noref` な dst だった場合、`IFF_XMIT_DST_RELEASE` が無いデバイスでは Qdisc キューに滞留して RCU 区間を跨ぐ可能性があるため、`skb_dst_force(skb)` で本当に参照カウントを取ります。
@@ -879,7 +879,7 @@ static inline struct sk_buff *qdisc_run_end(struct Qdisc *qdisc)
 なぜ dequeue 実行権の制御が 2 通りに分かれているのでしょうか。
 
 1. **ロック型 Qdisc（`!TCQ_F_NOLOCK`）の場合**:
-   呼び出し元はすでに `qdisc_lock(q)`（`root_lock`）を保持しています。しかし、後で見る `sch_direct_xmit()` は、重い GSO 分割やドライバ呼び出しの最中に**一度 `root_lock` を手放します**。その隙に別 CPU が `root_lock` を取って `enqueue()` を終え、もしそのまま 2 つ目の CPU も `__qdisc_run()` に入ってしまうと、2 つの CPU が同時に dequeue してパケット順序が逆転します。
+   呼び出し元はすでに `qdisc_lock(q)`（`root_lock`）を保持しています。しかし、後で見る `sch_direct_xmit()` は、重い GSO 分割やドライバ呼び出しの最中に **一度 `root_lock` を手放します**。その隙に別 CPU が `root_lock` を取って `enqueue()` を終え、もしそのまま 2 つ目の CPU も `__qdisc_run()` に入ってしまうと、2 つの CPU が同時に dequeue してパケット順序が逆転します。
    そこで `qdisc->running`（`bool`）を使い、すでに別 CPU が実行中なら `qdisc_run_begin()` は `false` を返して抜けます。先に走っていた CPU は `sch_direct_xmit()` から戻って再び `root_lock` を取った後、`__qdisc_run()` の `while` ループで後続のパケットもまとめて dequeue するため、後から来た CPU は安心して帰ることができます。
 2. **ロックレス Qdisc（`TCQ_F_NOLOCK`）の場合**:
    `enqueue()` は `root_lock` を取りません。したがって dequeue ループを 1 つの CPU に制限するために `spin_trylock(&qdisc->seqlock)` を使います。
@@ -940,7 +940,7 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 
 - `qdisc_calculate_pkt_len(skb, q)`: `tc qdisc add ... stab ...` でサイズテーブル（ATM セル分割や L1 オーバーヘッド補正）が設定されていれば `pkt_len` を補正します。通常は設定されていないので何もしません。
 - **`if (q->flags & TCQ_F_NOLOCK)`**: `pfifo_fast` などのロックレス Qdisc の経路です。
-  - まず `TCQ_F_CAN_BYPASS` が立っており、`nolock_qdisc_is_empty(q)`（[include/net/sch_generic.h#L183](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n183)、`!(READ_ONCE(q->state) & QDISC_STATE_NON_EMPTY)`）が真で、かつ `qdisc_run_begin(q)` で `seqlock` が取れたら、**空キュー高速パス（bypass）**に入ります。
+  - まず `TCQ_F_CAN_BYPASS` が立っており、`nolock_qdisc_is_empty(q)`（[include/net/sch_generic.h#L183](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n183)、`!(READ_ONCE(q->state) & QDISC_STATE_NON_EMPTY)`）が真で、かつ `qdisc_run_begin(q)` で `seqlock` が取れたら、**空キュー高速パス（bypass）** に入ります。
   - `seqlock` を取った直後に `if (unlikely(!nolock_qdisc_is_empty(q)))` を再チェックしているのは、1 回目のチェックと `seqlock` 取得の一瞬の隙間に、直前まで走っていた別 CPU が `dev_requeue_skb()` 等で `STATE_MISSED` や `STATE_DRAINING` を立てた競合を捕まえるためです。もし空でなくなっていたら、追い越しを防ぐため素直に `dev_qdisc_enqueue()` でキューに入れて `__qdisc_run(q)` を回します。
   - 本当に空だった場合は、`enqueue()` も `dequeue()` も呼ばず、`qdisc_bstats_cpu_update(q, skb)` で per-CPU の送信統計だけを更新して **`sch_direct_xmit(skb, q, dev, txq, NULL, true)` で直接ドライバへ送ります**。
   - `sch_direct_xmit()` が実行されている間に別 CPU がパケットを enqueue して `STATE_MISSED` を立てた場合（`!nolock_qdisc_is_empty(q)`）かつ TX キューがまだ動ける（`sch_direct_xmit()` が `true` を返した）なら、引き続いて `__qdisc_run(q)` でそれらも吐き出します。
@@ -1038,7 +1038,7 @@ free_skbs:
 - **`defer_list` の仕組み**:
   1. 各 CPU は `root_lock` を取る前に、まず自分の `skb->ll_node` を `q->defer_list` の先頭へ `try_cmpxchg()` でプッシュします。
   2. もしプッシュする前の先頭 `first_n` が **`NULL` でなかった**（＝すでに別 CPU が先にリストを開始していた）なら、`q->defer_count` をインクリメントしてバースト上限（`net_hotdata.qdisc_max_burst`、既定 1000 パケット）を超えていないかだけ確認し、**`if (first_n) return NET_XMIT_SUCCESS;` でロックを一切取らずに即座に帰ります**。自分のパケットの `enqueue()` と送信は、最初にリストを作ったリーダー CPU が責任を持って代行してくれます。また、`first_n == NULL`（競合なし）の通常時は `atomic_long_inc_return(&q->defer_count)` すら実行しないため、単一 CPU 時のオーバーヘッドも最小です。
-  3. `first_n == NULL` だった（空の `defer_list` に最初の要素を入れた）**1 つのリーダー CPU だけ**が `spin_lock(root_lock)` に進みます。
+  3. `first_n == NULL` だった（空の `defer_list` に最初の要素を入れた）**1 つのリーダー CPU だけ** が `spin_lock(root_lock)` に進みます。
   4. `root_lock` を取ったら `llist_del_all(&q->defer_list)` で、自分がロック待ちしている間に他 CPU が積んでいった全 skb を 1 回の `xchg` で丸ごと回収します。`llist` は LIFO（後入れ先出し）スタックなので、到着順序を守るために `llist_reverse_order(ll_list)` で FIFO 順に反転させます。
 - **ロック型 Qdisc の空キューバイパス（4444〜4459 行目）**:
   - `TCQ_F_CAN_BYPASS` があり、Qdisc のキュー長が 0（`!qdisc_qlen(q)`）で、今回回収したリストが 1 パケットだけ（`!llist_next(ll_list)`）であり、かつ `qdisc_run_begin(q)` が真（他の CPU が `sch_direct_xmit()` のロック解放区間にいない）なら、`enqueue()` / `dequeue()` をバイパスして `sch_direct_xmit()` で直接送信します。
@@ -1046,7 +1046,7 @@ free_skbs:
   - バイパスできない場合は、`llist` 内の全パケットを `next` をプリフェッチしながら次々に `dev_qdisc_enqueue()` で Qdisc に投入し、最後に 1 回だけ `qdisc_run(q)` を呼びます。
   - なお、複数 CPU のパケットをまとめて処理したとき（`count != 1`）は、最後のパケットの `rc` がたまたま他 CPU のパケットのドロップであっても、リーダー自身の呼び出し元に誤ったエラーを返さないよう `rc = NET_XMIT_SUCCESS` に正規化しています。
 - **ロック外での遅延解放（`free_skbs:`、4476〜4478 行目）**:
-  - `spin_unlock(root_lock)` を抜けた**後**で、`to_free`（`enqueue()` でドロップされた skb リスト）と `to_free2`（`TCQ_F_DEQUEUE_DROPS` な Qdisc が `dequeue()` でドロップした skb リスト）を `tcf_kfree_skb_list()` で解放します。これで Step 1 で見た `tcp_wfree()` のデッドロックが完全に防がれます。
+  - `spin_unlock(root_lock)` を抜けた **後** で、`to_free`（`enqueue()` でドロップされた skb リスト）と `to_free2`（`TCQ_F_DEQUEUE_DROPS` な Qdisc が `dequeue()` でドロップした skb リスト）を `tcf_kfree_skb_list()` で解放します。これで Step 1 で見た `tcp_wfree()` のデッドロックが完全に防がれます。
 
 ---
 
@@ -1190,10 +1190,10 @@ trace:
 
 1. **最優先: `q->gso_skb`（再キューされたパケット、265〜306 行目）**
    - 前回の送信時にドライバが `NETDEV_TX_BUSY` を返した、あるいは TX キューが停止していたために `dev_requeue_skb()` で戻されたパケットです。順序を守るため、何よりも先にここから取り出します。
-   - `gso_skb` に入っているパケットは、前回の `sch_direct_xmit()` で**すでに `validate_xmit_skb_list()`（GSO 分割・チェックサム計算）を通過済み**なので、`*validate = false` にして二重検証をスキップします（IPsec XFRM オフロード時のみ例外）。
+   - `gso_skb` に入っているパケットは、前回の `sch_direct_xmit()` で **すでに `validate_xmit_skb_list()`（GSO 分割・チェックサム計算）を通過済み** なので、`*validate = false` にして二重検証をスキップします（IPsec XFRM オフロード時のみ例外）。
    - まだ `netif_xmit_frozen_or_stopped(txq)` が真（ドライバリングや BQL が詰まったまま）なら、取り出さずに `skb = NULL` で帰ります。このとき `qdisc_maybe_clear_missed(q, txq)`（[net/sched/sch_generic.c#L65](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_generic.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n65)）が `__QDISC_STATE_MISSED` を落として代わりに `__QDISC_STATE_DRAINING` を立てます（キューが止まっている間に `MISSED` が残っていると、`qdisc_run_end()` が無限に `__netif_schedule()` を繰り返して softirq ループに陥るのを防ぐためです）。
 2. **`TCQ_F_ONETXQUEUE` の事前停止チェック（310〜314 行目）**
-   - この Qdisc の全パケットが単一の `txq` 宛てだと分かっている場合は、`q->dequeue(q)` を呼ぶ**前**に `netif_xmit_frozen_or_stopped(txq)` を確認します。もし BQL（`QUEUE_STATE_STACK_XOFF`）やドライバ（`QUEUE_STATE_DRV_XOFF`）で TX キューが止まっていれば、そもそも `q->dequeue(q)` を呼ばずに `NULL` を返します。取り出してから `gso_skb` に積む無駄を避け、ギリギリまで Qdisc の本来のキュー内にパケットを置いておく（その間に高優先度パケットの追い越しや CoDel のドロップ判定を効かせる）ためです。
+   - この Qdisc の全パケットが単一の `txq` 宛てだと分かっている場合は、`q->dequeue(q)` を呼ぶ **前** に `netif_xmit_frozen_or_stopped(txq)` を確認します。もし BQL（`QUEUE_STATE_STACK_XOFF`）やドライバ（`QUEUE_STATE_DRV_XOFF`）で TX キューが止まっていれば、そもそも `q->dequeue(q)` を呼ばずに `NULL` を返します。取り出してから `gso_skb` に積む無駄を避け、ギリギリまで Qdisc の本来のキュー内にパケットを置いておく（その間に高優先度パケットの追い越しや CoDel のドロップ判定を効かせる）ためです。
 3. **第 2 優先: `q->skb_bad_txq`（316〜321 行目）**
    - `!TCQ_F_ONETXQUEUE` な Qdisc で、前回の `try_bulk_dequeue_skb_slow()` が引いた別 TX キュー宛ての退避パケットを取り出します。
 4. **第 3 優先: `q->dequeue(q)` と Bulk Dequeue（322〜329 行目）**
@@ -1296,9 +1296,9 @@ bool sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
 1. **`if (root_lock) spin_unlock(root_lock);`（351〜352 行目）**:
    まず Qdisc の `root_lock` を解放します。これによって、この CPU が GSO 分割や NIC ドライバ呼び出しを行っている間も、他の CPU はブロックされずに `q->defer_list` や `root_lock` 経由でパケットを enqueue できます。前述のとおり `q->running = true` が立っているため、他 CPU が勝手に dequeue を始めて順序を乱すことはありません。
 2. **`if (validate) skb = validate_xmit_skb_list(skb, dev, &again);`（355〜356 行目）**:
-   `root_lock` も `HARD_TX_LOCK` も持っていない**完全なロックなし状態**で、`validate_xmit_skb_list()`（[net/core/dev.c#L4254](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/core/dev.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4254)）を呼びます。ここではリスト内の各 skb に対して、NIC がオフロードできない機能（ソフトウェア GSO 分割 `skb_gso_segment()`、VLAN タグ挿入、ソフトウェアチェックサム `skb_checksum_help()`）を解決します。1 つの GSO パケットが複数のセグメントに分割された場合も、`validate_xmit_skb_list()` がそれらをすべて `skb->next` で 1 本の鎖に繋ぎ直して返します。
+   `root_lock` も `HARD_TX_LOCK` も持っていない **完全なロックなし状態** で、`validate_xmit_skb_list()`（[net/core/dev.c#L4254](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/core/dev.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n4254)）を呼びます。ここではリスト内の各 skb に対して、NIC がオフロードできない機能（ソフトウェア GSO 分割 `skb_gso_segment()`、VLAN タグ挿入、ソフトウェアチェックサム `skb_checksum_help()`）を解決します。1 つの GSO パケットが複数のセグメントに分割された場合も、`validate_xmit_skb_list()` がそれらをすべて `skb->next` で 1 本の鎖に繋ぎ直して返します。
 3. **`HARD_TX_LOCK` と `dev_hard_start_xmit()`（368〜376 行目）**:
-   TX キューのドライバロック `txq->_xmit_lock` を取り、キューが止まっていなければ `dev_hard_start_xmit()` を呼びます。すべて送り切れれば戻り値の `skb` は `NULL`、`ret` は `NETDEV_TX_OK` になります。途中でキューが止まったか `NETDEV_TX_BUSY` が返った場合は、**まだ送れていない残りのサブリストの先頭**が `skb` に返ってきます。
+   TX キューのドライバロック `txq->_xmit_lock` を取り、キューが止まっていなければ `dev_hard_start_xmit()` を呼びます。すべて送り切れれば戻り値の `skb` は `NULL`、`ret` は `NETDEV_TX_OK` になります。途中でキューが止まったか `NETDEV_TX_BUSY` が返った場合は、**まだ送れていない残りのサブリストの先頭** が `skb` に返ってきます。
 4. **`if (root_lock) spin_lock(root_lock);` と `dev_requeue_skb()`（382〜393 行目）**:
    再び `root_lock` を取り直します。もし未送信のパケットが残っていたら（`!dev_xmit_complete(ret)`）、`dev_requeue_skb(skb, q)`（[net/sched/sch_generic.c#L169](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_generic.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n169)）を呼び、`false` を返して `__qdisc_run()` のループを止めます。
 
@@ -1395,7 +1395,7 @@ out:
 
 - `dev_hard_start_xmit()` は、`try_bulk_dequeue_skb()` またはソフトウェア GSO 分割によって作られた `skb->next` の単方向リストを 1 つずつ `xmit_one()` に渡します。
 - **第 4 引数 `more = (next != NULL)`**: `netdev_start_xmit()` → `__netdev_start_xmit()` は、後続のパケットがまだリストにある（`more == true`）かつ TX キューが停止していないとき、per-CPU 変数 `softnet_data.xmit.more` をセットします。ドライバは `netdev_xmit_more()` でこれを見て、`true` の間は TX ディスクリプタをメモリに書くだけで高コストな PCIe MMIO 書き込み（Tail pointer / Doorbell の更新）を省略し、バッチの最後の 1 個（`more == false`）で初めて 1 回だけ Doorbell を鳴らします。
-- `dev_nit_active_rcu(dev)`: `tcpdump` などの `AF_PACKET` ソケットが有効なときだけ `dev_queue_xmit_nit()` でパケットのクローンを渡します。**Qdisc を出た後（かつ GSO 分割後）**にフックされているため、`tcpdump` で見える送信タイムスタンプやパケット順序は、Qdisc による並べ替えやペーシングを経た後の実際のワイヤ送出順と一致します。
+- `dev_nit_active_rcu(dev)`: `tcpdump` などの `AF_PACKET` ソケットが有効なときだけ `dev_queue_xmit_nit()` でパケットのクローンを渡します。**Qdisc を出た後（かつ GSO 分割後）** にフックされているため、`tcpdump` で見える送信タイムスタンプやパケット順序は、Qdisc による並べ替えやペーシングを経た後の実際のワイヤ送出順と一致します。
 
 #### `net_tx_action()` — `NET_TX_SOFTIRQ` による非同期ドレインと解放
 
@@ -1507,7 +1507,7 @@ static int pfifo_tail_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 - **`pfifo_enqueue()`（パケット数単位 Tail-drop FIFO）**:
   - 判定が `sch->q.qlen < READ_ONCE(sch->limit)`（パケット数）になる以外は `bfifo_enqueue()` と同じです。なお GSO スーパーパケットも `sch->q` 上では 1 つの `sk_buff` なので `qlen` は 1 として数えられます。
 - **`pfifo_tail_enqueue()`（パケット数単位 Head-drop FIFO: `pfifo_head_drop`）**:
-  - 名前は `pfifo_tail_enqueue`（末尾に入れる）ですが、満杯時に捨てるのは**先頭（Head）**です。
+  - 名前は `pfifo_tail_enqueue`（末尾に入れる）ですが、満杯時に捨てるのは **先頭（Head）** です。
   - `sch->q.qlen` が `limit` に達していたら、`__qdisc_queue_drop_head(sch, &sch->q, to_free)`（[include/net/sch_generic.h#L1276](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1276)）で最も古い先頭パケットを取り出して `to_free` に積み、新しい `skb` を末尾に追加します。
   - なぜ Tail drop より Head drop が有利かというと、（1）受信側へ届くパケットがより新しいものになり、（2）捨てられた先頭パケットの直後のシーケンス番号がすぐ送信されるため、受信側がいち早く重複 ACK（または SACK）を返して TCP の Fast Recovery を 1 キューイング遅延分早く発動できるからです。
   - さらに、もしこの FIFO が HTB などの親クラスの下にぶら下がっていた場合、古いパケットと新しいパケットのサイズ差 `prev_backlog - sch->qstats.backlog` だけ親のバックログを `qdisc_tree_reduce_backlog()` で調整し、最後に **`NET_XMIT_CN`** を返します（Step 1 で見たとおり、送信元がこのホスト自身の TCP ソケットなら即座に `tcp_enter_cwr()` が走ります）。
@@ -1628,7 +1628,7 @@ static inline struct skb_array *band2list(struct pfifo_fast_priv *priv,
 
 - `sch_default_prio2band`:「背景・RFC・論文では」で見たとおり、`skb->priority & TC_PRIO_MAX`（`0`〜`15`）を `0`, `1`, `2` の 3 バンドに変換するルックアップテーブルです。
 - `struct pfifo_fast_priv`（[net/sched/sch_generic.c#L769](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_generic.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n769)）: バンドごとに `struct skb_array`（[include/linux/skb_array.h#L25](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/linux/skb_array.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n25)）を 3 本持っています。
-  - `skb_array` の実体は固定長配列リングバッファ `struct ptr_ring` です。連結リスト（`qdisc_skb_head`）と違い、**producer 側のデータ（`producer` インデックスと `producer_lock`）と consumer 側のデータ（`consumer_head` / `consumer_tail` インデックスと `consumer_lock`）、そしてポインタ配列 `queue` がすべて別々のキャッシュラインにアライン**されています。これにより、enqueue する CPU と dequeue する CPU が互いのキャッシュラインを無効化し合わずに並行動作できます。
+  - `skb_array` の実体は固定長配列リングバッファ `struct ptr_ring` です。連結リスト（`qdisc_skb_head`）と違い、**producer 側のデータ（`producer` インデックスと `producer_lock`）と consumer 側のデータ（`consumer_head` / `consumer_tail` インデックスと `consumer_lock`）、そしてポインタ配列 `queue` がすべて別々のキャッシュラインにアライン** されています。これにより、enqueue する CPU と dequeue する CPU が互いのキャッシュラインを無効化し合わずに並行動作できます。
 
 #### `pfifo_fast_enqueue()` と `pfifo_fast_dequeue()`
 
@@ -1826,7 +1826,7 @@ static void attach_default_qdiscs(struct net_device *dev)
 ```
 
 - 単一キューデバイス（`!netif_is_multiqueue(dev)`）または `IFF_NO_QUEUE` デバイスでは、`attach_one_default_qdisc()` が `default_qdisc_ops`（`sysctl net.core.default_qdisc` で指定された Qdisc、既定は `pfifo_fast` や `fq_codel`）を直接生成して `txq->qdisc_sleeping` と `dev->qdisc` にセットします。
-- **マルチキューデバイス（`netif_is_multiqueue(dev)` すなわち `dev->num_tx_queues > 1`）**では、1242 行目の `else` 分岐に入り、まず `dev->qdisc`（デバイスの root）として **`mq_qdisc_ops`（`mq`）**を生成し、直後に `qdisc->ops->attach(qdisc)`（`mq_attach()`）を呼びます。
+- **マルチキューデバイス（`netif_is_multiqueue(dev)` すなわち `dev->num_tx_queues > 1`）** では、1242 行目の `else` 分岐に入り、まず `dev->qdisc`（デバイスの root）として **`mq_qdisc_ops`（`mq`）** を生成し、直後に `qdisc->ops->attach(qdisc)`（`mq_attach()`）を呼びます。
 
 そして `dev_activate()`（1286〜1312 行目）が、リンクアップ（`netif_carrier_ok(dev)`）を確認した上で、各 TX キューの `transition_one_qdisc()`（[net/sched/sch_generic.c#L1269](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_generic.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1269)）を呼んで `dev_queue->qdisc = dev_queue->qdisc_sleeping` へと切り替えます。
 
@@ -1959,7 +1959,7 @@ void mq_dump_common(struct Qdisc *sch, struct sk_buff *skb)
 
 ### Step 8: BPF struct_ops による Qdisc — `net/sched/bpf_qdisc.c`
 
-最後に、2025 年に導入された `CONFIG_NET_SCH_BPF`（`net/sched/bpf_qdisc.c`）を全行読みます。第 11 章 Step 14 で見た `bpf_tcp_ca.c` が `struct tcp_congestion_ops` を BPF `struct_ops` として公開したのと同じように、`bpf_qdisc.c` は **`struct Qdisc_ops` を BPF `struct_ops`（`bpf_Qdisc_ops`）として公開**し、カーネルモジュールを書かずに BPF プログラムだけで独自のパケットスケジューラ（FIFO、FQ、EDT ペーシング、優先度キューなど）を実装・アタッチできるようにします。
+最後に、2025 年に導入された `CONFIG_NET_SCH_BPF`（`net/sched/bpf_qdisc.c`）を全行読みます。第 11 章 Step 14 で見た `bpf_tcp_ca.c` が `struct tcp_congestion_ops` を BPF `struct_ops` として公開したのと同じように、`bpf_qdisc.c` は **`struct Qdisc_ops` を BPF `struct_ops`（`bpf_Qdisc_ops`）として公開** し、カーネルモジュールを書かずに BPF プログラムだけで独自のパケットスケジューラ（FIFO、FQ、EDT ペーシング、優先度キューなど）を実装・アタッチできるようにします。
 
 #### 私有データ構造と引数アクセス検証: `bpf_qdisc_is_valid_access()`
 
@@ -2063,8 +2063,8 @@ static int bpf_qdisc_sk_buff_access(struct bpf_verifier_log *log,
 }
 ```
 
-- BPF `struct_ops` プログラムは、BTF を通じてカーネル構造体の任意のフィールドを**読み出す**ことができます（`skb->len`, `skb->priority`, `qdisc_skb_cb(skb)->pkt_len`, `sch->limit` など）。
-- 一方、**書き込み（変更）**が許されるフィールドは `.btf_struct_access`（`bpf_qdisc_btf_struct_access()`）で厳密にホワイトリスト制限されています。
+- BPF `struct_ops` プログラムは、BTF を通じてカーネル構造体の任意のフィールドを **読み出す** ことができます（`skb->len`, `skb->priority`, `qdisc_skb_cb(skb)->pkt_len`, `sch->limit` など）。
+- 一方、**書き込み（変更）** が許されるフィールドは `.btf_struct_access`（`bpf_qdisc_btf_struct_access()`）で厳密にホワイトリスト制限されています。
   1. **`struct Qdisc` で書き込み可能なフィールド（`bpf_qdisc_qdisc_access()`）**:
      - `sch->limit`: `.init` でキュー上限を設定するため。
      - `sch->q.qlen`: パケットを BPF 側のキュー（`bpf_list_head` や `bpf_rb_root`）に出し入れした際に、カーネルの空キュー判定（`!qdisc_qlen(q)`）や統計ダンプが正しく動くよう、BPF プログラムが `sch->q.qlen++` / `sch->q.qlen--` を更新するため。
@@ -2076,7 +2076,7 @@ static int bpf_qdisc_sk_buff_access(struct bpf_verifier_log *log,
 #### 自動生成される Prologue / Epilogue と Watchdog の保護
 
 もし BPF プログラムが `.init` で `qdisc_watchdog` の初期化を忘れたり、`.reset` や `.destroy` でタイマのキャンセル（`qdisc_watchdog_cancel()`）を忘れたまま Qdisc が解放されたりすると、解放後に満了した hrtimer が UAF（Use-After-Free）を引き起こします。
-そこで `bpf_qdisc` は、BPF プログラム作成者にタイマの初期化・破棄を任せず、**検証器が `.init` の先頭（Prologue）と `.reset` / `.destroy` の末尾（Epilogue）に隠し kfunc 呼び出しの BPF バイトコードを自動挿入する**設計を採っています。
+そこで `bpf_qdisc` は、BPF プログラム作成者にタイマの初期化・破棄を任せず、**検証器が `.init` の先頭（Prologue）と `.reset` / `.destroy` の末尾（Epilogue）に隠し kfunc 呼び出しの BPF バイトコードを自動挿入する** 設計を採っています。
 
 133〜185 行目の `bpf_qdisc_gen_prologue()`（[net/sched/bpf_qdisc.c#L135](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n135)）と `bpf_qdisc_gen_epilogue()`（[net/sched/bpf_qdisc.c#L165](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n165)）、および呼ばれる隠し kfunc である `bpf_qdisc_init_prologue()`（[net/sched/bpf_qdisc.c#L234](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n234)）と `bpf_qdisc_reset_destroy_epilogue()`（[net/sched/bpf_qdisc.c#L261](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n261)）を見ます。
 
@@ -2174,7 +2174,7 @@ __bpf_kfunc void bpf_qdisc_reset_destroy_epilogue(struct Qdisc *sch)
 - **`.init` の Prologue**:
   - `init(struct Qdisc *sch, struct nlattr *arg, struct netlink_ext_ack *extack)` のコンテキスト配列 `ctx` から `ctx[0]`（`sch`）と `ctx[2]`（バイトオフセット 16 の `extack`）を取り出して `bpf_qdisc_init_prologue(sch, extack)` を呼び、非 0 なら BPF プログラム本体を実行せずにそのままエラー終了します。
   - `bpf_qdisc_init_prologue()` はまず `qdisc_watchdog_init(&q->watchdog, sch)` でタイマを初期化します（万一この直後にエラーで `.destroy` が呼ばれても、`qdisc_watchdog_cancel()` が未初期化タイマを踏まないよう最初に初期化します）。
-  - 次にアタッチ位置を検査します。**BPF Qdisc はデバイスの `root`（`TC_H_ROOT`）、または `mq` / `mqprio`（`TCQ_F_MQROOT`）の直下の子としてのみアタッチ可能**です。HTB などのクラスフル Qdisc の葉にアタッチすることは `-EINVAL`（`"BPF qdisc only supported on root or mq"`）で拒否されます。なお、`net.core.default_qdisc` に BPF Qdisc を設定して `mq_init()` の中から `qdisc_create_dflt()` が呼ばれたときは、親の `mq` がまだ `qdisc_hash` に登録される前なので `qdisc_lookup()` が `NULL` を返します。そのケースを正しく許可するため `if (p && !(p->flags & TCQ_F_MQROOT))` という条件になっています。
+  - 次にアタッチ位置を検査します。**BPF Qdisc はデバイスの `root`（`TC_H_ROOT`）、または `mq` / `mqprio`（`TCQ_F_MQROOT`）の直下の子としてのみアタッチ可能** です。HTB などのクラスフル Qdisc の葉にアタッチすることは `-EINVAL`（`"BPF qdisc only supported on root or mq"`）で拒否されます。なお、`net.core.default_qdisc` に BPF Qdisc を設定して `mq_init()` の中から `qdisc_create_dflt()` が呼ばれたときは、親の `mq` がまだ `qdisc_hash` に登録される前なので `qdisc_lookup()` が `NULL` を返します。そのケースを正しく許可するため `if (p && !(p->flags & TCQ_F_MQROOT))` という条件になっています。
 - **`.reset` と `.destroy` の Epilogue**:
   - BPF プログラムの `.reset` または `.destroy` 本体が走り終えた直後に `bpf_qdisc_reset_destroy_epilogue(sch)` が呼ばれ、必ず `qdisc_watchdog_cancel(&q->watchdog)` でタイマが停止されます。
 
@@ -2251,7 +2251,7 @@ __bpf_kfunc void bpf_qdisc_bstats_update(struct Qdisc *sch, const struct sk_buff
 | `bpf_qdisc_bstats_update(sch, skb)` | — | `.dequeue` のみ | `sch->bstats` の送信バイト・パケット数を更新する |
 
 - **所有権（Reference tracking）の追跡**:
-  `.enqueue` の第 1 引数 `struct sk_buff *skb__ref`（[net/sched/bpf_qdisc.c#L413](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n413)）には `__ref` アノテーションが付いています。そのため BPF 検証器は、`.enqueue` に渡された `skb` を**「必ず何らかの形で消費（release）しなければならない参照」**として追跡します。
+  `.enqueue` の第 1 引数 `struct sk_buff *skb__ref`（[net/sched/bpf_qdisc.c#L413](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n413)）には `__ref` アノテーションが付いています。そのため BPF 検証器は、`.enqueue` に渡された `skb` を **「必ず何らかの形で消費（release）しなければならない参照」** として追跡します。
   BPF プログラムは、（a）`bpf_list_push_back()` や `bpf_rbtree_add()` で BPF データ構造へ格納する、（b）`bpf_qdisc_skb_drop(skb, to_free)` で遅延ドロップリストへ渡す、（c）`bpf_kfree_skb(skb)` で解放する、のいずれかを行わなければならず、`skb` を放置したまま `return` するとロード時に検証器エラー（Unreleased reference）になります。逆に、マップ内に入ったまま残った `skb` は、マップ解放時に登録されたデストラクタ `bpf_kfree_skb_dtor()`（463〜468 行目の `register_btf_id_dtor_kfuncs()`）によって自動的に解放されるため、メモリリークが起きません。
 
 #### メンバー初期化、必須フック検証、登録: `bpf_qdisc_init_member()` と `bpf_qdisc_validate()`
@@ -2316,7 +2316,7 @@ static int bpf_qdisc_validate(void *kdata)
   - `priv_size`: ユーザ側が勝手に指定することは禁止し（`if (uqdisc_ops->priv_size) return -EINVAL;`）、カーネルが強制的に `sizeof(struct bpf_sched_data)`（`qdisc_watchdog` 分）を設定します。
   - **`qdisc_ops->peek = qdisc_peek_dequeued;`**: `register_qdisc()` は `.peek` が `NULL` の Qdisc を拒否します。しかし BPF で任意のグラフ構造を持つキューに対して非破壊的な `.peek` を書かせるのは負担が大きく、かつ root / `mq` 直下の Qdisc では通常 `.peek` は呼ばれません。そこでカーネルは自動的に汎用ヘルパ `qdisc_peek_dequeued`（[include/net/sch_generic.h#L1301](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1301)、一度 `sch->dequeue(sch)` を呼んで `sch->gso_skb` の先頭に退避させる擬似 peek）をセットします。
 - `bpf_qdisc_validate()`（[net/sched/bpf_qdisc.c#L402](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/bpf_qdisc.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n402)）:
-  - **`enqueue`, `dequeue`, `init`, `reset`, `destroy` の 5 つのコールバックすべてが必須**です。なぜ `.init`、`.reset`、`.destroy` まで必須なのかというと、先ほど見た `bpf_qdisc_gen_prologue()` と `bpf_qdisc_gen_epilogue()` は **BPF プログラムの命令列の先頭・末尾に挿入される**ため、そもそも BPF プログラムが提供されていなければ `qdisc_watchdog` の初期化やキャンセルが実行されないからです。
+  - **`enqueue`, `dequeue`, `init`, `reset`, `destroy` の 5 つのコールバックすべてが必須** です。なぜ `.init`、`.reset`、`.destroy` まで必須なのかというと、先ほど見た `bpf_qdisc_gen_prologue()` と `bpf_qdisc_gen_epilogue()` は **BPF プログラムの命令列の先頭・末尾に挿入される** ため、そもそも BPF プログラムが提供されていなければ `qdisc_watchdog` の初期化やキャンセルが実行されないからです。
 - `bpf_qdisc_reg()` / `bpf_qdisc_unreg()`: 標準の `register_qdisc()` / `unregister_qdisc()` をそのまま呼びます。登録された後は、`tc qdisc add dev eth0 root <id>` でも `sysctl net.core.default_qdisc=<id>` でも、C で書かれた組み込み Qdisc とまったく同じように扱われます。
 
 
@@ -2435,8 +2435,8 @@ Step 2 で見たとおり、`struct Qdisc` と `struct netdev_queue` はどち�
 
 `__dev_xmit_skb()` の `q->defer_list` は、いわゆる **Flat Combining** アルゴリズムを実装しています。
 
-1. 最初の CPU A が `root_lock` を取って処理している最中に CPU B, C, D が到着すると、CPU B, C, D は `llist_add(&skb->ll_node, &q->defer_list)`（アトミックなポインタ差し替え 1 回）だけを行って**ロックを待たずに即座に自分のスレッドへ戻ります**。
-2. CPU A は自分のパケットを処理した後、`llist_del_all(&q->defer_list)` で CPU B, C, D が置いていったパケットのリストを 1 回の `xchg` でごっそり受け取り、`llist_reverse_order()` で FIFO 順に戻して、**すでに温まっている自分の L1 キャッシュ上で**まとめて `q->enqueue()` を実行します。
+1. 最初の CPU A が `root_lock` を取って処理している最中に CPU B, C, D が到着すると、CPU B, C, D は `llist_add(&skb->ll_node, &q->defer_list)`（アトミックなポインタ差し替え 1 回）だけを行って **ロックを待たずに即座に自分のスレッドへ戻ります**。
+2. CPU A は自分のパケットを処理した後、`llist_del_all(&q->defer_list)` で CPU B, C, D が置いていったパケットのリストを 1 回の `xchg` でごっそり受け取り、`llist_reverse_order()` で FIFO 順に戻して、**すでに温まっている自分の L1 キャッシュ上で** まとめて `q->enqueue()` を実行します。
 3. 結果として、キューのデータ構造や統計カウンタを保持するキャッシュラインは常に CPU A の L1 キャッシュに留まり続け、コア間のキャッシュコヒーレンシ通信が劇的に減ります。
 
 ### 4. BQL と `xmit_more` によるバッチ送信
@@ -2476,7 +2476,7 @@ static inline u64 psched_l2t_ns(const struct psched_ratecfg *r,
 }
 ```
 
-設定時（`psched_ratecfg_precompute()`）に、1 秒（ $10^9\text{ ns}$）あたりのバイト数 `rate_bytes_ps` から $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは**高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ**でナノ秒への変換を完了させています。
+設定時（`psched_ratecfg_precompute()`）に、1 秒（ $10^9\text{ ns}$ ）あたりのバイト数 `rate_bytes_ps` から $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは **高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ** でナノ秒への変換を完了させています。
 
 ---
 
@@ -2502,11 +2502,11 @@ qdisc pfifo_fast 0: parent :1 bands 3 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1
 
 | `tc -s qdisc show` の表示 | カーネル内のソース（`struct Qdisc`） | 集計関数（`net/core/gen_stats.c`） | 意味と注意点 |
 | --- | --- | --- | --- |
-| `Sent <X> bytes <Y> pkt` | `q->bstats` または per-CPU `q->cpu_bstats`（`struct gnet_stats_basic_sync`） | `gnet_stats_copy_basic()` | **`dequeue_skb()` で Qdisc から取り出された**累計ワイヤバイト数とセグメント数（GSO パケットは `pkt_segs` 個として加算） |
+| `Sent <X> bytes <Y> pkt` | `q->bstats` または per-CPU `q->cpu_bstats`（`struct gnet_stats_basic_sync`） | `gnet_stats_copy_basic()` | **`dequeue_skb()` で Qdisc から取り出された** 累計ワイヤバイト数とセグメント数（GSO パケットは `pkt_segs` 個として加算） |
 | `dropped <D>` | `q->qstats.drops` または per-CPU `q->cpu_qstats->drops` | `gnet_stats_copy_queue()` | `qdisc_drop()` 等で Qdisc が破棄したパケット数 |
 | `overlimits <O>` | `q->qstats.overlimits`（または `cpu_qstats`） | `gnet_stats_copy_queue()` | トークン不足や帯域上限により送信を遅延・制限した回数（シェーパや AQM で使用） |
 | `requeues <R>` | `q->qstats.requeues`（または `cpu_qstats`） | `gnet_stats_copy_queue()` | ドライバが `NETDEV_TX_BUSY` を返した、または TX キューが停止したために `dev_requeue_skb()` で `q->gso_skb` に戻された回数 |
-| `backlog <B>b <P>p` | `q->qstats.backlog`（バイト）と `qdisc_qlen_sum(q)`（パケット数） | `gnet_stats_copy_queue()` | **今この瞬間に Qdisc 内に滞留している**バイト数と `sk_buff` 数 |
+| `backlog <B>b <P>p` | `q->qstats.backlog`（バイト）と `qdisc_qlen_sum(q)`（パケット数） | `gnet_stats_copy_queue()` | **今この瞬間に Qdisc 内に滞留している** バイト数と `sk_buff` 数 |
 
 また、`mq` の下で TX キューごとの統計を見たい場合は、`tc -s class show dev eth0` を実行すると、`mq_dump_class_stats()`（[net/sched/sch_mq.c#L266](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_mq.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n266)）が各ハードウェア TX キュー（`class mq :1`, `:2`, ...）の `dev_queue->qdisc_sleeping` の統計を個別に返してくれます。
 
@@ -2538,7 +2538,7 @@ qdisc pfifo_fast 0: parent :1 bands 3 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1
 | `net:net_dev_start_xmit` | `xmit_one()` でドライバ `ndo_start_xmit` を呼ぶ直前 | `name`, `queue_mapping`, `skbaddr`, `len`, `data_len`, `gso_size`, `gso_segs`, `gso_type` | Qdisc を出た後の実際の送信時刻と GSO 状態 |
 | `net:net_dev_xmit` | `xmit_one()` でドライバから戻った直後 | `skbaddr`, `len`, `rc`, `name` | ドライバの戻り値 `rc`（`NETDEV_TX_OK == 0` か `NETDEV_TX_BUSY == 16` か） |
 
-たとえば、`perf` や `bpftrace` で `qdisc:qdisc_enqueue` と `qdisc:qdisc_dequeue` の時刻差を同じ `skbaddr` で測れば、**特定の Qdisc の内部で何マイクロ秒滞留したか（Sojourn time）**をナノ秒精度でヒストグラム化できます。
+たとえば、`perf` や `bpftrace` で `qdisc:qdisc_enqueue` と `qdisc:qdisc_dequeue` の時刻差を同じ `skbaddr` で測れば、**特定の Qdisc の内部で何マイクロ秒滞留したか（Sojourn time）** をナノ秒精度でヒストグラム化できます。
 
 ```bash
 # Qdisc でドロップされたパケットの Qdisc 種別と理由を表示する例
@@ -2559,7 +2559,7 @@ perf trace -e qdisc:qdisc_drop
 
 ## IPv4 と IPv6
 
-`dev_queue_xmit()` に入った瞬間から下（Qdisc フレームワーク、`pfifo`, `pfifo_fast`, `mq`, `bpf_qdisc`、および NIC ドライバ）は、**L3 プロトコル（IPv4 か IPv6 か）に依存しない共通コード**として動作します。ただし、`dev_queue_xmit()` に到達する直前の L3 出力パスと、`skb` にセットされるメタデータには以下の違いがあります。
+`dev_queue_xmit()` に入った瞬間から下（Qdisc フレームワーク、`pfifo`, `pfifo_fast`, `mq`, `bpf_qdisc`、および NIC ドライバ）は、**L3 プロトコル（IPv4 か IPv6 か）に依存しない共通コード** として動作します。ただし、`dev_queue_xmit()` に到達する直前の L3 出力パスと、`skb` にセットされるメタデータには以下の違いがあります。
 
 | 項目 | IPv4 | IPv6 |
 | --- | --- | --- |
@@ -2582,7 +2582,7 @@ perf trace -e qdisc:qdisc_drop
 <details>
 <summary>答え</summary>
 
-`__dev_xmit_skb()` の空キュー高速パスは、`(q->flags & TCQ_F_CAN_BYPASS) && !qdisc_qlen(q) && qdisc_run_begin(q)` が成り立つときに **`q->enqueue()` を一切呼ばずに**直接 `sch_direct_xmit()` でパケットを送信してしまいます。
+`__dev_xmit_skb()` の空キュー高速パスは、`(q->flags & TCQ_F_CAN_BYPASS) && !qdisc_qlen(q) && qdisc_run_begin(q)` が成り立つときに **`q->enqueue()` を一切呼ばずに** 直接 `sch_direct_xmit()` でパケットを送信してしまいます。
 
 もし `limit == 0`（あるいは `bfifo` で 1 MTU パケットすら入らない `limit < MTU`）のときに `TCQ_F_CAN_BYPASS` を立ててしまうと、キューが常に空（`qlen == 0`）であるため、すべてのパケットが `pfifo_enqueue()` / `bfifo_enqueue()` の上限チェックをバイパスして NIC から出て行ってしまいます。`limit 0` で全パケットをドロップさせる設定（`packetdrill` のテスト等でも使用）を正しく機能させるために、最低 1 パケットがキューに入り得る `limit` のときだけ `TCQ_F_CAN_BYPASS` を有効化しています。
 
@@ -2603,12 +2603,12 @@ CPU A が `sch_direct_xmit()` の中で `root_lock` を解放している間に�
 
 ### Q3. `pfifo_fast_enqueue()` における `qdisc_pkt_len(skb)` の読み出し位置
 
-`pfifo_fast_enqueue()` では、`skb_array_produce(q, skb)` を呼ぶ**前**に `unsigned int pkt_len = qdisc_pkt_len(skb);` をローカル変数に保存し、`skb_array_produce()` の**後**に `qdisc_update_stats_at_enqueue(qdisc, pkt_len)` を呼んでいます。もし `qdisc_update_stats_at_enqueue(qdisc, qdisc_pkt_len(skb))` のように `skb_array_produce()` の後で `skb` から長さを読むと書いたら、何が起きますか？
+`pfifo_fast_enqueue()` では、`skb_array_produce(q, skb)` を呼ぶ **前** に `unsigned int pkt_len = qdisc_pkt_len(skb);` をローカル変数に保存し、`skb_array_produce()` の **後** に `qdisc_update_stats_at_enqueue(qdisc, pkt_len)` を呼んでいます。もし `qdisc_update_stats_at_enqueue(qdisc, qdisc_pkt_len(skb))` のように `skb_array_produce()` の後で `skb` から長さを読むと書いたら、何が起きますか？
 
 <details>
 <summary>答え</summary>
 
-**Use-After-Free（解放済みメモリ読み出し）**が起きます。
+**Use-After-Free（解放済みメモリ読み出し）** が起きます。
 
 `pfifo_fast` は `TCQ_F_NOLOCK` Qdisc であり、Enqueue 側と Dequeue 側は共通のスピンロックを持っていません。CPU A が `skb_array_produce(q, skb)` でリングバッファに `skb` ポインタを書き込んだその瞬間に、別 CPU B で走っている `pfifo_fast_dequeue()` がその `skb` をリングから取り出し、NIC ドライバで送信完了して `kfree_skb()` で解放してしまう可能性があります。したがって、`skb_array_produce()` が成功した後は `skb` ポインタに一切触れてはならず、統計更新に必要な `pkt_len` は必ずリングへ入れる前にローカル変数へ退避しておく必要があります。
 
@@ -2635,7 +2635,7 @@ C で書かれたカーネル内の Qdisc（たとえば `sch_fifo.c` の `pfifo
 <details>
 <summary>答え</summary>
 
-`bpf_qdisc` は、BPF プログラムが `bpf_qdisc_watchdog_schedule()` を使った際に未初期化タイマ操作やタイマキャンセル忘れによる UAF が起きないよう、`bpf_qdisc_gen_prologue()` と `bpf_qdisc_gen_epilogue()` によって **`.init` BPF プログラムの先頭に `bpf_qdisc_init_prologue()`（`qdisc_watchdog_init` と root/`mq` 検査）を、`.reset` および `.destroy` BPF プログラムの末尾に `bpf_qdisc_reset_destroy_epilogue()`（`qdisc_watchdog_cancel`）をバイトコードとして自動注入**しています。
+`bpf_qdisc` は、BPF プログラムが `bpf_qdisc_watchdog_schedule()` を使った際に未初期化タイマ操作やタイマキャンセル忘れによる UAF が起きないよう、`bpf_qdisc_gen_prologue()` と `bpf_qdisc_gen_epilogue()` によって **`.init` BPF プログラムの先頭に `bpf_qdisc_init_prologue()`（`qdisc_watchdog_init` と root/`mq` 検査）を、`.reset` および `.destroy` BPF プログラムの末尾に `bpf_qdisc_reset_destroy_epilogue()`（`qdisc_watchdog_cancel`）をバイトコードとして自動注入** しています。
 
 もし BPF 側で `.init`、`.reset`、`.destroy` のいずれかが未定義（`NULL`）だと、そもそもプロローグやエピローグを注入する対象の BPF プログラムが存在しないため、親 Qdisc のチェックや `qdisc_watchdog` の初期化・キャンセルが実行されなくなってしまいます。そのため、BPF 側が空の関数であっても 5 つすべてのコールバック定義を必須としています。
 
@@ -2647,7 +2647,7 @@ C で書かれたカーネル内の Qdisc（たとえば `sch_fifo.c` の `pfifo
 
 - **Qdisc の位置づけと TCP との 3 つのフィードバックループ**:
   - Qdisc は L3 の下（`dev_queue_xmit()`）と NIC ドライバ（`ndo_start_xmit()`）の間に位置します。
-  - **BQL（Byte Queue Limits）**が NIC ハードウェア TX リングのインフライト量を最小限に抑えてパケットを Qdisc に押し戻し、**TSQ（TCP Small Queues）**がソケットごとに Qdisc へ積める量を制限し、さらにローカル Qdisc からの **`NET_XMIT_CN` / `NET_XMIT_DROP`** が `tcp_transmit_skb()` で即座に `tcp_enter_cwr()` を起動します。
+  - **BQL（Byte Queue Limits）** が NIC ハードウェア TX リングのインフライト量を最小限に抑えてパケットを Qdisc に押し戻し、**TSQ（TCP Small Queues）** がソケットごとに Qdisc へ積める量を制限し、さらにローカル Qdisc からの **`NET_XMIT_CN` / `NET_XMIT_DROP`** が `tcp_transmit_skb()` で即座に `tcp_enter_cwr()` を起動します。
 - **送信高速パス（`__dev_xmit_skb()` と `__qdisc_run()`）**:
   - ロック型 Qdisc は `q->defer_list`（`llist`）による Flat Combining でメニーコア間のスピンロック競合を排除し、ロックレス Qdisc（`TCQ_F_NOLOCK`）は `q->seqlock` と `STATE_MISSED` / `STATE_DRAINING` で単一 Dequeue を保証します。
   - キューが空の Work-conserving Qdisc（`TCQ_F_CAN_BYPASS`）は `sch_direct_xmit()` で NIC へ直結送信し、キューに溜まったときは `try_bulk_dequeue_skb()` と `xmit_more` で最大 8 パケットをバッチ化して PCIe Doorbell を削減します。

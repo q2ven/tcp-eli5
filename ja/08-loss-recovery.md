@@ -6,7 +6,7 @@
 
 宅配会社が 1 番から 10 番までの小包（伝票付きの小包）を同じ部屋の郵便受けに順番に出荷したとします。受け取り側は「3 番まで受け取りました」という受領印に加えて、「ただし 5〜7 番と 9 番は先に届いて順番待ちの棚に置いてあります」というメモ（SACK）を付けて返してくれます。
 
-発送係は手元の台帳（スコアボード）に「届いた」「たぶん失くした」「再発送した」の印を付けていきます。4 番が失くなったのか、ただ遅れているだけなのかは分かりません。そこで現代の発送係は「4 番より**後に出荷した** 7 番がもう届いたのに、4 番は出荷から『最近の往復時間 + 少しの猶予』を過ぎても届かない。なら失くしたと判断しよう」と時刻で決めます（RACK）。
+発送係は手元の台帳（スコアボード）に「届いた」「たぶん失くした」「再発送した」の印を付けていきます。4 番が失くなったのか、ただ遅れているだけなのかは分かりません。そこで現代の発送係は「4 番より **後に出荷した** 7 番がもう届いたのに、4 番は出荷から『最近の往復時間 + 少しの猶予』を過ぎても届かない。なら失くしたと判断しよう」と時刻で決めます（RACK）。
 
 失くしたと判断したら再発送しますが、道路が混んでいた証拠なので、一度に道路へ出せるトラックの台数（cwnd）を減らします。ただし急ブレーキは踏まず、「受領印が 1 つ返ってくるたびに、新しい目標台数との比率でトラックを出す」ようにじわじわ減らします（PRR）。
 
@@ -20,8 +20,8 @@
 
 - **RFC 2018 — TCP Selective Acknowledgment Options**: 受信側が「累積 ACK より先で受け取った範囲」を最大 4 ブロック（タイムスタンプ併用時は通常 3）まで送り返すオプションです。送信側には「SACK された範囲を再送しなくてよい」という情報を与えます。送信側の振る舞いは [RFC 2018 §5](https://www.rfc-editor.org/rfc/rfc2018#section-5)、受信側が SACK 済みデータを捨てうる（reneging）ことは [RFC 2018 §8](https://www.rfc-editor.org/rfc/rfc2018#section-8) にあります。
 - **RFC 2883 — An Extension to the SACK Option (D-SACK)**: 重複して受け取ったセグメントを最初の SACK ブロックで報告する拡張です。送信側はこれで「再送は不要だった」と知ることができます（[RFC 2883 §4](https://www.rfc-editor.org/rfc/rfc2883#section-4)）。
-- **RFC 6675 — A Conservative Loss Recovery Algorithm Based on SACK**（RFC 3517 を置き換え）: SACK スコアボードから `pipe`（ネットワーク内にあると推定されるデータ量）を計算し、`IsLost()`（DupThresh 個の SACK が上にあればロス）で再送対象を決める古典的アルゴリズムです。Linux はこれを**文字通りには実装していません**。2025 年に関連コードも削除されました（後述）。
-- **RFC 8985 — The RACK-TLP Loss Detection Algorithm for TCP**: パケット数ではなく**送信時刻**でロスを判定する RACK と、テール（末尾）ロスを RTO より早く発見する TLP を定義した Standards Track の RFC です。現在の Linux のロス検出はこれが基本です。
+- **RFC 6675 — A Conservative Loss Recovery Algorithm Based on SACK**（RFC 3517 を置き換え）: SACK スコアボードから `pipe`（ネットワーク内にあると推定されるデータ量）を計算し、`IsLost()`（DupThresh 個の SACK が上にあればロス）で再送対象を決める古典的アルゴリズムです。Linux はこれを **文字通りには実装していません**。2025 年に関連コードも削除されました（後述）。
+- **RFC 8985 — The RACK-TLP Loss Detection Algorithm for TCP**: パケット数ではなく **送信時刻** でロスを判定する RACK と、テール（末尾）ロスを RTO より早く発見する TLP を定義した Standards Track の RFC です。現在の Linux のロス検出はこれが基本です。
 - **RFC 6937 — Proportional Rate Reduction for TCP**（Experimental。標準化版の RFC 9937 で置き換えられています）: 回復中に cwnd を ssthresh までどう減らしていくかを決めるアルゴリズムです。ACK で届いた量に比例して送信量を決めます。
 - **RFC 6298 — Computing TCP's Retransmission Timer**: RTO の計算と、タイムアウト時に RTO を 2 倍にする backoff を定めます（[RFC 6298 §5](https://www.rfc-editor.org/rfc/rfc6298#section-5)）。
 - **RFC 5682 — Forward RTO-Recovery (F-RTO)**: RTO の後に届く ACK を見て、そのタイムアウトが spurious（実はロスでなかった）かどうかを判定します。SACK 版は [RFC 5682 §3](https://www.rfc-editor.org/rfc/rfc5682#section-3) です。
@@ -49,7 +49,7 @@ RFC 6675 はスコアボードの上で次の関数を定義します（[RFC 667
 
 Linux の対応はこうなっています。
 
-- `pipe` はバイトではなく**パケット数**で、`tcp_packets_in_flight()` = `packets_out - (sacked_out + lost_out) + retrans_out` です。RFC の SetPipe() の「SACK されておらず IsLost でもないもの + 再送分」をカウンタの足し引きで O(1) に求めたものです。
+- `pipe` はバイトではなく **パケット数** で、`tcp_packets_in_flight()` = `packets_out - (sacked_out + lost_out) + retrans_out` です。RFC の SetPipe() の「SACK されておらず IsLost でもないもの + 再送分」をカウンタの足し引きで O(1) に求めたものです。
 - `IsLost()` は RACK に置き換えられています。DupThresh の考え方は `tcp_rack_reo_wnd()` が「まだ並べ替えを見ていない接続で SACK が `tp->reordering` 個以上あれば reo_wnd を 0 にする」という形で残しています。
 - `NextSeg()` の規則 1（ロスした所の再送）は `tcp_xmit_retransmit_queue()`、規則 2（新データ）は `tcp_write_xmit()` が担当します。規則 3（ロスと判定されていない穴の先回り再送）と rescue retransmission は Linux にはありません。後者の役目は TLP が果たします。
 
@@ -155,16 +155,16 @@ SACK 版 F-RTO（[RFC 5682 §3.1](https://www.rfc-editor.org/rfc/rfc5682#section
 1. **Step 1**: RTO が満了したら、最初の未 ACK セグメント（SND.UNA）を再送します。回復中でなければ `SpuriousRecovery = FALSE` とし、`recover = SND.NXT` を覚えます。
 2. **Step 2**: 最初の ACK で
    - (a) 重複 ACK、または ACK が `recover` 以上を確認したら、通常の RTO 回復を続けます。
-   - (b) SND.UNA を進めたが `recover` に届かないなら、**新しいデータ**を 2 セグメント送り、Step 3 へ進みます（送れる新データがなければ通常の回復へ）。
+   - (b) SND.UNA を進めたが `recover` に届かないなら、**新しいデータ** を 2 セグメント送り、Step 3 へ進みます（送れる新データがなければ通常の回復へ）。
 3. **Step 3**: 次の ACK で
    - (a) 重複 ACK（または SACK が付いている）なら、ロスは本物でした。通常の回復を続けます。
-   - (b) SND.UNA を進め、かつ**再送していない**セグメントを確認したなら、RTO は spurious でした。Eifel response（RFC 4015）などで輻輳状態を元に戻します。
+   - (b) SND.UNA を進め、かつ **再送していない** セグメントを確認したなら、RTO は spurious でした。Eifel response（RFC 4015）などで輻輳状態を元に戻します。
 
 ### Undo（RFC 3522 / RFC 4015 / RFC 2883 / RFC 3708）
 
 - **Eifel detection**（[RFC 3522 §3.2](https://www.rfc-editor.org/rfc/rfc3522#section-3.2)）: 最初の再送時のタイムスタンプ値を覚えておき、回復後の最初の ACK の TSecr がそれより古ければ「元のセグメントへの ACK だった」ので spurious と判断します。
 - **Eifel response**（[RFC 4015](https://www.rfc-editor.org/rfc/rfc4015)）: spurious と判断したら、回復前に保存しておいた cwnd と ssthresh を戻します。
-- **DSACK-based undo**（[RFC 2883](https://www.rfc-editor.org/rfc/rfc2883) / [RFC 3708](https://www.rfc-editor.org/rfc/rfc3708)）: その回復で行った再送が**すべて** DSACK で報告されたら、全部不要だったので元に戻します。
+- **DSACK-based undo**（[RFC 2883](https://www.rfc-editor.org/rfc/rfc2883) / [RFC 3708](https://www.rfc-editor.org/rfc/rfc3708)）: その回復で行った再送が **すべて** DSACK で報告されたら、全部不要だったので元に戻します。
 
 Linux はこれらを `undo_marker` / `undo_retrans` / `retrans_stamp` / `prior_ssthresh` / `prior_cwnd` の 5 つの変数で実装しています（Step 14）。
 
@@ -194,7 +194,7 @@ flowchart TD
 ACK 1 つの処理は次の 3 段階に分かれます。
 
 1. **情報の取り込み**: SACK と累積 ACK からスコアボード（skb ごとのビットと 4 つのカウンタ）と RACK の状態を更新します。
-2. **判断**: `tcp_fastretrans_alert()` が RACK を呼んでロスをマークし、`icsk_ca_state` を遷移させ、必要なら undo します。この関数は cwnd を**減らしません**。
+2. **判断**: `tcp_fastretrans_alert()` が RACK を呼んでロスをマークし、`icsk_ca_state` を遷移させ、必要なら undo します。この関数は cwnd を **減らしません**。
 3. **実行**: `tcp_cong_control()` が PRR で cwnd を決め、`tcp_xmit_recovery()` が再送します。
 
 タイマー側の 3 つの入口（RACK の reordering timer、TLP の probe timer、RTO）は、1 つの `icsk_retransmit_timer` を `icsk_pending` で多重化しています（詳細は 9 章）。
@@ -343,8 +343,8 @@ void tcp_mark_skb_lost(struct sock *sk, struct sk_buff *skb)
 ```
 
 - 1334 行: S の skb はロスにしません（L|S の禁止）。
-- 1337 行: `tcp_verify_retransmit_hint()` は `retransmit_skb_hint`（`tcp_xmit_retransmit_queue()` が走査を始める位置）を、新しくロスになった skb がヒントより前なら巻き戻します。ヒントが NULL のときは「L は全部再送済み（`retrans_out >= lost_out`）」の場合に限ってこの skb をヒントにします。コメントにあるとおり、`lost_out` / `retrans_out` を更新する**前**に呼ぶ必要があります。
-- 1338〜1346 行: すでに L の skb が再びロスと判定されるのは、**再送がロスした**ときだけです（L|R → L）。R を落として `retrans_out` を減らすと pipe が減り、もう一度再送できるようになります。`TCPLostRetransmit` が数えるのはこれです。RACK は再送にも送信時刻を付けるので、再送のロスを RTO を待たずに検出できます。これが FACK や RFC 6675 に対する RACK の大きな利点です。
+- 1337 行: `tcp_verify_retransmit_hint()` は `retransmit_skb_hint`（`tcp_xmit_retransmit_queue()` が走査を始める位置）を、新しくロスになった skb がヒントより前なら巻き戻します。ヒントが NULL のときは「L は全部再送済み（`retrans_out >= lost_out`）」の場合に限ってこの skb をヒントにします。コメントにあるとおり、`lost_out` / `retrans_out` を更新する **前** に呼ぶ必要があります。
+- 1338〜1346 行: すでに L の skb が再びロスと判定されるのは、**再送がロスした** ときだけです（L|R → L）。R を落として `retrans_out` を減らすと pipe が減り、もう一度再送できるようになります。`TCPLostRetransmit` が数えるのはこれです。RACK は再送にも送信時刻を付けるので、再送のロスを RTO を待たずに検出できます。これが FACK や RFC 6675 に対する RACK の大きな利点です。
 - 1347〜1350 行: 初めてのロスなら L を立てて `lost_out` を増やします。
 - `tp->lost` は累積のロス数で、`tcp_rate_gen()` が rate sample の `rs->losses` として輻輳制御（BBR など）に渡します。`tcp_notify_skb_loss_event()` という名前は、CC へのロスイベント通知フックを入れる余地として残っているものです。
 
@@ -397,10 +397,10 @@ ACK 処理全体は 7 章で扱います。ここではロス回復に関係す�
 	tcp_xmit_recovery(sk, rexmit);
 ```
 
-- `prior_fack` は SACK 処理**前**の最大 SACK シーケンスです。`tcp_clean_rtx_queue()` が「累積 ACK で埋まった穴が、すでに SACK されていた範囲より下だったか」（＝並べ替え）を判定するのに使います。
+- `prior_fack` は SACK 処理 **前** の最大 SACK シーケンスです。`tcp_clean_rtx_queue()` が「累積 ACK で埋まった穴が、すでに SACK されていた範囲より下だったか」（＝並べ替え）を判定するのに使います。
 - `rs.prior_in_flight` は ACK 処理前の pipe です（CC 用）。
 - SACK 処理（`tcp_sacktag_write_queue()`）は slow path の ACK でしか走りません。header prediction の fast path（5 章）に乗る ACK は SACK を持たないからです。
-- 順序が重要です。**SACK タグ付け → 累積 ACK の除去 → reo_wnd 更新 → TLP 判定 → 状態機械 → cwnd 計算 → 再送** の順になっています。`tcp_fastretrans_alert()` は cwnd を決めません。`rexmit` に「何を送るべきか」だけを記録し、実際の送信は `tcp_cong_control()` が PRR で cwnd を決めた**後**の `tcp_xmit_recovery()` が行います。`tcp_cong_control()` ヘルパ（`d452e6caf836`「tcp: tcp_cong_control helper」）と、それに続く `c0402760f565`「tcp: new CC hook to set sending rate with rate_sample in any CA state」で、cwnd の決定をまとめて ACK 処理の後半へ移し、その後で送信する形になりました。
+- 順序が重要です。**SACK タグ付け → 累積 ACK の除去 → reo_wnd 更新 → TLP 判定 → 状態機械 → cwnd 計算 → 再送** の順になっています。`tcp_fastretrans_alert()` は cwnd を決めません。`rexmit` に「何を送るべきか」だけを記録し、実際の送信は `tcp_cong_control()` が PRR で cwnd を決めた **後** の `tcp_xmit_recovery()` が行います。`tcp_cong_control()` ヘルパ（`d452e6caf836`「tcp: tcp_cong_control helper」）と、それに続く `c0402760f565`「tcp: new CC hook to set sending rate with rate_sample in any CA state」で、cwnd の決定をまとめて ACK 処理の後半へ移し、その後で送信する形になりました。
 - `tcp_ack_is_dubious()`（[net/ipv4/tcp_input.c#L3831](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3831)）は「重複 ACK（`FLAG_NOT_DUP` が無い）」「SACK・ECE・DSACK がある（`FLAG_CA_ALERT`）」「Open 以外の状態」のどれかで真になります。Open 状態で順調に累積 ACK だけが来ている間は、状態機械に一切入りません。
 - `num_dupack` は、GRO / `tcp_add_backlog()` で純 ACK が結合されていれば `gso_segs` 個分の重複 ACK として数えます。非 SACK 接続の `sacked_out` 推定にとって重要です。
 
@@ -535,9 +535,9 @@ tcp_sacktag_write_queue(struct sock *sk, const struct sk_buff *ack_skb,
 	}
 ```
 
-- 2298〜2308 行: 高々 4 要素なのでバブルソートです。seq 順に並べると、seq 順に並んだ rbtree を**一方向に 1 回だけ**歩けば済むようになります。
+- 2298〜2308 行: 高々 4 要素なのでバブルソートです。seq 順に並べると、seq 順に並んだ rbtree を **一方向に 1 回だけ** 歩けば済むようになります。
 - 2310 行: `mss_now` は SACK shifting（Step 6）で使います。
-- 2314〜2323 行: `recv_sack_cache[]` は**前回の ACK で処理したブロック**のコピーです。受信側は SACK ブロックを毎回送り直すので、同じ範囲を何度もタグ付けすると、大きなウィンドウでは O(ブロック長) の走査が ACK ごとに発生します。キャッシュと重なる部分を飛ばすのがこの後のループです。
+- 2314〜2323 行: `recv_sack_cache[]` は **前回の ACK で処理したブロック** のコピーです。受信側は SACK ブロックを毎回送り直すので、同じ範囲を何度もタグ付けすると、大きなウィンドウでは O(ブロック長) の走査が ACK ごとに発生します。キャッシュと重なる部分を飛ばすのがこの後のループです。
 
 ```c
 	while (i < used_sacks) {
@@ -648,7 +648,7 @@ out:
 }
 ```
 
-- 2393〜2398 行: 今回使ったブロックを `recv_sack_cache[]` の**後ろ詰め**で保存し、前は 0 で埋めます。2320 行の「先頭の空エントリを飛ばす」はこれに対応しています。
+- 2393〜2398 行: 今回使ったブロックを `recv_sack_cache[]` の **後ろ詰め** で保存し、前は 0 で埋めます。2320 行の「先頭の空エントリを飛ばす」はこれに対応しています。
 - 2400〜2401 行: 並べ替えの量（`state->reord` と最大 SACK の差）を `tp->reordering` に反映します。Loss 状態では、どれが再送でどれが元の送信か分からなくなるので行いません（`undo_marker` がある、つまり undo 可能な Loss は例外）。
 - 2403 行: 不変条件 `sacked_out + lost_out <= packets_out` の確認です。
 - 戻り値の `state->flag` には `FLAG_DATA_SACKED`、`FLAG_DSACKING_ACK`、`FLAG_ORIG_SACK_ACKED`、`FLAG_DSACK_TLP` などが入り、`tcp_ack()` の `flag` に OR されます。
@@ -698,7 +698,7 @@ static bool tcp_check_dsack(struct sock *sk, const struct sk_buff *ack_skb,
 }
 ```
 
-- 1493 行: 規則 1。先頭ブロックが**この ACK の** `ack_seq` より下なら DSACK です。
+- 1493 行: 規則 1。先頭ブロックが **この ACK の** `ack_seq` より下なら DSACK です。
 - 1495〜1501 行: 規則 2。先頭ブロックが 2 番目のブロックに完全に含まれていれば、順番待ちの棚にあるデータの重複です（`TCPDSACKOfoRecv`）。
 - 1506 行: `tcp_dsack_seen()` が「信用できる DSACK か」を判定し、重複セグメント数を返します。
 - 1515〜1518 行: `prior_snd_una` 以下の DSACK は、対応する skb がすでに再送キューから消えているので、`tcp_sacktag_one()` でタグ付けできません。そこで「dumb counting」で直接 `undo_retrans` を減らします。`undo_marker` より上の範囲に限るのは、今回の回復エピソードより前の再送への DSACK を数えないためです。
@@ -854,7 +854,7 @@ static struct sk_buff *tcp_sacktag_walk(struct sk_buff *skb, struct sock *sk,
 - 2106〜2107 行: rbtree は seq 順なので、ブロック終端を越えたら打ち切れます。
 - 2109〜2116 行: `next_dup`（このブロックの内側にある DSACK）と重なる skb は、DSACK として扱います。
 - 2122〜2137 行: まず SACK shifting（Step 6）を試みます。`tcp_shift_skb_data()` は次の 3 通りの値を返します。
-  - 別の skb（直前の SACK 済み skb に**吸収された**）: その skb から続けます。コメントにあるとおり、shift は今の skb も次の skb も free しうるので、`_safe` 版のループでも安全ではありません。戻り値で位置を受け取り直すのはそのためです。
+  - 別の skb（直前の SACK 済み skb に **吸収された**）: その skb から続けます。コメントにあるとおり、shift は今の skb も次の skb も free しうるので、`_safe` 版のループでも安全ではありません。戻り値で位置を受け取り直すのはそのためです。
   - 同じ skb（noop）: このブロックには該当しなかったので `in_sack = 0` とします。
   - NULL（fallback）: shift できなかったので、従来どおり `tcp_match_skb_to_sack()` で「skb がブロックに含まれるか」を判定します。GSO skb がブロックに部分的にしか含まれない場合は、`tcp_fragment()` で MSS 境界で分割します。
 
@@ -986,7 +986,7 @@ static u8 tcp_sacktag_one(struct sock *sk,
 ```
 
 - 1648〜1662 行: 一度も再送していない skb が SACK された場合です。
-  - それが現在の最大 SACK より**下**なら、後から送ったものが先に届いていた、つまり並べ替えの証拠です（RFC 8985 Step 3）。最小の位置を `state->reord` に記録します。
+  - それが現在の最大 SACK より **下** なら、後から送ったものが先に届いていた、つまり並べ替えの証拠です（RFC 8985 Step 3）。最小の位置を `state->reord` に記録します。
   - `high_seq`（回復開始時の `snd_nxt`）以下なら `FLAG_ORIG_SACK_ACKED` を立てます。F-RTO の Step 3.b（「再送していないデータが確認された」）の判定に使います。
   - `first_sackt` / `last_sackt` は SACK からの RTT サンプル（7 章）用です。
 - 1664〜1667 行: L だけの skb（ロスと判定したが、まだ再送していない）が SACK されたら、L を外します。ロス判定が早すぎた（並べ替えだった）ことになります。
@@ -1027,7 +1027,7 @@ static void tcp_rack_advance(struct tcp_sock *tp, u8 sacked,
 
 - 1588 行: `tp->tcp_mstamp` は ACK 処理の開始時に `tcp_mstamp_refresh()` で 1 回だけ取った現在時刻（µs）です。skb ごとに時計を読まないのは性能のためです。
 - 1589〜1601 行: 再送したことのある skb で、測った RTT が min_rtt より小さいなら、元の送信と再送のどちらへの (S)ACK か曖昧なので捨てます。RFC 8985 Step 2 の規則そのものです。逆に RTT が min_rtt 以上なら、たとえ再送分への ACK だったとしても、少なくとも物理的にありえない値ではないので使います。
-- 1602〜1603 行: `advanced` を立てると、この ACK の後で `tcp_rack_mark_lost()` がキューを走査します。`rtt_us` は**呼ばれるたびに上書き**されます。呼び出しは seq 順なので、最終的に残るのは「この ACK で最後に処理した skb の RTT」です。
+- 1602〜1603 行: `advanced` を立てると、この ACK の後で `tcp_rack_mark_lost()` がキューを走査します。`rtt_us` は **呼ばれるたびに上書き** されます。呼び出しは seq 順なので、最終的に残るのは「この ACK で最後に処理した skb の RTT」です。
 - 1604〜1608 行: より後に送られた skb なら `mstamp` / `end_seq` を進めます。`tcp_skb_sent_after()`（[include/net/tcp.h#L1508](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1508)） は「送信時刻が新しい、または同時刻で seq が後」という比較です。TSO で 1 つの `tcp_write_xmit()` 呼び出しから同じ µs 時刻の skb が複数出るので、seq によるタイブレークが必要です（`1d0833df5943`）。
 
 累積 ACK 側でも、`tcp_clean_rtx_queue()` が同じ関数を呼びます。
@@ -1051,7 +1051,7 @@ S ではなかった skb が累積 ACK されたときに RACK を進めます�
 
 ### Step 6: SACK shifting ― 断片化した skb をまとめ直す
 
-TSO で送った大きな skb に飛び飛びの SACK が来ると、`tcp_match_skb_to_sack()` が MSS 単位に `tcp_fragment()` し、再送キューは 1 MSS の skb だらけになります。これはメモリ（skb ごとに truesize）と、以後の走査コストの両面で高くつきます。Ilpo Järvinen が 2008 年に入れた SACK shifting（`832d11c5cd07`）は、逆に「新しく SACK された部分を、直前のすでに SACK 済みの skb へ**ページごと移す**」ことで、SACK 済みの範囲を 1 つの大きな skb にまとめます。
+TSO で送った大きな skb に飛び飛びの SACK が来ると、`tcp_match_skb_to_sack()` が MSS 単位に `tcp_fragment()` し、再送キューは 1 MSS の skb だらけになります。これはメモリ（skb ごとに truesize）と、以後の走査コストの両面で高くつきます。Ilpo Järvinen が 2008 年に入れた SACK shifting（`832d11c5cd07`）は、逆に「新しく SACK された部分を、直前のすでに SACK 済みの skb へ **ページごと移す**」ことで、SACK 済みの範囲を 1 つの大きな skb にまとめます。
 
 `tcp_shift_skb_data()`（[net/ipv4/tcp_input.c#L1954](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1954)） の前提チェックと、移動量の決定です。
 
@@ -1112,7 +1112,7 @@ TSO で送った大きな skb に飛び飛びの SACK が来ると、`tcp_match_
 
 - 1967〜1969 行: L の無い R（S|R に遷移する skb）は、prev（純粋な S）と状態が違うのでまとめられません。
 - 1970〜1971 行: `skb_can_shift()` は「linear 部分が空で frags だけ」の skb に限ります。ページの参照（`frags[]` の `(page, offset, size)`）を付け替えるだけでゼロコピーで移せるからです（[補足ノート: SACK shifting と線形領域のペイロードを 0 にする理由](appendix-notes.md#sack-shifting) を参照）。
-- 1981〜1982 行: prev が**純粋な S**（L も R も無い）でなければなりません。
+- 1981〜1982 行: prev が **純粋な S**（L も R も無い）でなければなりません。
 - 1984〜1985 行: `tcp_skb_can_collapse()` は EOR（`MSG_EOR`）や zerocopy などでまとめてはいけない skb を弾きます。
 - 1998〜1999 行: prev と MSS（`tcp_skb_seglen()`）が一致しなければなりません。pcount の整合性を保つためです（skb の一部だけを移す場合も 2039 行で同じ確認をします）。その間の省略部分では、skb の一部だけがブロックに含まれる場合に、移す長さを MSS の倍数に丸めています。
 - 2052〜2054 行: `snd_una` 以下へは shift しません（`4648dc97af9d`）。
@@ -1158,7 +1158,7 @@ TSO で送った大きな skb に飛び飛びの SACK が来ると、`tcp_match_
 	return true;
 ```
 
-- 1865〜1868 行: 移す範囲を**先に** `tcp_sacktag_one()` でタグ付けします。後ろで `seq` をずらすと、`skb` が `highest_sack` だった場合に `tcp_highest_sack_seq()` まで暗黙に動いてしまうからです（コメントのとおり）。
+- 1865〜1868 行: 移す範囲を **先に** `tcp_sacktag_one()` でタグ付けします。後ろで `seq` をずらすと、`skb` が `highest_sack` だった場合に `tcp_highest_sack_seq()` まで暗黙に動いてしまうからです（コメントのとおり）。
 - 1870〜1875 行: prev の `end_seq` を伸ばし、skb の `seq` を縮め、pcount を移します。
 - 1898〜1919 行: skb が丸ごと吸収されたら、ヒント類（`retransmit_skb_hint`、`highest_sack`）を prev に付け替え、FIN と EOR を引き継ぎ、送信タイムスタンプを統合してから skb を free します。`TCPSackMerged` が数えるのはこれで、部分的な移動は `TCPSackShifted` です。
 
@@ -1257,11 +1257,11 @@ static void tcp_rack_detect_loss(struct sock *sk, u32 *reo_timeout)
 }
 ```
 
-- 66〜67 行: 走査するのは rbtree（seq 順）ではなく `tsorted_sent_queue`、つまり**最後に（再）送信した時刻の順**に並んだリストです。skb を送信・再送するたびに `tcp_update_skb_after_send()`（[net/ipv4/tcp_output.c#L1446](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1446)）がリストの末尾へ移し、S になったら `tcp_sacktag_walk()` が外し、累積 ACK されたら free と同時に外れます。したがってこのリストには「まだ (S)ACK されていない skb」が送信時刻順に並んでいます。
+- 66〜67 行: 走査するのは rbtree（seq 順）ではなく `tsorted_sent_queue`、つまり **最後に（再）送信した時刻の順** に並んだリストです。skb を送信・再送するたびに `tcp_update_skb_after_send()`（[net/ipv4/tcp_output.c#L1446](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1446)）がリストの末尾へ移し、S になったら `tcp_sacktag_walk()` が外し、累積 ACK されたら free と同時に外れます。したがってこのリストには「まだ (S)ACK されていない skb」が送信時刻順に並んでいます。
 - 72〜74 行: L で R の無い skb（ロスとマークしたが未再送）は、判定し直す必要が無いので飛ばします。
 - 76〜79 行: `rack.mstamp`（最新の届いたセグメントの送信時刻）以降に送った skb に到達したら終了です。時刻順のリストなので、これ以降はすべてもっと新しいからです。この早期打ち切りのおかげで、走査は「`rack.mstamp` より古い未 (S)ACK の skb」の数で済みます。2017 年に Eric Dumazet がこのリストを導入する（`e2080072ed2d`）までは、RACK は再送キュー全体を歩いていました。
 - 84〜87 行: 期限切れならロスとマークし、**リストから外します**。外しておけば次回以降の走査で再び見ることはなく、再送されたときに `tcp_update_skb_after_send()` が末尾へ戻します。
-- 88〜91 行: まだなら、残り時間の**最大値**を記録します。リストは送信時刻順なので、後ろの skb ほど残り時間が長く、最大値は「`rack.mstamp` より前に送った中で最も新しい skb」の残り時間になります。つまり REO タイマーは、待っている skb の**最後の 1 つ**が期限切れになる時刻に 1 回だけ満了し、そこでまとめてロスと判定します。先に期限が来る skb はその分だけ判定が遅れますが、同じフライト内の skb は送信時刻が近いので差は小さく、タイマーの張り直しを ACK ごとに繰り返さずに済みます。
+- 88〜91 行: まだなら、残り時間の **最大値** を記録します。リストは送信時刻順なので、後ろの skb ほど残り時間が長く、最大値は「`rack.mstamp` より前に送った中で最も新しい skb」の残り時間になります。つまり REO タイマーは、待っている skb の **最後の 1 つ** が期限切れになる時刻に 1 回だけ満了し、そこでまとめてロスと判定します。先に期限が来る skb はその分だけ判定が遅れますが、同じフライト内の skb は送信時刻が近いので差は小さく、タイマーの張り直しを ACK ごとに繰り返さずに済みます。
 
 #### tcp_rack_mark_lost(): ACK 処理からの入口
 
@@ -1356,7 +1356,7 @@ static void tcp_rack_update_reo_wnd(struct sock *sk, struct rate_sample *rs)
 ```
 
 - 4254〜4257 行: `TCP_RACK_STATIC_REO_WND`（sysctl `tcp_recovery` の bit 1）なら適応しません。`rs->prior_delivered` が 0 なのは、この ACK で新たに (S)ACK されたものが無い（rate sample が取れない）場合です。
-- 4260〜4261 行: 「前回 reo_wnd を広げてから 1 RTT 経ったか」の判定です。`rs->prior_delivered` は、この ACK で届いた最新の skb が**送信された時点**の `tp->delivered` です。それが前回広げた時点の `tp->delivered`（`last_delivered`）より小さいなら、その skb は前回の調整より前に送られたもので、その DSACK は古い reo_wnd での誤判定の名残です。そこで無視します。これが RFC 8985 の「1 round に 1 回だけ」の実装です。
+- 4260〜4261 行: 「前回 reo_wnd を広げてから 1 RTT 経ったか」の判定です。`rs->prior_delivered` は、この ACK で届いた最新の skb が **送信された時点** の `tp->delivered` です。それが前回広げた時点の `tp->delivered`（`last_delivered`）より小さいなら、その skb は前回の調整より前に送られたもので、その DSACK は古い reo_wnd での誤判定の名残です。そこで無視します。これが RFC 8985 の「1 round に 1 回だけ」の実装です。
 - 4264〜4269 行: 広げるときは `reo_wnd_steps++` とし、16 回の回復の間はその値を保持します（`reo_wnd_persist = 16`）。
 - 4270〜4272 行: 保持期間が終わったら 1 step（min_rtt/4）に戻ります。
 
@@ -1479,8 +1479,8 @@ reneging らしく見えても、その場ですべてをロス扱いにはし�
 
 - 3353〜3355 行: Open なら再送は残っていないはずなので、`retrans_stamp` をクリアします（TFO の SYN データ再送だけは例外）。
 - 3356 行: `high_seq` は CWR / Recovery / Loss に入ったときの `snd_nxt` です。`snd_una` がそこに達したら、そのエピソードで送り出していたデータは全部届いたことになります。
-- 3358〜3365 行: CWR は `snd_una == high_seq` ではまだ終わらず、それより**先**が ACK されるまで続けます。コメントにあるとおり、CWR フラグ付きのセグメント（`high_seq` 以降に送った新データ）が受信側へ届いたことを確かめるためです（RFC 3168）。
-- 3367〜3373 行: Recovery の終了です。まず `tcp_try_undo_recovery()` で undo できるか試します。undo できなくても、非 SACK 接続で `snd_una == high_seq` なら真を返して状態を保持します（NewReno の「high_seq より**上**が ACK されるまで回復を続ける」規則）。続けて `tcp_end_cwnd_reduction()` で cwnd を ssthresh に揃えます。Loss の終了判定はここではなく `tcp_process_loss()` で行います。
+- 3358〜3365 行: CWR は `snd_una == high_seq` ではまだ終わらず、それより **先** が ACK されるまで続けます。コメントにあるとおり、CWR フラグ付きのセグメント（`high_seq` 以降に送った新データ）が受信側へ届いたことを確かめるためです（RFC 3168）。
+- 3367〜3373 行: Recovery の終了です。まず `tcp_try_undo_recovery()` で undo できるか試します。undo できなくても、非 SACK 接続で `snd_una == high_seq` なら真を返して状態を保持します（NewReno の「high_seq より **上** が ACK されるまで回復を続ける」規則）。続けて `tcp_end_cwnd_reduction()` で cwnd を ssthresh に揃えます。Loss の終了判定はここではなく `tcp_process_loss()` で行います。
 
 ```c
 	/* E. Process state. */
@@ -1547,12 +1547,12 @@ reneging らしく見えても、その場ですべてをロス扱いにはし�
 - 3400 行: Loss 状態の ACK 処理（F-RTO と undo）は `tcp_process_loss()` に任せます（Step 13）。
 - 3401〜3402 行: Loss を抜けたなら RTO 回復に要した時間を `total_rto_time` に足します（`tcp_info` の `tcpi_total_rto_time`）。
 - 3403 行: Loss 中でも RACK は動きます。Loss に入ったときの L は `tcp_timeout_mark_lost()` が付けたものですが、RTO 後の再送がまたロスした場合は RACK が検出します。
-- 3404〜3408 行: undo で Open に戻った場合、または `FLAG_LOST_RETRANS`（この ACK で再送のロスを検出した）の場合は、**default にフォールスルー**します。後者では default の最後で `tcp_enter_recovery()` が呼ばれ、Loss から Recovery へ移って ssthresh をもう一度下げます（`291a00d1a70f`）。再送までロスするのは輻輳がひどい証拠だからです。
+- 3404〜3408 行: undo で Open に戻った場合、または `FLAG_LOST_RETRANS`（この ACK で再送のロスを検出した）の場合は、**default にフォールスルー** します。後者では default の最後で `tcp_enter_recovery()` が呼ばれ、Loss から Recovery へ移って ssthresh をもう一度下げます（`291a00d1a70f`）。再送までロスするのは輻輳がひどい証拠だからです。
 
 **default**（Open / Disorder / CWR）の場合です。
 
 - 3410〜3414 行: 非 SACK 接続の重複 ACK を `sacked_out` に数えます。
-- 3416〜3417 行: Open / Disorder での DSACK undo です。たとえば Recovery を抜けた**後**に、その回復の再送に対する DSACK が届いた場合がこれに当たります。
+- 3416〜3417 行: Open / Disorder での DSACK undo です。たとえば Recovery を抜けた **後** に、その回復の再送に対する DSACK が届いた場合がこれに当たります。
 - 3419 行: RACK でロスを探します。
 - 3420〜3423 行: ロスが無ければ `tcp_try_to_open()` で Open か Disorder に留まります（ECE があれば CWR）。
 
@@ -1811,7 +1811,7 @@ void tcp_cwnd_reduction(struct sock *sk, int newly_acked_sacked, int newly_lost,
 
 各行を細かく見ていきます。
 
-- 2989 行: `pipe` は、この ACK の SACK タグ付けとロスのマークが**済んだ後**の値です。まだこの ACK による再送はしていません。
+- 2989 行: `pipe` は、この ACK の SACK タグ付けとロスのマークが **済んだ後** の値です。まだこの ACK による再送はしていません。
 - 2991 行: 何も配送しなかった ACK では cwnd を触りません。ただし同じ ACK で RACK が新たにロスをマークしていれば pipe が減っているので、前回の cwnd のままでも `cwnd - pipe > 0` となり、再送できることがあります。
 - 2994 行: `trace_tcp_cwnd_reduction_tp()` は tracefs にイベントを出さない bare tracepoint（`DECLARE_TRACE`）で、BPF から attach するためのものです（`8e677a466145`）。
 - 2998〜3000 行: 積は u64 で計算します（ssthresh と prr_delivered はどちらも u32）。`+ prior_cwnd - 1` は切り上げ除算のための加算で、RFC の CEIL です。ACK ごとに 1 回の 64 ビット除算ですが、回復中だけの処理なので許容されています。
@@ -2010,7 +2010,7 @@ int tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
 ```
 
 - 送信に成功したら R（と EVER_RETRANS）を立て、`retrans_out` を増やします。これで pipe が 1 増えます。
-- `retrans_stamp` はエピソードの**最初の**再送の試行時刻です。失敗した試行でも記録します。`tcp_packet_delayed()`（Eifel）と `tcp_write_timeout()` が使います。
+- `retrans_stamp` はエピソードの **最初の** 再送の試行時刻です。失敗した試行でも記録します。`tcp_packet_delayed()`（Eifel）と `tcp_write_timeout()` が使います。
 - `undo_retrans` を増やします。これが「DSACK が返ってくるべき再送」の数です。
 
 #### __tcp_retransmit_skb(): 実際の再送
@@ -2336,7 +2336,7 @@ void tcp_send_loss_probe(struct sock *sk)
 
 - 3186〜3187 行: すでに TLP エピソード中（`tlp_high_seq != 0`）なら probe を送らず、RTO を張るだけです。1 回のテールロスにつき probe は 1 つまでで、新データの probe でも同じです（`76be93fc0702`）。
 - 3190〜3197 行: 受信ウィンドウ内に未送信の新データがあれば、それを 1 つ送ります（`push_one = 2`）。新データの probe なら、それへの SACK で RACK が前のロスを検出できますし、再送ではないので DSACK の曖昧さもありません。Nagle は無効にし、cwnd の空きは見ません（`tcp_write_xmit()` は `push_one` のとき cwnd を超えても 1 つは送れます）。
-- 3198〜3203 行: 新データが無ければ、再送キューの**最後**の skb を使います。
+- 3198〜3203 行: 新データが無ければ、再送キューの **最後** の skb を使います。
 
 ```c
 	if (skb_still_in_host_queue(sk, skb))
@@ -2376,7 +2376,7 @@ rearm_timer:
 
 - 3205〜3206 行: 最後の skb がまだホストキューにあるなら、probe しても意味がありません。
 - 3212〜3218 行: 最後の skb が複数セグメントなら、末尾の 1 MSS だけを切り出して再送します。probe は小さく保つためです。
-- 3223〜3226 行: `__tcp_retransmit_skb()` を直接呼びます。`tcp_retransmit_skb()` ではないので、`retrans_out` も R ビットも `undo_retrans` も**更新しません**。probe はスコアボード上では「再送」として扱わない、というのが TLP の重要な設計です。代わりに `tlp_retrans = 1` で「probe は再送だった」ことを覚えておきます。
+- 3223〜3226 行: `__tcp_retransmit_skb()` を直接呼びます。`tcp_retransmit_skb()` ではないので、`retrans_out` も R ビットも `undo_retrans` も **更新しません**。probe はスコアボード上では「再送」として扱わない、というのが TLP の重要な設計です。代わりに `tlp_retrans = 1` で「probe は再送だった」ことを覚えておきます。
 - 3230 行: `tlp_high_seq = snd_nxt` は RFC の `TLP.end_seq` です。
 - 3234 行: `icsk_pending = 0` にしておくと、続く `tcp_rearm_rto()` が「TLP の残り時間を差し引く」補正をせず、今から丸ごと RTO を張ります。`smp_store_release()` なのは、`icsk_pending` がタイマーの softirq 側から lockless に読まれるからです。
 
@@ -2422,7 +2422,7 @@ static void tcp_process_tlp_ack(struct sock *sk, u32 ack, int flag)
 - 4146〜4147 行: まだ `tlp_high_seq` まで ACK されていなければ判定を保留します。
 - 4149〜4151 行: 新データの probe だったなら、DSACK による判定ができないので、ここでエピソードを終えます。ロスがあったなら、RACK がそれを見つけて通常の回復に入っているはずです。
 - 4152〜4154 行: probe の範囲に対する DSACK（`FLAG_DSACK_TLP`）なら、元のセグメントも probe も届いていたことになり、ロスはありませんでした（RFC 8985 §7.4.2）。
-- 4155〜4164 行: ACK が `tlp_high_seq` を**越えて**進み、DSACK が無ければ、probe がロスを 1 つ修復したと判断します。cwnd の削減だけを行います。具体的には、CWR に入って PRR を初期化し（ssthresh を下げ）、すぐに終了して cwnd = ssthresh とし、Open（または Disorder）に戻ります。再送はすでに probe で済んでいるからです。これが `TCPLossProbeRecovery` です。
+- 4155〜4164 行: ACK が `tlp_high_seq` を **越えて** 進み、DSACK が無ければ、probe がロスを 1 つ修復したと判断します。cwnd の削減だけを行います。具体的には、CWR に入って PRR を初期化し（ssthresh を下げ）、すぐに終了して cwnd = ssthresh とし、Open（または Disorder）に戻ります。再送はすでに probe で済んでいるからです。これが `TCPLossProbeRecovery` です。
 - 4165〜4169 行: ACK が `tlp_high_seq` ちょうどで止まっている純粋な重複 ACK なら、probe が重複して届いただけとみなし、ロスは無かったと判断します。ACK が `tlp_high_seq` ちょうどで、かつ何かが進んだ場合は判定を保留します（次の ACK で DSACK が来るかもしれないため）。
 
 ### Step 12: RTO ― tcp_retransmit_timer() と tcp_enter_loss()
@@ -2870,11 +2870,11 @@ static bool tcp_try_undo_recovery(struct sock *sk)
 }
 ```
 
-`tcp_try_undo_recovery()`（[net/ipv4/tcp_input.c#L2893](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2893)） は、Recovery / Loss の**終わり**（`snd_una >= high_seq`）で呼ばれます。
+`tcp_try_undo_recovery()`（[net/ipv4/tcp_input.c#L2893](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2893)） は、Recovery / Loss の **終わり**（`snd_una >= high_seq`）で呼ばれます。
 
 - `tcp_may_undo()` なら undo し、Recovery なら `TCPFullUndo`、Loss なら `TCPLossUndo` を数えます。
 - undo できなかった（本物のロスだった）なら `reo_wnd_persist` を減らします（Step 7）。
-- `tcp_is_non_sack_preventing_reopen()`: 非 SACK 接続では、`snd_una == high_seq` の時点で Open に戻すと、後から来る重複 ACK（回復中に送った再送への ACK）で再び fast retransmit してしまいます（RFC 6582、旧 RFC 2582）。そのため `high_seq` より**上**が ACK されるまで状態を保ちます。SACK 接続ではスコアボードがあるので不要です。
+- `tcp_is_non_sack_preventing_reopen()`: 非 SACK 接続では、`snd_una == high_seq` の時点で Open に戻すと、後から来る重複 ACK（回復中に送った再送への ACK）で再び fast retransmit してしまいます（RFC 6582、旧 RFC 2582）。そのため `high_seq` より **上** が ACK されるまで状態を保ちます。SACK 接続ではスコアボードがあるので不要です。
 - 最後に Open に戻し、reneging のフラグを下ろします。
 
 `tcp_try_undo_dsack()`（[net/ipv4/tcp_input.c#L2922](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2922)）
@@ -3098,7 +3098,7 @@ void tcp_newreno_mark_lost(struct sock *sk, bool snd_una_advanced)
 - `tcp_sock_read_rx`: `tlp_high_seq`、`retrans_out`、`lost`、`snd_ssthresh`、`rtt_min`。ACK 処理が読みます。`tcp_ack()` の `unlikely(tp->tlp_high_seq)` 判定は、この行を読むだけで済みます。
 - `tcp_sock_write_txrx`: `packets_out` など。
 - `tcp_sock_read_tx`: `reordering`、`retransmit_skb_hint`。
-- `rack`、`undo_marker`、`undo_retrans`、`prior_ssthresh`、`high_seq`、`recv_sack_cache` などは**どのグループにも入っていません**。これらは回復中か SACK を受けたときにしか触らない「slow path」のフィールドだからです。Open 状態の通常の ACK（`tcp_ack_is_dubious()` が偽）では、`tcp_fastretrans_alert()` に入らないので読まれません。
+- `rack`、`undo_marker`、`undo_retrans`、`prior_ssthresh`、`high_seq`、`recv_sack_cache` などは **どのグループにも入っていません**。これらは回復中か SACK を受けたときにしか触らない「slow path」のフィールドだからです。Open 状態の通常の ACK（`tcp_ack_is_dubious()` が偽）では、`tcp_fastretrans_alert()` に入らないので読まれません。
 
 ### 速い経路を速く保つ工夫
 
@@ -3261,7 +3261,7 @@ IPv6 で効く違いとして、RTO のたびに `tcp_write_timeout()` が `__sk
 
 <details><summary>答え</summary>
 
-`rs->prior_delivered` は、この ACK で (S)ACK された中で最も新しく送られた skb が**送信された時点**の `tp->delivered` です（`tcp_rate_skb_delivered()` が `scb->tx.delivered` から取ります）。`rack.last_delivered` は前回 reo_wnd を広げた時点の `tp->delivered` です。前者が後者より小さいということは、その skb が前回の調整より前に送られた、つまり DSACK の原因になった spurious な再送は古い（狭い）reo_wnd の下で行われたものだということです。そういう DSACK で再び広げると、1 回の並べ替えイベントで何段も広げてしまいます。そこで「調整後に送ったデータの DSACK だけを数える」ことで、1 round trip に 1 段だけ広げる規則（RFC 8985 の DSACK round）を、時刻ではなく配送数のカウンタで実現しています。
+`rs->prior_delivered` は、この ACK で (S)ACK された中で最も新しく送られた skb が **送信された時点** の `tp->delivered` です（`tcp_rate_skb_delivered()` が `scb->tx.delivered` から取ります）。`rack.last_delivered` は前回 reo_wnd を広げた時点の `tp->delivered` です。前者が後者より小さいということは、その skb が前回の調整より前に送られた、つまり DSACK の原因になった spurious な再送は古い（狭い）reo_wnd の下で行われたものだということです。そういう DSACK で再び広げると、1 回の並べ替えイベントで何段も広げてしまいます。そこで「調整後に送ったデータの DSACK だけを数える」ことで、1 round trip に 1 段だけ広げる規則（RFC 8985 の DSACK round）を、時刻ではなく配送数のカウンタで実現しています。
 
 </details>
 

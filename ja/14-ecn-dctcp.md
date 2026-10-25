@@ -117,8 +117,8 @@ sequenceDiagram
 
 ECN の処理は、送信側と受信側で役割がはっきり分かれています。
 
-- **受信側**は IP ヘッダの ECN フィールドを読みます（AF ごとに読み方が違うのはここだけで、`TCP_SKB_CB(skb)->ip_dsfield` に入れた後は AF 非依存です）。読んだ結果を `tp->ecn_flags`（RFC 3168）または `tp->received_ce` などのカウンタ（AccECN）に記録し、次に送る ACK の ECE / ACE に反映します。
-- **送信側**は ACK の ECE / ACE を読み、`FLAG_ECE` と `tp->delivered_ce` に変換します。それを輻輳制御（CWR 状態への遷移、DCTCP の α 更新）に渡します。
+- **受信側** は IP ヘッダの ECN フィールドを読みます（AF ごとに読み方が違うのはここだけで、`TCP_SKB_CB(skb)->ip_dsfield` に入れた後は AF 非依存です）。読んだ結果を `tp->ecn_flags`（RFC 3168）または `tp->received_ce` などのカウンタ（AccECN）に記録し、次に送る ACK の ECE / ACE に反映します。
+- **送信側** は ACK の ECE / ACE を読み、`FLAG_ECE` と `tp->delivered_ce` に変換します。それを輻輳制御（CWR 状態への遷移、DCTCP の α 更新）に渡します。
 - 送信するパケットに ECT を付けるかどうかは **ソケット全体の `inet->tos` / `np->tclass`** をパケットごとに書き換えて決めます。この一見乱暴なやり方が、IPv4 と IPv6 の扱いの違いにつながっています（後述の Step 1 と「IPv4 と IPv6」節）。
 
 DCTCP は「ECN の信号の **受信側の折り返し方**（`tcp_dctcp.h`）」と「**送信側の反応関数**（`tcp_dctcp.c`）」の 2 部品からできています。前者はコア TCP の `tcp_data_ecn_check()` から `CA_EVENT_ECN_IS_CE` / `CA_EVENT_ECN_NO_CE` イベントで呼ばれ、後者は `in_ack_event` と `ssthresh` フックで呼ばれます。

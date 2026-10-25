@@ -449,7 +449,7 @@ backlog の末尾（`sk->sk_backlog.tail`）と coalesce できる条件を列�
 - どちらにも SYN / RST / URG がないこと、どちらにも ACK があること。
 - ECE / CWR / AE が同じであること（ECN フィードバックを失わないため）。
 - `tcp_skb_can_collapse_rx()`（[include/net/tcp.h#L1273](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1273)）: MPTCP の DSS マッピングや kTLS の decrypted ビットが一致していること。
-- `doff` が同じで、**オプションのバイト列が `memcmp()` で完全に一致**すること。TSval / TSecr も同じでなければならないので、主に同じ ms のうちに届いたバースト（GRO が効かない場合）や、ACK の連打がまとまります。SACK ブロックが変化する ACK はまとまりません。
+- `doff` が同じで、**オプションのバイト列が `memcmp()` で完全に一致** すること。TSval / TSecr も同じでなければならないので、主に同じ ms のうちに届いたバースト（GRO が効かない場合）や、ACK の連打がまとまります。SACK ブロックが変化する ACK はまとまりません。
 - `psp_skb_coalesce_diff()`: PSP（暗号化）のメタデータが同じであること。PSP の受信ポリシー検査は `tcp_v4_do_rcv()` の先頭で行うので、それより前の段階で異なるメタデータを混ぜるわけにはいきません。
 
 ```c

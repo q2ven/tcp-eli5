@@ -53,13 +53,13 @@ BBR v1 のモデルはファイル先頭のコメントにそのまま書かれ�
 数式で書くと次の通りです。
 
 - `delivery_rate = Δdelivered / Δt`（ACK ごとのレートサンプル。Δt は送信区間と ACK 区間の長い方。[delivery-rate-estimation §3.3](https://datatracker.ietf.org/doc/html/draft-cheng-iccrg-delivery-rate-estimation-02#section-3.3)）
-- `BtlBw = max(delivery_rate)` を直近 **約 10 ラウンドトリップ**で取る（max filter）
-- `RTprop = min(rtt)` を直近 **10 秒**で取る（min filter）
+- `BtlBw = max(delivery_rate)` を直近 **約 10 ラウンドトリップ** で取る（max filter）
+- `RTprop = min(rtt)` を直近 **10 秒** で取る（min filter）
 - `BDP = BtlBw × RTprop`
 - `pacing_rate = pacing_gain × BtlBw`
 - `cwnd = cwnd_gain × BDP`（Linux はさらに ACK 集約分と TSO 量子化分を足し、最低 4 パケット）
 
-なぜ max と min なのかは論文の核心です。配信レートのサンプルはアプリ制限や ACK の遅れによって**小さく**見えることはあっても、ボトルネック帯域より**大きく**見えることは（ACK 圧縮を除けば）ありません。逆に RTT はキューイングや遅延 ACK で**大きく**見えることはあっても、伝搬遅延より**小さく**見えることはありません。だから「最大値」と「最小値」をそれぞれ取れば、真の値に近づきます。
+なぜ max と min なのかは論文の核心です。配信レートのサンプルはアプリ制限や ACK の遅れによって **小さく** 見えることはあっても、ボトルネック帯域より **大きく** 見えることは（ACK 圧縮を除けば）ありません。逆に RTT はキューイングや遅延 ACK で **大きく** 見えることはあっても、伝搬遅延より **小さく** 見えることはありません。だから「最大値」と「最小値」をそれぞれ取れば、真の値に近づきます。
 
 さらに、帯域を測るにはパイプを満たす（キューが少しできる）必要があり、RTprop を測るにはパイプを空にする必要があります。この 2 つは同時には測れない（論文でいう不確定性）ので、BBR は時間を分けて交互に測ります。これがステートマシンの存在理由です。
 
@@ -173,7 +173,7 @@ flowchart TD
     H --> K
 ```
 
-BBR の仕事は「ACK のたびにモデルを更新し、2 つの出力（`sk_pacing_rate` と `snd_cwnd`）を決める」ことに尽きます。Reno / CUBIC が `.cong_avoid` で cwnd だけを増やし、ロス時の減少は TCP 本体（PRR、第 8 章）に任せるのに対し、BBR は `.cong_control` を実装することで、cwnd の増減と pacing rate の決定を**すべて自分で**行います。実際の送信タイミングは pacing 層（`sch_fq` か TCP 内部 pacing）が `sk_pacing_rate` に従って決め、`tcp_write_xmit()` は cwnd と pacing の両方の制約を受けます（第 4 章）。
+BBR の仕事は「ACK のたびにモデルを更新し、2 つの出力（`sk_pacing_rate` と `snd_cwnd`）を決める」ことに尽きます。Reno / CUBIC が `.cong_avoid` で cwnd だけを増やし、ロス時の減少は TCP 本体（PRR、第 8 章）に任せるのに対し、BBR は `.cong_control` を実装することで、cwnd の増減と pacing rate の決定を **すべて自分で** 行います。実際の送信タイミングは pacing 層（`sch_fq` か TCP 内部 pacing）が `sk_pacing_rate` に従って決め、`tcp_write_xmit()` は cwnd と pacing の両方の制約を受けます（第 4 章）。
 
 ## コードを追う
 
@@ -242,10 +242,10 @@ struct bbr {
 - `min_rtt_us` / `min_rtt_stamp`: RTprop の min filter です。v1 は「最小値 1 つとそのタイムスタンプ」だけを持つ単純な filter で、`win_minmax` は使いません。`min_rtt_stamp` は `tcp_jiffies32`（jiffies 単位）です。10 秒の窓には jiffies の精度で十分だからです。初期値は `tcp_min_rtt(tp)` で、サンプルがまだなければ `~0U` になります（後述の `bbr_bdp()` がこれを特別扱いします）。
 - `probe_rtt_done_stamp`: PROBE_RTT を抜けてよい時刻（jiffies）です。0 は「まだ in-flight が 4 以下になっていない（タイマー未開始）」を意味します。
 - `bw`: BtlBw の max filter（`struct minmax`、3 サンプル）です。単位は「パケット / µs を 2^24 倍したもの」です。
-- `rtt_cnt` / `next_rtt_delivered`: **パケット時間で数えたラウンド**です。「`tp->delivered` が `next_rtt_delivered` に達した ACK でラウンドが 1 つ進む」という、時間ではなく配達数で測るラウンドです。
+- `rtt_cnt` / `next_rtt_delivered`: **パケット時間で数えたラウンド** です。「`tp->delivered` が `next_rtt_delivered` に達した ACK でラウンドが 1 つ進む」という、時間ではなく配達数で測るラウンドです。
 - `cycle_mstamp`: PROBE_BW の現フェーズの開始時刻（`delivered_mstamp`、µs）です。
 - `mode:3`、`prev_ca_state:3`（`TCP_CA_Loss` = 4 まで入ります）、`packet_conservation:1`、`round_start:1`（この ACK でラウンドが進んだか）、`idle_restart:1`、`probe_rtt_round_done:1`。
-- `lt_*`: long-term（policer）推定用です。`lt_rtt_cnt:7` は最大 127 で、使う上限（48 や 16）に足ります。`lt_last_stamp` は **ms 単位**の u32 です（µs の `delivered_mstamp` を 1000 で割って保存）。
+- `lt_*`: long-term（policer）推定用です。`lt_rtt_cnt:7` は最大 127 で、使う上限（48 や 16）に足ります。`lt_last_stamp` は **ms 単位** の u32 です（µs の `delivered_mstamp` を 1000 で割って保存）。
 - `pacing_gain:10` / `cwnd_gain:10`: `BBR_UNIT`（256）を 1.0 とする固定小数点で、最大 1023（約 4.0）まで入ります。最大値の `bbr_high_gain` = 739 が収まるように 10 ビットです。
 - `full_bw_reached:1`、`full_bw_cnt:2`（3 まで数えられれば足ります）、`cycle_idx:3`（`CYCLE_LEN` = 8）、`has_seen_rtt:1`。
 - `prior_cwnd`: ロス回復や PROBE_RTT で cwnd を一時的に絞る前の「良かった cwnd」です。
@@ -455,7 +455,7 @@ static void tcp_cong_control(struct sock *sk, u32 ack, u32 acked_sacked,
 }
 ```
 
-`.cong_control` があると、PRR による cwnd 削減（`tcp_cwnd_reduction()`）も `tcp_cong_avoid()` も、`tcp_update_pacing_rate()`（[net/ipv4/tcp_input.c#L1138](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1138)）による「cwnd / srtt × 200% or 120%」のペーシングも**すべて飛ばされます**。`tcp_end_cwnd_reduction()`（[net/ipv4/tcp_input.c#L3013](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3013)）も同様で、回復終了時に cwnd を ssthresh に戻す処理をしません。
+`.cong_control` があると、PRR による cwnd 削減（`tcp_cwnd_reduction()`）も `tcp_cong_avoid()` も、`tcp_update_pacing_rate()`（[net/ipv4/tcp_input.c#L1138](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1138)）による「cwnd / srtt × 200% or 120%」のペーシングも **すべて飛ばされます**。`tcp_end_cwnd_reduction()`（[net/ipv4/tcp_input.c#L3013](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3013)）も同様で、回復終了時に cwnd を ssthresh に戻す処理をしません。
 
 ```c
 static inline void tcp_end_cwnd_reduction(struct sock *sk)
@@ -548,7 +548,7 @@ __bpf_kfunc static void bbr_init(struct sock *sk)
 - `minmax_reset(&bbr->bw, bbr->rtt_cnt, 0)`: BtlBw を 0 で初期化します。
 - `bbr_init_pacing_rate_from_rtt()`: pacing rate の初期値を決めます（下記）。
 - `cycle_mstamp = 0`、`bbr_reset_lt_bw_sampling()`、`bbr_reset_startup_mode()`: STARTUP から始めます。
-- `cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE, SK_PACING_NEEDED)`: **pacing が必須**であることを宣言します。`SK_PACING_NONE` のときだけ `NEEDED` に変えます。すでに `sch_fq` が `SK_PACING_FQ` にしていた場合は、そのまま残します（無条件に書くと FQ による pacing を TCP 内部 pacing に格下げしてしまいます）。この値の意味は Step 12 で説明します。
+- `cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE, SK_PACING_NEEDED)`: **pacing が必須** であることを宣言します。`SK_PACING_NONE` のときだけ `NEEDED` に変えます。すでに `sch_fq` が `SK_PACING_FQ` にしていた場合は、そのまま残します（無条件に書くと FQ による pacing を TCP 内部 pacing に格下げしてしまいます）。この値の意味は Step 12 で説明します。
 
 `bbr_init_pacing_rate_from_rtt()`（[net/ipv4/tcp_bbr.c#L267](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_bbr.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n267)）:
 
@@ -609,7 +609,7 @@ __bpf_kfunc static void bbr_main(struct sock *sk, u32 ack, int flag, const struc
 
 BBR の全体はこの 20 行に集約されています。
 
-1. `bbr_update_bw()`: ラウンドを数え（`round_start` を立て）、LT 帯域のサンプリングを行い、BtlBw の max filter を更新します。**`round_start` はここでしか立たない**ので、後続の関数はすべてこの結果に依存します。順序を入れ替えてはいけません。
+1. `bbr_update_bw()`: ラウンドを数え（`round_start` を立て）、LT 帯域のサンプリングを行い、BtlBw の max filter を更新します。**`round_start` はここでしか立たない** ので、後続の関数はすべてこの結果に依存します。順序を入れ替えてはいけません。
 2. `bbr_update_ack_aggregation()`: 新しい BtlBw を使って extra_acked を更新します。
 3. `bbr_update_cycle_phase()`: PROBE_BW のフェーズを進めます。
 4. `bbr_check_full_bw_reached()`: STARTUP でパイプが満ちたかを判定します（`round_start` のときだけ）。
@@ -646,7 +646,7 @@ static void bbr_update_bw(struct sock *sk, const struct rate_sample *rs)
 	bbr_lt_bw_sampling(sk, rs);
 ```
 
-- `round_start = 0` を最初に行うので、`round_start` は「**この ACK で**ラウンドが進んだか」を表す 1 ACK 限りのフラグになります。無効なサンプルの ACK でも必ず 0 に戻ります。
+- `round_start = 0` を最初に行うので、`round_start` は「**この ACK で** ラウンドが進んだか」を表す 1 ACK 限りのフラグになります。無効なサンプルの ACK でも必ず 0 に戻ります。
 - 無効なサンプル（`tcp_rate_gen()` が -1 を入れたもの）では何もしません。この場合はラウンドも進みません。
 - **パケット時間のラウンド**: `rs->prior_delivered` は「今回 ACK された中で最も新しく送られたパケットが、送信された時点の `tp->delivered`」です。それが `next_rtt_delivered`（前のラウンド開始時の `tp->delivered`）以上なら、「前のラウンドの開始後に送ったパケットが ACK された」、つまり 1 往復が終わったことになります。ドラフト [§5.5.1](https://datatracker.ietf.org/doc/html/draft-ietf-ccwg-bbr-06#section-5.5.1) の `BBR.round_count` そのものです。時間（RTT）ではなく配達数で数えるので、RTT の揺らぎやアイドルに影響されません。`before()` を使っているので u32 のラップにも強いです（ただし差が 2^31 未満であることが前提で、6de035fec045 のバグはこれが崩れた例です）。
 - ラウンドが進んだら `packet_conservation = 0` にします。回復開始直後の 1 ラウンドだけ packet conservation を行う、という Step 13 の仕組みの終了条件です。
@@ -678,7 +678,7 @@ static void bbr_update_bw(struct sock *sk, const struct rate_sample *rs)
 ```
 
 - `bw = delivered * 2^24 / interval_us`。`interval_us` は `long` なので `div64_long()` を使います（5b2f1f3070b6 で `do_div()` の 32 ビット除数による切り詰めを避けるために変更されました）。ACK ごとに 64 ビット除算が 1 回発生しますが、BBR の per-ACK パスで変数による除算はここが主なものです。
-- **app-limited の扱い**: app-limited なサンプルは、現在の max 以上のときだけ filter に入れます。アプリが遅いだけで BtlBw が下がり、アプリが速くなった瞬間に遅すぎる送信になる、という問題を防ぎます。ドラフト [§5.5.4](https://datatracker.ietf.org/doc/html/draft-ietf-ccwg-bbr-06#section-5.5.4) と同じルールです。注意したいのは、窓の期限切れ判定が `minmax_running_max()` を**呼んだときにしか**行われないことです。app-limited で現在の max 未満のサンプルしか来ない間は filter が一切更新されないので、BtlBw は 10 ラウンドを過ぎても古い最大値のまま保たれます。コメントの「the best network rate no matter how long」はこのことです。アプリが再びネットワークより速く書き始め、app-limited でないサンプルが来た時点で初めて期限切れが評価されます。
+- **app-limited の扱い**: app-limited なサンプルは、現在の max 以上のときだけ filter に入れます。アプリが遅いだけで BtlBw が下がり、アプリが速くなった瞬間に遅すぎる送信になる、という問題を防ぎます。ドラフト [§5.5.4](https://datatracker.ietf.org/doc/html/draft-ietf-ccwg-bbr-06#section-5.5.4) と同じルールです。注意したいのは、窓の期限切れ判定が `minmax_running_max()` を **呼んだときにしか** 行われないことです。app-limited で現在の max 未満のサンプルしか来ない間は filter が一切更新されないので、BtlBw は 10 ラウンドを過ぎても古い最大値のまま保たれます。コメントの「the best network rate no matter how long」はこのことです。アプリが再びネットワークより速く書き始め、app-limited でないサンプルが来た時点で初めて期限切れが評価されます。
 - `minmax_running_max(&bbr->bw, bbr_bw_rtts, bbr->rtt_cnt, bw)`: 時刻として `rtt_cnt`（ラウンド数）を渡すので、窓の長さ 10 は「10 ラウンド」を意味します。
 
 `minmax_running_max()`（[lib/win_minmax.c#L67](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/lib/win_minmax.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n67)）と `minmax_subwin_update()`（[lib/win_minmax.c#L29](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/lib/win_minmax.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n29)）は Kathleen Nichols のアルゴリズムで、最良・2 番目・3 番目の 3 サンプルだけで窓付き max を近似します。
@@ -1185,7 +1185,7 @@ static void bbr_update_min_rtt(struct sock *sk, const struct rate_sample *rs)
 ```
 
 - `filter_expired`: 最後に min_rtt を更新してから 10 秒以上経ったかを判定します（`after()` で jiffies のラップに対応）。
-- **更新条件**: 有効な RTT サンプルで、(a) 現在の min より**厳密に**小さい、または (b) filter が期限切れで、かつ遅延 ACK による RTT ではない、のどちらかです。
+- **更新条件**: 有効な RTT サンプルで、(a) 現在の min より **厳密に** 小さい、または (b) filter が期限切れで、かつ遅延 ACK による RTT ではない、のどちらかです。
   - (a) が `<=` ではなく `<` なのは 1b9e2a8c99a5 によります。ロス回復中は再送パケットの RTT が TCP タイムスタンプ（ms 精度）から計算されるため、同じ値に丸められたサンプルが続くと、`<=` では `min_rtt_stamp` が更新され続けて PROBE_RTT に永遠に入れなくなっていました。
   - (b) で遅延 ACK を除外するのは e42866031ff0 によります。ヘルスチェックのような細い接続は遅延 ACK の RTT しか得られず、期限切れのたびに「遅延 ACK 込みの RTT」を min として採用すると RTprop を大幅に過大評価してしまうからです。
 - **PROBE_RTT への突入**: filter が期限切れで、アイドルからの再開直後でなく、まだ PROBE_RTT でなければ入ります。直前に (b) で min_rtt が更新されていても、`filter_expired` はローカル変数なので突入判定には影響しません。つまり、期限が切れたらまず PROBE_RTT に入って本当の RTprop を測りに行く、という順序です。`bbr_save_cwnd()` で cwnd を保存し、`probe_rtt_done_stamp = 0`（タイマー未開始）にします。
@@ -1362,7 +1362,7 @@ static unsigned long bbr_bw_to_pacing_rate(struct sock *sk, u32 bw, int gain)
 
 - 単位変換は `bw [pkt/µs << 24] × mss [byte/pkt] × gain [<< 8] >> 8 × (10^6 × 0.99) [µs/s] >> 24` です。
 - 演算順序はオーバーフローを避けるよう慎重に選ばれています。2.9 Tbit/s・MSS 1500 で `bw` ≈ 2^32、`× mss × gain(739)` で ≈ 2^52、`>> 8` で 2^44、`× 990000`（≈ 2^20）で 2^64 弱となり、ぎりぎり u64 に収まります。コメントの「2.9Tbit/sec と gain 2.89x まで」はこの計算です。
-- `mss_cache` は**ペイロード長**の MSS で、ヘッダを含みません。TCP 内部 pacing がペイロード長で間隔を計算するのに合わせています（cadefe5f584a）。
+- `mss_cache` は **ペイロード長** の MSS で、ヘッダを含みません。TCP 内部 pacing がペイロード長で間隔を計算するのに合わせています（cadefe5f584a）。
 - `USEC_PER_SEC / 100 * (100 - 1)` で 1% のマージンをかけます。
 - `sk_max_pacing_rate`（`SO_MAX_PACING_RATE`）で上限を切ります。setsockopt はソケットロックなしで書くようになったので（28b24f90020f）、`READ_ONCE()` で読みます。
 
@@ -1422,7 +1422,7 @@ static u32 bbr_tso_segs_goal(struct sock *sk)
 
 - pacing rate が 1.2 Mbit/s（= 150 kB/s）未満なら最小 1 セグメント、それ以上なら 2 セグメントです。低レートで 2 セグメントのバーストを送ると、間隔が長くなりすぎてキューの揺れが大きくなるからです。
 - `.tso_segs` は `tcp_tso_segs()`（[net/ipv4/tcp_output.c#L2285](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2285)）から呼ばれ、最近（cb145191e9d3）`min_tso_segs()` を置き換えたコールバックです。BBR は `tcp_tso_autosize()`（[net/ipv4/tcp_output.c#L2260](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2260)）に自分の最小値を渡すだけなので、振る舞いは以前の `min_tso_segs` と同じです。`mss_now == 0` のときは autosize を呼ばず最小値を返します。
-- `bbr_tso_segs_goal()` は cwnd の量子化予算の計算専用で、`tcp_tso_autosize()` と似ていますが、デバイスの `gso_max_size` を**無視**します。デバイスが GSO サイズを小さく制限していても、BBR が見積もる cwnd がデバイスに依存しないようにするためです（dcb8c9b4373a、71abf467bb63）。`sk_pacing_rate >> sk_pacing_shift`（既定の shift 10 で約 1 ms 分）を、legacy の 64 KB 上限で切り、最大 127 セグメントにします。
+- `bbr_tso_segs_goal()` は cwnd の量子化予算の計算専用で、`tcp_tso_autosize()` と似ていますが、デバイスの `gso_max_size` を **無視** します。デバイスが GSO サイズを小さく制限していても、BBR が見積もる cwnd がデバイスに依存しないようにするためです（dcb8c9b4373a、71abf467bb63）。`sk_pacing_rate >> sk_pacing_shift`（既定の shift 10 で約 1 ms 分）を、legacy の 64 KB 上限で切り、最大 127 セグメントにします。
 
 **pacing の実体**: BBR 自身はパケットの送出時刻を決めません。`sk_pacing_status` によって、次のどちらかが行います。
 
@@ -1472,7 +1472,7 @@ static u32 bbr_bdp(struct sock *sk, u32 bw, int gain)
 ```
 
 - RTT サンプルが一度もない（`min_rtt_us == ~0U`）なら、`TCP_INIT_CWND`（10）を返します。タイムスタンプなしで、SYN/SYN-ACK/データがすべて再送されて RTT を測れなかった場合に起きます。RTO で cwnd が 1 に落ちても、10 までは slow start で戻れるようにするためです。
-- `w = bw × min_rtt_us`（u64）、`bdp = ceil(w × gain >> 8 / 2^24)` です。**切り上げ**なのは、切り捨てると「cwnd が小さい → 配信レートが下がる → BtlBw が下がる → cwnd がさらに小さくなる」という負のフィードバックが起きうるからです（de8e1beb1919 でコメントが明確化されました）。
+- `w = bw × min_rtt_us`（u64）、`bdp = ceil(w × gain >> 8 / 2^24)` です。**切り上げ** なのは、切り捨てると「cwnd が小さい → 配信レートが下がる → BtlBw が下がる → cwnd がさらに小さくなる」という負のフィードバックが起きうるからです（de8e1beb1919 でコメントが明確化されました）。
 
 `bbr_quantization_budget()`（[net/ipv4/tcp_bbr.c#L403](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_bbr.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n403)）と `bbr_inflight()`（[net/ipv4/tcp_bbr.c#L421](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_bbr.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n421)）:
 
@@ -1663,7 +1663,7 @@ __bpf_kfunc static u32 bbr_ssthresh(struct sock *sk)
 
 - `bbr_sndbuf_expand()`: 送信バッファの自動調整（第 10 章の `tcp_sndbuf_expand()`）で、cwnd の何倍分の sk_sndbuf を確保するかを返します。既定は 2 倍ですが、BBR は回復中も slow start するので 3 倍にします。
 - `bbr_undo_cwnd()`: 偽のロス回復だった（DSACK などで判明した）とき、`tcp_undo_cwnd_reduction()`（[net/ipv4/tcp_input.c#L2843](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2843)）から呼ばれます。BBR は回復中も cwnd をほぼ維持しているので、**現在の cwnd をそのまま返します**（他の CC のように `max(cwnd, prior_cwnd)` を返す必要はありません。`prior_cwnd` への復元は `bbr_set_cwnd_to_recover_or_restore()` が回復終了時に行います）。さらに、偽のロスで STARTUP 終了判定や LT サンプリングが歪まないよう、`full_bw` / `full_bw_cnt` と LT 状態をリセットします（2f6c498e4f15、600647d467c6）。リオーダリングの激しいパスで、ロスと誤認したせいで「パイプが満ちた」「policer がいる」と判断するのを防ぎます。
-- `bbr_ssthresh()`: Recovery / Loss に入るとき、`tcp_init_cwnd_reduction()`（[net/ipv4/tcp_input.c#L2971](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2971)）や `tcp_enter_loss()`（[net/ipv4/tcp_input.c#L2554](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2554)）から呼ばれます。BBR は**ssthresh を変えず**（現在の値を返すだけ）、cwnd を保存する機会としてだけ使います。
+- `bbr_ssthresh()`: Recovery / Loss に入るとき、`tcp_init_cwnd_reduction()`（[net/ipv4/tcp_input.c#L2971](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2971)）や `tcp_enter_loss()`（[net/ipv4/tcp_input.c#L2554](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2554)）から呼ばれます。BBR は **ssthresh を変えず**（現在の値を返すだけ）、cwnd を保存する機会としてだけ使います。
 
 `tcp_enter_loss()` の該当部分です。
 
@@ -1685,7 +1685,7 @@ __bpf_kfunc static u32 bbr_ssthresh(struct sock *sk)
 
 RTO 時は TCP 本体が cwnd を `in-flight + 1` に下げ、その後 `tcp_set_ca_state(sk, TCP_CA_Loss)` を呼びます。BBR は以後 `bbr_set_cwnd()` で slow start しながら目標まで戻し、Loss 状態を抜けるときに `prior_cwnd` を復元します。
 
-`tcp_set_ca_state()`（[net/ipv4/tcp_cong.c#L38](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n38)）は、状態を書き換える**前に** `.set_state` を呼びます。
+`tcp_set_ca_state()`（[net/ipv4/tcp_cong.c#L38](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_cong.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n38)）は、状態を書き換える **前に** `.set_state` を呼びます。
 
 ```c
 void tcp_set_ca_state(struct sock *sk, const u8 ca_state)
@@ -1818,7 +1818,7 @@ BBR には RFC がないので、ここでは「原論文 / ドラフト v3」�
 | `bbr_init()` | `tcp_init_congestion_control()` | ESTABLISHED への遷移時（softirq または `connect()`/`accept()` 経路）や `setsockopt(TCP_CONGESTION)`。ソケットロックを保持しています |
 | `bbr_cwnd_event_tx_start()` | `tcp_event_data_sent()` | 送信経路。`sendmsg` のプロセスコンテキスト、ACK 受信 softirq、TSQ の tasklet や pacing hrtimer の softirq（ソケットが所有されていれば `tcp_release_cb()` に延期されます） |
 | `bbr_ssthresh()` / `bbr_undo_cwnd()` | ロス回復の入口 / undo | ACK 処理中、または RTO タイマー（`tcp_write_timer()`、所有中なら延期） |
-| `bbr_set_state()` | `tcp_set_ca_state()` | 同上。状態を書き換える**前に**呼ばれます |
+| `bbr_set_state()` | `tcp_set_ca_state()` | 同上。状態を書き換える **前に** 呼ばれます |
 | `bbr_get_info()` | inet_diag / `TCP_CC_INFO` | 読み取りのみ。値の一貫性は厳密には保証されません（診断用） |
 
 つまり `struct bbr` を書き換える経路はすべてソケットロック（またはそれと同等の bh_lock_sock + 非所有）の下にあり、BBR 内部の状態にロックや atomics は不要です。ロックなしの読み手・書き手がいるのは次のフィールドだけです。
@@ -1882,7 +1882,7 @@ BBR 専用の MIB カウンタはありません。間接的に見るなら、�
 
 ### packetdrill
 
-`tools/testing/selftests/net/packetdrill/` には、BBR を対象にしたテストは**ありません**。pacing と fq の組み合わせを確認するものとしては `tcp_slow_start_slow-start-fq-ack-per-2pkt.pkt`（`tc qdisc replace dev tun0 root fq` を使う slow start のテスト、CC は既定のもの）がある程度です。BBR の振る舞いを packetdrill で確認するなら、`setsockopt(..., TCP_CONGESTION, "bbr", 3)` を加え、`tcpi_pacing_rate` や `tcpi_snd_cwnd` を `%{ assert ... }%` で検証するのが定石です。
+`tools/testing/selftests/net/packetdrill/` には、BBR を対象にしたテストは **ありません**。pacing と fq の組み合わせを確認するものとしては `tcp_slow_start_slow-start-fq-ack-per-2pkt.pkt`（`tc qdisc replace dev tun0 root fq` を使う slow start のテスト、CC は既定のもの）がある程度です。BBR の振る舞いを packetdrill で確認するなら、`setsockopt(..., TCP_CONGESTION, "bbr", 3)` を加え、`tcpi_pacing_rate` や `tcpi_snd_cwnd` を `%{ assert ... }%` で検証するのが定石です。
 
 ## IPv4 と IPv6
 
@@ -1918,7 +1918,7 @@ PROBE_RTT 中は cwnd が 4 パケットなので、レートサンプルは本�
 
 <details><summary>答え</summary>
 
-`done:` 以降で `snd_cwnd_clamp` と PROBE_RTT の cap（4 パケット）を必ず適用するためです。`acked` は `rs->acked_sacked`、つまりこの ACK で新たに (S)ACK された**パケット数**なので、1 MSS 未満の部分 ACK、純粋な窓更新、重複 ACK（SACK ブロックで新しい区間を含まないもの）、データを運ぶ ACK などでは 0 になります。以前は `return` していたため、PROBE_RTT に入ったのに部分 ACK しか来ないと cwnd が 4 に下がらず、キューを抜けずに RTprop を測り損ねていました（8e995bf14fdb）。
+`done:` 以降で `snd_cwnd_clamp` と PROBE_RTT の cap（4 パケット）を必ず適用するためです。`acked` は `rs->acked_sacked`、つまりこの ACK で新たに (S)ACK された **パケット数** なので、1 MSS 未満の部分 ACK、純粋な窓更新、重複 ACK（SACK ブロックで新しい区間を含まないもの）、データを運ぶ ACK などでは 0 になります。以前は `return` していたため、PROBE_RTT に入ったのに部分 ACK しか来ないと cwnd が 4 に下がらず、キューを抜けずに RTprop を測り損ねていました（8e995bf14fdb）。
 
 </details>
 

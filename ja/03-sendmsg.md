@@ -41,7 +41,7 @@
 
 - `[snd_una, snd_nxt)` は送信済みで ACK 待ちの範囲です。`sk_buff` は再送キュー `tcp_rtx_queue`（rb-tree）にあります。
 - `[snd_nxt, write_seq)` は `sendmsg()` が受け取ったけれどまだ送っていない範囲です。`sk_buff` は `sk_write_queue`（双方向リスト）にあります。
-- `tcp_sendmsg_locked()` が動かすのは **`write_seq` だけ**です。`snd_nxt` を進めるのは第 4 章の `tcp_event_new_data_sent()`、`snd_una` を進めるのは第 7 章の ACK 処理です。
+- `tcp_sendmsg_locked()` が動かすのは **`write_seq` だけ** です。`snd_nxt` を進めるのは第 4 章の `tcp_event_new_data_sent()`、`snd_una` を進めるのは第 7 章の ACK 処理です。
 
 #### セグメント化は送信側の自由
 
@@ -113,7 +113,7 @@ flowchart TD
     K -- "全部コピーした" --> O["out: tcp_push()"]
     O --> P{"tcp_should_autocork()?"}
     P -- "yes" --> Q["TSQ_THROTTLED を立てて return（TX 完了時に送信）"]
-    P -- "no" --> R["__tcp_push_pending_frames() → 第4章"]
+    P -- "no" --> R["__tcp_push_pending_frames() → 第 4 章"]
     R --> S["release_sock(): backlog 処理, tcp_release_cb()"]
     Q --> S
 ```

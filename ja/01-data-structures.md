@@ -328,7 +328,7 @@ RFC 変数との対応は次のとおりです。
 | --- | --- | --- |
 | SND.UNA | `tp->snd_una` | `tcp_ack()` が進める（第 7 章） |
 | SND.NXT | `tp->snd_nxt` | `tcp_event_new_data_sent()` が進める（第 4 章）。RTO 後も巻き戻さない |
-| SND.WND | `tp->snd_wnd` | **スケール適用済みのバイト数**で保持 |
+| SND.WND | `tp->snd_wnd` | **スケール適用済みのバイト数** で保持 |
 | SND.UP | `tp->snd_up` | |
 | SND.WL1 | `tp->snd_wl1` | |
 | SND.WL2 | なし | 代わりに `snd_una` と比較（後述） |

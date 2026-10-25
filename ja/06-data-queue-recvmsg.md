@@ -69,7 +69,7 @@ RCV.BUFF - RCV.USER - RCV.WND >= min(Fr * RCV.BUFF, Eff.snd.MSS)    (Fr = 1/2 �
 ```mermaid
 flowchart TD
     A["tcp_rcv_established() slow path<br/>/ tcp_rcv_state_process()"] --> B["tcp_data_queue()"]
-    H["header prediction fast path<br/>(第5章)"] --> Q
+    H["header prediction fast path<br/>(第 5 章)"] --> Q
     B -->|"seq == rcv_nxt"| Q["tcp_queue_rcv()<br/>tcp_try_coalesce()"]
     Q --> E["tcp_event_data_recv()<br/>quickack / ATO / rcv_mss"]
     E --> O{"ofo キュー空?"}
@@ -86,7 +86,7 @@ flowchart TD
     DR --> AC["tcp_ack_snd_check()<br/>__tcp_ack_snd_check()"]
     NS --> AC
     D --> AC
-    AC -->|"2MSS超 / quickack / ACK_NOW"| NOW["tcp_send_ack()"]
+    AC -->|"2MSS 超 / quickack / ACK_NOW"| NOW["tcp_send_ack()"]
     AC -->|"順序通り"| DL["tcp_send_delayed_ack()"]
     AC -->|"ofo あり + SACK"| CMP["SACK 圧縮 hrtimer"]
     U["recvmsg()"] --> R["tcp_recvmsg() → lock_sock()<br/>tcp_recvmsg_locked()"]

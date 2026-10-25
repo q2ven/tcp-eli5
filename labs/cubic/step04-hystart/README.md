@@ -12,11 +12,11 @@ Step 3 までで、CUBIC の 3 次関数ウィンドウ曲線・Fast Convergence
 ### 1. なぜ初期 Slow Start で大事故が起きるのか？（Slow Start オーバーシュート問題）
 
 TCP コネクションが確立された直後、送信側はネットワークの空き帯域（帯域遅延積: BDP = Bandwidth-Delay Product）を知らないため、**Slow Start** フェーズから送信を開始します。
-初期状態の Slow Start 閾値 `tp->snd_ssthresh` は事実上の無限大である `TCP_INFINITE_SSTHRESH`（`0x7fffffff`）に設定されており、`tp->snd_cwnd < tp->snd_ssthresh` が成り立つ間、カーネルの `tcp_slow_start()` は到着した ACK のパケット数分だけ `tp->snd_cwnd` を加算します。つまり、**1 RTT ごとに `snd_cwnd` が 2 倍（ $10 \to 20 \to 40 \to 80 \dots$）へ指数関数的に膨張**します。
+初期状態の Slow Start 閾値 `tp->snd_ssthresh` は事実上の無限大である `TCP_INFINITE_SSTHRESH`（`0x7fffffff`）に設定されており、`tp->snd_cwnd < tp->snd_ssthresh` が成り立つ間、カーネルの `tcp_slow_start()` は到着した ACK のパケット数分だけ `tp->snd_cwnd` を加算します。つまり、**1 RTT ごとに `snd_cwnd` が 2 倍（ $10 \to 20 \to 40 \to 80 \dots$ ）へ指数関数的に膨張** します。
 
 ここに深刻な落とし穴があります。
 
-- あるラウンドで `snd_cwnd` がちょうどネットワークの BDP（パイプの容量 $W_{\text{BDP}}$）に達したとします。
+- あるラウンドで `snd_cwnd` がちょうどネットワークの BDP（パイプの容量 $W_{\text{BDP}}$ ）に達したとします。
 - しかしその時点ではまだパケットロスは起きていないため、Slow Start は止まりません。そのラウンドの $W_{\text{BDP}}$ 個のパケットに対する ACK が返ってくる間に、`snd_cwnd` は **$2 \times W_{\text{BDP}}$ まで倍増** してしまいます。
 - もしボトルネックルータのバッファ容量が $W_{\text{BDP}}$ 未満（浅いバッファのスイッチなど）であれば、パイプに入りきらない最大 $W_{\text{BDP}}$ 個ものパケットが 1 RTT のうちに一斉に破棄（テールドロップ）されます。
 - これほど大量のバーストロスが起きると、SACK による Fast Recovery でも回復しきれずに再送タイムアウト（RTO）へ陥り、`snd_cwnd = 1` にリセットされて通信が長時間ストールしてしまいます。
@@ -63,7 +63,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
   Slow Start 中に送信側が 1 ラウンド分のパケット群を送出すると、それらのパケットはボトルネック回線の帯域幅に応じた間隔で順番に受信側へ届き、その応答である ACK も密に連なった「列車（ACK Train）」となって送信側へ戻ってきます。
   この ACK Train の先頭（`ca->round_start`）から末尾までの継続時間は、1 ラウンド分のデータがボトルネックを通過するのに要した時間を表します。往復の最小伝搬遅延 `ca->delay_min` のうち片道分はおおよそ $\text{delay}_{\min} / 2$ であるため、**途切れない ACK Train がラウンド開始から $\text{delay}_{\min} / 2$ 以上続いたなら、送出したデータ量がすでに片道パイプ容量を埋め尽くしている** と判断できます。
 - **判定ルールと数式**:
-  1. 直前の ACK からの経過時間が `HYSTART_ACK_DELTA_US`（ $2000\ \mu\text{s} = 2\text{ ms}$）以内かどうかを符号付き 32 ビット差分で判定します：
+  1. 直前の ACK からの経過時間が `HYSTART_ACK_DELTA_US`（ $2000\ \mu\text{s} = 2\text{ ms}$ ）以内かどうかを符号付き 32 ビット差分で判定します：
      ```c
      if ((__s32)(now_us - ca->last_ack) <= HYSTART_ACK_DELTA_US)
      ```
@@ -100,26 +100,26 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
          tp->snd_ssthresh = tp->snd_cwnd;
      }
      ```
-  - **なぜ $\text{delay}_{\min} \gg 3$（ $12.5\%$）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
-    - 基本は最小 RTT の $1/8$（`ca->delay_min >> 3`）を許容キューイング遅延とします。
-    - **下限 `HYSTART_DELAY_MIN = 4000U`（ $4\text{ ms}$）**: データセンターや LAN など $\text{delay}_{\min} \le 1\text{ ms}$ の超低遅延環境では、 $\text{delay}_{\min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
-    - **上限 `HYSTART_DELAY_MAX = 16000U`（ $16\text{ ms}$）**: 衛星回線や大陸間回線など $\text{delay}_{\min} = 200\text{ ms}$ を超える長遅延環境では、 $\text{delay}_{\min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
+  - **なぜ $\text{delay}_{\min} \gg 3$ （ $12.5\%$ ）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
+    - 基本は最小 RTT の $1/8$ （`ca->delay_min >> 3`）を許容キューイング遅延とします。
+    - **下限 `HYSTART_DELAY_MIN = 4000U`（ $4\text{ ms}$ ）**: データセンターや LAN など $\text{delay}_{\min} \le 1\text{ ms}$ の超低遅延環境では、 $\text{delay}_{\min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
+    - **上限 `HYSTART_DELAY_MAX = 16000U`（ $16\text{ ms}$ ）**: 衛星回線や大陸間回線など $\text{delay}_{\min} = 200\text{ ms}$ を超える長遅延環境では、 $\text{delay}_{\min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
 
 ---
 
 ### 4. 具体例で追う数値トレース（Delay 増加検出）
 
-最小 RTT が $20\text{ ms}$（`delay_min = 20000` $\mu\text{s}$）の回線で、Slow Start がどのように止まるかを数値で確認しましょう。
+最小 RTT が $20\text{ ms}$ （`delay_min = 20000` $\mu\text{s}$ ）の回線で、Slow Start がどのように止まるかを数値で確認しましょう。
 
 - **閾値の計算**:
-  `delay_min >> 3` は $20000 / 8 = 2500\ \mu\text{s}$（ $2.5\text{ ms}$）です。これを `clamp(2500, 4000U, 16000U)` に通すと下限の **`4000` $\mu\text{s}$（ $4\text{ ms}$）** が選ばれます。
-  したがって、Delay 増加検出の発火ラインは `20000 + 4000 = 24000` $\mu\text{s}$（**$24\text{ ms}$**）となります。
+  `delay_min >> 3` は $20000 / 8 = 2500\ \mu\text{s}$ （ $2.5\text{ ms}$ ）です。これを `clamp(2500, 4000U, 16000U)` に通すと下限の **`4000` $\mu\text{s}$ （ $4\text{ ms}$ ）** が選ばれます。
+  したがって、Delay 増加検出の発火ラインは `20000 + 4000 = 24000` $\mu\text{s}$ （**$24\text{ ms}$**）となります。
 - **Round 1（`snd_cwnd: 10 -> 20`）**:
-  初期ウィンドウ 10 パケットを送信し、 $20\text{ ms}$ 後に累積 ACK が返ります。`ca->delay_min = 20000` が記録され、Slow Start によって `snd_cwnd` は `10` から `20`（ $\ge 16$）へ倍増し、次の 20 パケットが送信されます。
+  初期ウィンドウ 10 パケットを送信し、 $20\text{ ms}$ 後に累積 ACK が返ります。`ca->delay_min = 20000` が記録され、Slow Start によって `snd_cwnd` は `10` から `20`（ $\ge 16$ ）へ倍増し、次の 20 パケットが送信されます。
 - **Round 2（`snd_cwnd >= 20`、バッファにキューが溜まり RTT が $35\text{ ms}$ に増加）**:
-  - 1 個目の ACK が到着（`delay = 35000` $\mu\text{s}$）：`after(tp->snd_una, ca->end_seq)` が真となり、`hystart_reset()` で新ラウンドが開始されます。`ca->curr_rtt = 35000`、`ca->sample_cnt = 1` になります。
-  - 2〜7 個目の ACK が到着（`delay = 35000` $\mu\text{s}$）：`ca->sample_cnt` が `2, 3, ..., 7` と増えますが、まだ 8 サンプル未満なので発火しません（`snd_cwnd` は ACK ごとに $+1$ ずつ増えていきます）。
-  - **8 個目のサンプルとなる ACK が到着**（`delay = 35000` $\mu\text{s}$）：`ca->sample_cnt` が `8`（`HYSTART_MIN_SAMPLES`）に到達します。`ca->curr_rtt`（ $35000\ \mu\text{s}$） $\ge$ `24000` $\mu\text{s}$ が成立するため、**その場で `ca->found = 1`、`tp->snd_ssthresh = tp->snd_cwnd`（28）に設定され、パケットロス 0 で Slow Start を脱出します！**
+  - 1 個目の ACK が到着（`delay = 35000` $\mu\text{s}$ ）：`after(tp->snd_una, ca->end_seq)` が真となり、`hystart_reset()` で新ラウンドが開始されます。`ca->curr_rtt = 35000`、`ca->sample_cnt = 1` になります。
+  - 2〜7 個目の ACK が到着（`delay = 35000` $\mu\text{s}$ ）：`ca->sample_cnt` が `2, 3, ..., 7` と増えますが、まだ 8 サンプル未満なので発火しません（`snd_cwnd` は ACK ごとに $+1$ ずつ増えていきます）。
+  - **8 個目のサンプルとなる ACK が到着**（`delay = 35000` $\mu\text{s}$ ）：`ca->sample_cnt` が `8`（`HYSTART_MIN_SAMPLES`）に到達します。`ca->curr_rtt`（ $35000\ \mu\text{s}$ ） $\ge$ `24000` $\mu\text{s}$ が成立するため、**その場で `ca->found = 1`、`tp->snd_ssthresh = tp->snd_cwnd`（28）に設定され、パケットロス 0 で Slow Start を脱出します！**
 
 ---
 
@@ -138,11 +138,11 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 3. **`icsk_ca_priv` と `struct bictcp *ca = inet_csk_ca(sk)`**:
    - 各ソケットの `struct inet_connection_sock` には、輻輳制御アルゴリズム専用のプライベートメモリ領域 `icsk_ca_priv` が用意されており、`inet_csk_ca(sk)` でポインタを取得できます。
    - 本ステップではカーネルの `vmlinux.h` に定義されている `struct bictcp` をそのまま使用します。HyStart で使うフィールドは以下の通りです：
-     - `ca->delay_min`（`__u32`）: コネクション確立以降に観測された最小 RTT（ $\mu\text{s}$）。
-     - `ca->round_start`（`__u32`）: 現在のラウンドが始まった時刻（ $\mu\text{s}$）。
-     - `ca->last_ack`（`__u32`）: 現在の ACK Train で直近の ACK を受信した時刻（ $\mu\text{s}$）。
+     - `ca->delay_min`（`__u32`）: コネクション確立以降に観測された最小 RTT（ $\mu\text{s}$ ）。
+     - `ca->round_start`（`__u32`）: 現在のラウンドが始まった時刻（ $\mu\text{s}$ ）。
+     - `ca->last_ack`（`__u32`）: 現在の ACK Train で直近の ACK を受信した時刻（ $\mu\text{s}$ ）。
      - `ca->end_seq`（`__u32`）: 現在のラウンドの終端シーケンス番号。
-     - `ca->curr_rtt`（`__u32`）: 現在のラウンド内で観測された最小 RTT（ $\mu\text{s}$、ラウンド開始時は `~0U`）。
+     - `ca->curr_rtt`（`__u32`）: 現在のラウンド内で観測された最小 RTT（ $\mu\text{s}$ 、ラウンド開始時は `~0U`）。
      - `ca->sample_cnt`（`__u32`）: 現在のラウンド内で収集した RTT サンプル数。
      - `ca->found`（`__u8`）: HyStart が Slow Start 脱出を検知済みかを示すフラグ（未検知なら `0`、検知したら `1`）。
 4. **`bpf_cc_helpers.h` のインラインヘルパー**:
@@ -222,7 +222,7 @@ if ((__s32)(now_us - ca->last_ack) <= HYSTART_ACK_DELTA_US) {
 
 ### Q4. Detector 2（`HYSTART_DELAY`）は C コードでどう記述するか？
 
-引数で渡された今回の RTT `delay`（ $\mu\text{s}$）を使って、「ラウンド内の最小 RTT `ca->curr_rtt` を更新し、サンプル数 `ca->sample_cnt` を最大 `HYSTART_MIN_SAMPLES`（8）まで増やし、8 サンプル以上集まった状態で `ca->curr_rtt` が閾値以上なら Slow Start を終了する」というロジックを C コードで組み立ててみましょう。
+引数で渡された今回の RTT `delay`（ $\mu\text{s}$ ）を使って、「ラウンド内の最小 RTT `ca->curr_rtt` を更新し、サンプル数 `ca->sample_cnt` を最大 `HYSTART_MIN_SAMPLES`（8）まで増やし、8 サンプル以上集まった状態で `ca->curr_rtt` が閾値以上なら Slow Start を終了する」というロジックを C コードで組み立ててみましょう。
 
 <details>
 <summary>ヒントと答え</summary>
@@ -266,9 +266,9 @@ if (ca->sample_cnt >= HYSTART_MIN_SAMPLES) {
 ```
 
 - `HYSTART_LOW_WINDOW`（`16`）: HyStart の検出器を有効化する最小の `snd_cwnd`。
-- `HYSTART_ACK_DELTA_US`（`2000U` = $2\text{ ms}$）: 同じ ACK Train に属するとみなす連続 ACK 間の最大間隔。
+- `HYSTART_ACK_DELTA_US`（`2000U` = $2\text{ ms}$ ）: 同じ ACK Train に属するとみなす連続 ACK 間の最大間隔。
 - `HYSTART_MIN_SAMPLES`（`8`）: Delay 増加検出を行うために必要なラウンド内の最小 RTT サンプル数。
-- `HYSTART_DELAY_MIN`（`4000U` = $4\text{ ms}$）/ `HYSTART_DELAY_MAX`（`16000U` = $16\text{ ms}$）: 許容キューイング遅延 `delay_min >> 3` の下限と上限。
+- `HYSTART_DELAY_MIN`（`4000U` = $4\text{ ms}$ ）/ `HYSTART_DELAY_MAX`（`16000U` = $16\text{ ms}$ ）: 許容キューイング遅延 `delay_min >> 3` の下限と上限。
 
 ### 2. `hystart_reset()` — 新しいラウンドの開始
 
@@ -375,16 +375,16 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 2. **Round 1: 最小 RTT `delay_min = 20 ms` の確立と `cwnd: 10 -> 20`（0.020s 〜 0.040s）**:
    - アプリケーションが `write(4, ..., 30360)` で 30 セグメント（ $30 \times 1012 = 30360$ バイト）を書き込みます。初期 `snd_cwnd = 10` のため、まず 10 セグメント（シーケンス番号 `1:10121`）が送信されます。
    - `+.020`（ $20\text{ ms}$ 後）に `ack 10121` が返ります。
-     - `bpf_cubic6_acked()` で `delay_min = 20000`（ $20\text{ ms}$）が記録されます。
+     - `bpf_cubic6_acked()` で `delay_min = 20000`（ $20\text{ ms}$ ）が記録されます。
      - `hystart_update()` の冒頭で `after(10121, 1)` が真になるため、`hystart_reset()` が呼ばれて `end_seq = 10121` に更新されます（この時点ではまだ `snd_cwnd == 10 < 16` のため検出器はスキップされます）。
      - 直後の `bpf_cubic6_cong_avoid()` で `snd_cwnd` が `10` から `20` に倍増し、残りの 20 セグメント（`10121:30361`）が送信されます。
      - `tcpi_snd_cwnd == 20` かつ `tcpi_snd_ssthresh == 0x7fffffff` であることをアサートします。
-3. **Round 2: キューイング遅延（ $35\text{ ms}$）の発生と 8 サンプル目の HyStart 発火（0.075s）**:
+3. **Round 2: キューイング遅延（ $35\text{ ms}$ ）の発生と 8 サンプル目の HyStart 発火（0.075s）**:
    - `+.035`（ $35\text{ ms}$ 後）に Round 2 の 1 個目の ACK（`ack 11133`）が到着します。
      - `after(11133, 10121)` が真となり、`hystart_reset()` で新しいラウンドが開始されます（`end_seq = 30361`、`sample_cnt = 0`、`curr_rtt = ~0U`）。
-     - `snd_cwnd` は `20`（ $\ge 16$）なので検出器が動き始め、`curr_rtt = 35000`、`sample_cnt = 1` になります。まだ 1 サンプル目なので `tcpi_snd_ssthresh == 0x7fffffff` のままです。
+     - `snd_cwnd` は `20`（ $\ge 16$ ）なので検出器が動き始め、`curr_rtt = 35000`、`sample_cnt = 1` になります。まだ 1 サンプル目なので `tcpi_snd_ssthresh == 0x7fffffff` のままです。
    - 続いて 7 個の 1-MSS ACK（`ack 12145` 〜 `ack 18217`）が `+0.000` で連続到着し、`sample_cnt` が `2` から `8` まで増加します（なお、`+.035` の最初の ACK で `round_start` が現在時刻にリセットされた後、後続の ACK はすべて `+0.000` で到着するため `now_us - round_start == 0 < 10000` となり、ACK Train 検出器はまだ発火しません）。
-   - 8 サンプル目に達した `ack 18217` および続く `ack 19229` の時点で、`sample_cnt >= 8` かつ `curr_rtt`（ $35\text{ ms}$） $\ge$ `delay_min + 4 ms`（ $20\text{ ms} + 4\text{ ms} = 24\text{ ms}$）が成立し、**Detector 2（`HYSTART_DELAY`）が発火** します。
+   - 8 サンプル目に達した `ack 18217` および続く `ack 19229` の時点で、`sample_cnt >= 8` かつ `curr_rtt`（ $35\text{ ms}$ ） $\ge$ `delay_min + 4 ms`（ $20\text{ ms} + 4\text{ ms} = 24\text{ ms}$ ）が成立し、**Detector 2（`HYSTART_DELAY`）が発火** します。
    - `tp->snd_ssthresh = tp->snd_cwnd` が実行され、`assert tcpi_snd_ssthresh == tcpi_snd_cwnd` と `assert tcpi_snd_ssthresh < 0x7fffffff` が PASS します。
 
 ### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` は PASS するのか？

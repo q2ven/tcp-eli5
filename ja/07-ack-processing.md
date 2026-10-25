@@ -132,7 +132,7 @@ flowchart TD
 3. **再送キューの掃除と計測**: `tcp_clean_rtx_queue()` が ACK 済み skb を解放しつつ、RTT サンプル・配送パケット数・配送レートのサンプルを集めます。
 4. **判断と送信**: ロス回復（第 8 章）と輻輳制御（第 11 章）にサンプルを渡し、TLP/RTO タイマーを張り直し、必要なら再送します。
 
-ポイントは、**ロス回復と再送の決定が輻輳制御の後**に置かれていることです（`tcp_xmit_recovery()` が最後）。「いくつ送れるか（cwnd）」を決めてから「何を送るか」を決める順序になっています。
+ポイントは、**ロス回復と再送の決定が輻輳制御の後** に置かれていることです（`tcp_xmit_recovery()` が最後）。「いくつ送れるか（cwnd）」を決めてから「何を送るか」を決める順序になっています。
 
 ## コードを追う / Walking through the code
 
@@ -148,7 +148,7 @@ flowchart TD
 | `tcp_rcv_synsent_state_process()` | `FLAG_SLOWPATH` | SYN-ACK 受信 |
 | `tcp_rcv_state_process()`（step 5） | `FLAG_SLOWPATH \| FLAG_UPDATE_TS_RECENT \| FLAG_NO_CHALLENGE_ACK` | SYN_RECV, FIN_WAIT, CLOSING など |
 
-`tcp_rcv_established()`（[net/ipv4/tcp_input.c#L6520](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n6520)）は冒頭で `tcp_mstamp_refresh_inline(tp)` を呼び、`tp->tcp_mstamp` をこの受信処理の「現在時刻」に更新します。以降の RTT 計算はすべて、この `tcp_mstamp` との差分で行われます。header prediction 自体は第 5 章で扱います。この章で大事なのは、**header prediction が当たった場合、ウィンドウ値が変わっていないことが `pred_flags` の比較で既に保証されている**ことです。そのため `FLAG_SLOWPATH` なしで呼ばれた `tcp_ack()` は、ウィンドウ更新の判定を省略できます。
+`tcp_rcv_established()`（[net/ipv4/tcp_input.c#L6520](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n6520)）は冒頭で `tcp_mstamp_refresh_inline(tp)` を呼び、`tp->tcp_mstamp` をこの受信処理の「現在時刻」に更新します。以降の RTT 計算はすべて、この `tcp_mstamp` との差分で行われます。header prediction 自体は第 5 章で扱います。この章で大事なのは、**header prediction が当たった場合、ウィンドウ値が変わっていないことが `pred_flags` の比較で既に保証されている** ことです。そのため `FLAG_SLOWPATH` なしで呼ばれた `tcp_ack()` は、ウィンドウ更新の判定を省略できます。
 
 フラグの定義は次のとおりです。
 
@@ -230,7 +230,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	prefetch(sk->tcp_rtx_queue.rb_node);
 ```
 
-- 戻り値の型は `int` です。**負値**は `-SKB_DROP_REASON_*`（セグメントを捨てる）、**0** は「古い ACK だが受け入れた」、**1** は通常の処理完了を表します。`tcp_rcv_state_process()` は「CLOSING 系の状態では古い ACK（0）も受け入れる」とコメントしており、この 3 値を区別しています。
+- 戻り値の型は `int` です。**負値** は `-SKB_DROP_REASON_*`（セグメントを捨てる）、**0** は「古い ACK だが受け入れた」、**1** は通常の処理完了を表します。`tcp_rcv_state_process()` は「CLOSING 系の状態では古い ACK（0）も受け入れる」とコメントしており、この 3 値を区別しています。
 - `prior_snd_una`、`prior_packets`、`delivered`、`lost`、`is_sack_reneg` は、この ACK を処理する **前** の値です。`tcp_ack()` は最後に `tp->delivered - delivered`（この ACK で新たに届いたパケット数）や `tp->lost - lost`（この ACK で新たにロスと判定された数）を計算します。差分で数えることで、SACK タグ付け・累積 ACK・RACK・Reno の疑似 SACK など、カウンタを増やす経路がいくつあっても二重に数えずに済みます。
 - `ack_seq` は **このセグメントの SEG.SEQ**、`ack` は **SEG.ACK** です。名前が紛らわしいので注意してください。`ack_seq` はウィンドウ更新規則（SND.WL1 との比較）に使われます。
 - `rs`（`struct rate_sample`）はスタック上に置かれ、`.prior_delivered = 0` で初期化されます。`prior_delivered == 0` は「まだどの skb からもサンプルを取っていない」という番兵です（`tcp_rate_skb_delivered()` が参照します）。
@@ -1139,7 +1139,7 @@ static void tcp_rtt_estimator(struct sock *sk, long mrtt_us)
 - `after(snd_una, rtt_seq)`、つまり **区間開始時に送っていたデータがすべて ACK された（1 RTT 経過した）** ときだけ、次の処理を行います。
   - `rttvar_us` を `mdev_max_us` に向けて差の 1/4 だけ下げます。偏差が減る方向には **1 RTT に 1 回** しか動きません。RFC 7323 Appendix G が問題にしている「1 ウィンドウに多数のサンプルを取ると alpha/beta が実質的に大きくなり、履歴が短くなる」問題に対する Linux の答えがこれです。サンプル数に依存せず、減衰は RTT 単位になります。
   - `rtt_seq = snd_nxt` で次の区間を始めます。
-  - `mdev_max_us = tcp_rto_min_us(sk)` でリセットします。**最大値を `rto_min` から測り始める**ので、`mdev_max_us >= rto_min` が常に成り立ちます。
+  - `mdev_max_us = tcp_rto_min_us(sk)` でリセットします。**最大値を `rto_min` から測り始める** ので、`mdev_max_us >= rto_min` が常に成り立ちます。
   - `tcp_bpf_rtt()`: BPF sockops の `BPF_SOCK_OPS_RTT_CB` を（有効なら）1 RTT に 1 回呼びます。
 - **最初のサンプル**: `srtt = 8R`、`mdev_us = 2R`（= 4·R/2、RFC 2.2 の RTTVAR = R/2）、`rttvar_us = max(2R, rto_min)` とします。RTO = R + max(2R, rto_min) なので、R が大きければ RFC と同じ 3R（コメントの "make sure rto = 3*rtt"）になります。
 - `WRITE_ONCE(tp->srtt_us, max(1U, srtt))`: `srtt_us == 0` は「まだ一度も測っていない」という意味で予約されている（`tcp_rtt_estimator()` 自身や `tcp_rcv_state_process()` の `if (!tp->srtt_us)` が使う）ので、最低 1 にします。`WRITE_ONCE()` は、`tcp_get_timestamping_opt_stats()` がロックなしで読むためのものです（290b693ce7c9）。
