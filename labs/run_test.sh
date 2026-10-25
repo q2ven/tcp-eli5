@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0
 # Usage:
-#   ./run_test.sh                          # Run all solution.bpf.o tests in one vng VM
-#   ./run_test.sh cubic/step01-reno        # Run solution.bpf.o for one step
-#   ./run_test.sh cubic/step01-reno starter # Run starter.bpf.o for one step
+#   ./run_test.sh                                      # Run all solution.bpf.o tests in one vng VM
+#   ./run_test.sh 02-cubic/step01-cubic-curve          # Run solution.bpf.o for one step
+#   ./run_test.sh 02-cubic/step01-cubic-curve starter  # Run starter.bpf.o for one step
 
 set -euo pipefail
 
@@ -28,15 +28,24 @@ VARIANT="${2:-solution}"
 
 if [[ "$STEP_FILTER" == "all" ]]; then
 	mapfile -t STEPS < <(find \
-		"$LAB_DIR/reno" \
-		"$LAB_DIR/cubic" \
-		"$LAB_DIR/bbr" \
-		"$LAB_DIR/qdisc-fifo" \
-		"$LAB_DIR/qdisc-fq" \
-		"$LAB_DIR/qdisc-fq-codel" \
+		"$LAB_DIR/01-reno" \
+		"$LAB_DIR/02-cubic" \
+		"$LAB_DIR/03-bbr" \
+		"$LAB_DIR/04-qdisc-fifo" \
+		"$LAB_DIR/05-qdisc-fq" \
+		"$LAB_DIR/06-qdisc-fq-codel" \
 		-mindepth 1 -maxdepth 1 -type d | sort)
 else
-	STEPS=("$LAB_DIR/${STEP_FILTER#labs/}")
+	REL_STEP="${STEP_FILTER#labs/}"
+	if [[ ! -d "$LAB_DIR/$REL_STEP" ]]; then
+		for cand in "$LAB_DIR"/0[1-6]-"$REL_STEP"; do
+			if [[ -d "$cand" ]]; then
+				REL_STEP="${cand#"$LAB_DIR"/}"
+				break
+			fi
+		done
+	fi
+	STEPS=("$LAB_DIR/$REL_STEP")
 fi
 
 for step in "${STEPS[@]}"; do

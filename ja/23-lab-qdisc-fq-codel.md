@@ -161,12 +161,12 @@ FQ-CoDel は、フローを **`new_flows`** と **`old_flows`** の 2 つの循�
 
 ```sh
 # Step 1: starter が失敗することを確認し、TODO を実装してパスさせる
-./run_test.sh qdisc-fq-codel/step01-codel-aqm starter
-./run_test.sh qdisc-fq-codel/step01-codel-aqm solution
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm starter
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm solution
 
 # Step 2: starter の失敗確認と模範解答のテスト
-./run_test.sh qdisc-fq-codel/step02-fq-codel starter
-./run_test.sh qdisc-fq-codel/step02-fq-codel solution
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel starter
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel solution
 ```
 
 それでは、[`step01-codel-aqm/README.md`](step01-codel-aqm/README.md) に進んで最初の CoDel AQM を実装してみましょう！
@@ -381,16 +381,16 @@ if (sojourn < TARGET_NS) {
 
 ```sh
 # starter が失敗することを確認
-./run_test.sh qdisc-fq-codel/step01-codel-aqm starter
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm starter
 
 # 実装後、テストをパスさせる
-./run_test.sh qdisc-fq-codel/step01-codel-aqm solution
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm solution
 ```
 
 テストに合格したら、次は複数フローの公平性と対話型通信の超低遅延化を実現する [`step02-fq-codel/`](../step02-fq-codel/README.md) に進みましょう！
 
 
-### `labs/qdisc-fq-codel/step01-codel-aqm/starter.bpf.c` (穴埋めスケルトン)
+### `labs/06-qdisc-fq-codel/step01-codel-aqm/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -588,7 +588,7 @@ struct Qdisc_ops codel = {
 };
 ```
 
-### `labs/qdisc-fq-codel/step01-codel-aqm/test.pkt` (packetdrill テスト)
+### `labs/06-qdisc-fq-codel/step01-codel-aqm/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -640,7 +640,7 @@ struct Qdisc_ops codel = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fq-codel/step01-codel-aqm/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/06-qdisc-fq-codel/step01-codel-aqm/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1058,16 +1058,16 @@ if (sojourn < TARGET_NS) {
 
 ```sh
 # starter が失敗することを確認
-./run_test.sh qdisc-fq-codel/step02-fq-codel starter
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel starter
 
 # 実装後、テストをパスさせる
-./run_test.sh qdisc-fq-codel/step02-fq-codel solution
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel solution
 ```
 
 全テストにパスしたら、Track 6 完了です！お疲れ様でした！
 
 
-### `labs/qdisc-fq-codel/step02-fq-codel/starter.bpf.c` (穴埋めスケルトン)
+### `labs/06-qdisc-fq-codel/step02-fq-codel/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1400,7 +1400,7 @@ struct Qdisc_ops fq_codel = {
 };
 ```
 
-### `labs/qdisc-fq-codel/step02-fq-codel/test.pkt` (packetdrill テスト)
+### `labs/06-qdisc-fq-codel/step02-fq-codel/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1459,7 +1459,7 @@ struct Qdisc_ops fq_codel = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fq-codel/step02-fq-codel/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/06-qdisc-fq-codel/step02-fq-codel/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

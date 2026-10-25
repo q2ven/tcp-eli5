@@ -161,12 +161,12 @@ From the `labs/` directory (`/usr/local/google/home/kuniyu/tcp-eli5/labs`), test
 
 ```sh
 # Step 1: Verify starter fails, then implement TODOs to pass
-./run_test.sh qdisc-fq-codel/step01-codel-aqm starter
-./run_test.sh qdisc-fq-codel/step01-codel-aqm solution
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm starter
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm solution
 
 # Step 2: Verify starter fails, then test solution
-./run_test.sh qdisc-fq-codel/step02-fq-codel starter
-./run_test.sh qdisc-fq-codel/step02-fq-codel solution
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel starter
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel solution
 ```
 
 Proceed to [`step01-codel-aqm/README.en.md`](step01-codel-aqm/README.en.md) to implement your first CoDel AQM!
@@ -379,16 +379,16 @@ The test script [`test.pkt`](test.pkt) automatically tests:
 
 ```sh
 # Verify starter fails (as it lacks drop logic)
-./run_test.sh qdisc-fq-codel/step01-codel-aqm starter
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm starter
 
 # Verify solution passes
-./run_test.sh qdisc-fq-codel/step01-codel-aqm solution
+./run_test.sh 06-qdisc-fq-codel/step01-codel-aqm solution
 ```
 
 After completing Step 1, advance to [`step02-fq-codel/`](../step02-fq-codel/README.en.md) to implement multi-flow isolation and sparse flow prioritization!
 
 
-### `labs/qdisc-fq-codel/step01-codel-aqm/starter.bpf.c` (Starter skeleton)
+### `labs/06-qdisc-fq-codel/step01-codel-aqm/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -586,7 +586,7 @@ struct Qdisc_ops codel = {
 };
 ```
 
-### `labs/qdisc-fq-codel/step01-codel-aqm/test.pkt` (packetdrill test)
+### `labs/06-qdisc-fq-codel/step01-codel-aqm/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -638,7 +638,7 @@ struct Qdisc_ops codel = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fq-codel/step01-codel-aqm/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/06-qdisc-fq-codel/step01-codel-aqm/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1055,16 +1055,16 @@ The test script [`test.pkt`](test.pkt) demonstrates the real-world power of FQ-C
 
 ```sh
 # Verify starter fails
-./run_test.sh qdisc-fq-codel/step02-fq-codel starter
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel starter
 
 # Verify solution passes
-./run_test.sh qdisc-fq-codel/step02-fq-codel solution
+./run_test.sh 06-qdisc-fq-codel/step02-fq-codel solution
 ```
 
 Once all tests pass, congratulations on completing Track 6!
 
 
-### `labs/qdisc-fq-codel/step02-fq-codel/starter.bpf.c` (Starter skeleton)
+### `labs/06-qdisc-fq-codel/step02-fq-codel/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1397,7 +1397,7 @@ struct Qdisc_ops fq_codel = {
 };
 ```
 
-### `labs/qdisc-fq-codel/step02-fq-codel/test.pkt` (packetdrill test)
+### `labs/06-qdisc-fq-codel/step02-fq-codel/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1456,7 +1456,7 @@ struct Qdisc_ops fq_codel = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fq-codel/step02-fq-codel/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/06-qdisc-fq-codel/step02-fq-codel/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

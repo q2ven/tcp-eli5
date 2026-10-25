@@ -230,13 +230,13 @@ From the `labs/` directory, use `run_test.sh` to start with Step 1 (`step01-cubi
 
 ```sh
 # 1. Confirm that the unimplemented starter fails the packetdrill assertions
-./run_test.sh cubic/step01-cubic-curve starter
+./run_test.sh 02-cubic/step01-cubic-curve starter
 
 # 2. Fill in the TODOs in step01-cubic-curve/starter.bpf.c and re-test
-./run_test.sh cubic/step01-cubic-curve starter
+./run_test.sh 02-cubic/step01-cubic-curve starter
 
 # 3. Run the reference solution (solution.bpf.c)
-./run_test.sh cubic/step01-cubic-curve solution
+./run_test.sh 02-cubic/step01-cubic-curve solution
 ```
 
 
@@ -392,7 +392,7 @@ Here is the complete list of fields provided by the kernel and the per-socket CU
    - `sample->rtt_us`: Latest RTT measurement in microseconds (or `< 0` if unavailable).
 3. **`inet_csk_ca(sk)` / `icsk_ca_priv` (Our private `struct bpf_cubic3_ca`)**:
    - `struct inet_connection_sock` reserves an inline byte array `icsk_ca_priv` for congestion control modules, accessed via `inet_csk_ca(sk)`.
-   - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) already defines `struct bpf_cubic3_ca` with:
+   - [starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c) already defines `struct bpf_cubic3_ca` with:
      - `cnt`: Number of ACKed segments required to increment `snd_cwnd` by 1.
      - `last_max_cwnd`: $W_{\max}$ saved at the most recent packet loss.
      - `last_cwnd`, `last_time`: Cache used to skip redundant `bictcp_update()` calls within $1/32\text{ s}$ when `cwnd` has not changed.
@@ -405,7 +405,7 @@ Here is the complete list of fields provided by the kernel and the per-socket CU
 
 ## 3. Design Checkpoints (Translate the Algorithm into Code)
 
-Using what you just learned in Section 2, think through these four design questions before filling in the `TODO`s in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c).
+Using what you just learned in Section 2, think through these four design questions before filling in the `TODO`s in [starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c).
 
 ### Q1. Why do we compute `bic_K` only once when `ca->epoch_start == 0` instead of on every ACK?
 
@@ -476,7 +476,7 @@ In `cubic_root(__u64 a)`, `b = fls64(a); b = ((b * 84) >> 8) - 1; shift = (a >> 
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let's walk through each function and fixed-point calculation in [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/solution.bpf.c).
+Let's walk through each function and fixed-point calculation in [solution.bpf.c](../labs/02-cubic/step01-cubic-curve/solution.bpf.c).
 
 ### 4.1 `cubic_root(__u64 a)` — Table Lookup and Newton-Raphson Iteration (TODO 1)
 
@@ -615,13 +615,13 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 
 ### 5.1 Packet Trace Walkthrough (`test.pkt`)
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/test.pkt) establishes a connection with a 1000-byte effective MSS and RTT = 100 ms (`delay_min = 100,000` usec) and verifies the exact numbers from Section 2.5 across seven stages:
+[test.pkt](../labs/02-cubic/step01-cubic-curve/test.pkt) establishes a connection with a 1000-byte effective MSS and RTT = 100 ms (`delay_min = 100,000` usec) and verifies the exact numbers from Section 2.5 across seven stages:
 
 1. **Handshake and Slow Start (`cwnd: 10 -> 20`)**:
    Sends 10 segments (`10000` bytes). The ACK at $+0.100\text{ s}$ grows `tcpi_snd_cwnd` from 10 to 20 and records `delay_min = 100 ms` in `bpf_cubic3_acked()`.
 2. **Packet Loss at `cwnd = 20` and $\beta = 0.7$ Assertion (`ssthresh == 14`)**:
    Sends 4 segments (`10001:14001`) where the first segment (`10001:11001`) is lost. Three SACKs trigger Fast Recovery (`TCP_CA_Recovery`) and invoke `bpf_cubic3_ssthresh()`.
-   - **Why `starter.bpf.c` fails**: `bpf_cubic3_ssthresh()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) returns Reno's $0.5\times$ reduction (`10`), immediately failing line 42 (`assert tcpi_snd_ssthresh == 14`). Furthermore, its `bictcp_update()` leaves `ca->cnt = cwnd`, which would fail the subsequent concave and plateau assertions.
+   - **Why `starter.bpf.c` fails**: `bpf_cubic3_ssthresh()` in [starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c) returns Reno's $0.5\times$ reduction (`10`), immediately failing line 42 (`assert tcpi_snd_ssthresh == 14`). Furthermore, its `bictcp_update()` leaves `ca->cnt = cwnd`, which would fail the subsequent concave and plateau assertions.
    - **Why `solution.bpf.c` passes**: `20 * 717 / 1024 = 14` satisfies `tcpi_snd_ssthresh == 14`, and the recovery ACK at line 46 exits Fast Recovery into `TCP_CA_Open` with `tcpi_snd_cwnd == 14` and $W_{\max} = 20$.
 3. **Flight 1 (Epoch start, Concave region, $t_{\text{elapsed}} = 0.0\text{ s}$)**:
    Sending 14 segments and receiving the ACK initialises `bic_K = 2523` ($\sim 2.46\text{ s}$), `bic_target = 15`, and `ca->cnt = 14`, advancing `tcpi_snd_cwnd` from `14` to `15`.
@@ -636,15 +636,15 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 
 ### 5.2 How to Run
 
-Run the following commands from `/usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve` (or any step directory):
+Run the following commands from `/usr/local/google/home/kuniyu/tcp-eli5/labs/02-cubic/step01-cubic-curve` (or any step directory):
 
 ```sh
-../../run_test.sh cubic/step01-cubic-curve starter
-../../run_test.sh cubic/step01-cubic-curve solution
+../../run_test.sh 02-cubic/step01-cubic-curve starter
+../../run_test.sh 02-cubic/step01-cubic-curve solution
 ```
 
 
-### `labs/cubic/step01-cubic-curve/starter.bpf.c` (Starter skeleton)
+### `labs/02-cubic/step01-cubic-curve/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -910,7 +910,7 @@ struct tcp_congestion_ops bpf_cubic3 = {
 };
 ```
 
-### `labs/cubic/step01-cubic-curve/test.pkt` (packetdrill test)
+### `labs/02-cubic/step01-cubic-curve/test.pkt` (packetdrill test)
 
 ```python
 // Step 3: Fixed-Point Cubic Root and W_cubic(t) Curve (Concave & Convex)
@@ -1017,7 +1017,7 @@ assert tcpi_snd_cwnd > 20, f"expected cwnd > 20 in convex region, got {tcpi_snd_
 ```
 
 <details>
-<summary>Reference solution: <code>labs/cubic/step01-cubic-curve/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/02-cubic/step01-cubic-curve/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1739,12 +1739,12 @@ tcp_friendliness:
 Run the following commands to see `starter` fail and `solution` pass:
 
 ```sh
-../../run_test.sh cubic/step02-reno-friendly-fast-conv starter
-../../run_test.sh cubic/step02-reno-friendly-fast-conv solution
+../../run_test.sh 02-cubic/step02-reno-friendly-fast-conv starter
+../../run_test.sh 02-cubic/step02-reno-friendly-fast-conv solution
 ```
 
 
-### `labs/cubic/step02-reno-friendly-fast-conv/starter.bpf.c` (Starter skeleton)
+### `labs/02-cubic/step02-reno-friendly-fast-conv/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2065,7 +2065,7 @@ struct tcp_congestion_ops bpf_cubic4 = {
 };
 ```
 
-### `labs/cubic/step02-reno-friendly-fast-conv/test.pkt` (packetdrill test)
+### `labs/02-cubic/step02-reno-friendly-fast-conv/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2197,7 +2197,7 @@ assert tcpi_snd_cwnd > 11, f"expected Reno-friendly region to grow cwnd > 11 at 
 ```
 
 <details>
-<summary>Reference solution: <code>labs/cubic/step02-reno-friendly-fast-conv/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/02-cubic/step02-reno-friendly-fast-conv/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2838,12 +2838,12 @@ struct tcp_congestion_ops bpf_cubic5 = {
 ### 5.2 How to Run
 
 ```sh
-../../run_test.sh cubic/step03-idle-epoch-shift starter
-../../run_test.sh cubic/step03-idle-epoch-shift solution
+../../run_test.sh 02-cubic/step03-idle-epoch-shift starter
+../../run_test.sh 02-cubic/step03-idle-epoch-shift solution
 ```
 
 
-### `labs/cubic/step03-idle-epoch-shift/starter.bpf.c` (Starter skeleton)
+### `labs/02-cubic/step03-idle-epoch-shift/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3165,7 +3165,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 };
 ```
 
-### `labs/cubic/step03-idle-epoch-shift/test.pkt` (packetdrill test)
+### `labs/02-cubic/step03-idle-epoch-shift/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3238,7 +3238,7 @@ assert tcpi_snd_cwnd <= 15, tcpi_snd_cwnd
 ```
 
 <details>
-<summary>Reference solution: <code>labs/cubic/step03-idle-epoch-shift/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/02-cubic/step03-idle-epoch-shift/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3969,12 +3969,12 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 ### Commands to Run
 
 ```sh
-../../run_test.sh cubic/step04-hystart starter
-../../run_test.sh cubic/step04-hystart solution
+../../run_test.sh 02-cubic/step04-hystart starter
+../../run_test.sh 02-cubic/step04-hystart solution
 ```
 
 
-### `labs/cubic/step04-hystart/starter.bpf.c` (Starter skeleton)
+### `labs/02-cubic/step04-hystart/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4305,7 +4305,7 @@ struct tcp_congestion_ops bpf_cubic6 = {
 };
 ```
 
-### `labs/cubic/step04-hystart/test.pkt` (packetdrill test)
+### `labs/02-cubic/step04-hystart/test.pkt` (packetdrill test)
 
 ```python
 // Test HyStart delay detection in bpf_cubic6
@@ -4365,7 +4365,7 @@ struct tcp_congestion_ops bpf_cubic6 = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/cubic/step04-hystart/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/02-cubic/step04-hystart/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

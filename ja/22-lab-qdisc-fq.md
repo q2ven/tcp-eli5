@@ -137,13 +137,13 @@ Linux 6.x で導入された最新の BPF 機能である **BPF Graph Data Struc
 
 ```sh
 # Step 1: まず starter が失敗することを確認し、TODO を実装してテストする
-./run_test.sh qdisc-fq/step01-flow-drr starter
+./run_test.sh 05-qdisc-fq/step01-flow-drr starter
 # Step 1 の模範解答 (solution.bpf.c) を実行する
-./run_test.sh qdisc-fq/step01-flow-drr solution
+./run_test.sh 05-qdisc-fq/step01-flow-drr solution
 
 # Step 2: starter の確認と模範解答の実行
-./run_test.sh qdisc-fq/step02-edt-pacing starter
-./run_test.sh qdisc-fq/step02-edt-pacing solution
+./run_test.sh 05-qdisc-fq/step02-edt-pacing starter
+./run_test.sh 05-qdisc-fq/step02-edt-pacing solution
 ```
 
 それでは、[`step01-flow-drr/README.md`](step01-flow-drr/README.md) に進んで最初の BPF FQ スケジューラを実装してみましょう！
@@ -280,14 +280,14 @@ graph TD
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. 未実装の starter が失敗することを確認する
-./run_test.sh qdisc-fq/step01-flow-drr starter
+./run_test.sh 05-qdisc-fq/step01-flow-drr starter
 
 # 2. 模範解答 (solution) が PASS することを確認する
-./run_test.sh qdisc-fq/step01-flow-drr solution
+./run_test.sh 05-qdisc-fq/step01-flow-drr solution
 ```
 
 
-### `labs/qdisc-fq/step01-flow-drr/starter.bpf.c` (穴埋めスケルトン)
+### `labs/05-qdisc-fq/step01-flow-drr/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -555,7 +555,7 @@ struct Qdisc_ops fq_drr = {
 };
 ```
 
-### `labs/qdisc-fq/step01-flow-drr/test.pkt` (packetdrill テスト)
+### `labs/05-qdisc-fq/step01-flow-drr/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -596,7 +596,7 @@ struct Qdisc_ops fq_drr = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fq/step01-flow-drr/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/05-qdisc-fq/step01-flow-drr/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1072,14 +1072,14 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. 未実装の starter が失敗することを確認する
-./run_test.sh qdisc-fq/step02-edt-pacing starter
+./run_test.sh 05-qdisc-fq/step02-edt-pacing starter
 
 # 2. 模範解答 (solution) が PASS することを確認する
-./run_test.sh qdisc-fq/step02-edt-pacing solution
+./run_test.sh 05-qdisc-fq/step02-edt-pacing solution
 ```
 
 
-### `labs/qdisc-fq/step02-edt-pacing/starter.bpf.c` (穴埋めスケルトン)
+### `labs/05-qdisc-fq/step02-edt-pacing/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1463,7 +1463,7 @@ struct Qdisc_ops fq_edt = {
 };
 ```
 
-### `labs/qdisc-fq/step02-edt-pacing/test.pkt` (packetdrill テスト)
+### `labs/05-qdisc-fq/step02-edt-pacing/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1507,7 +1507,7 @@ struct Qdisc_ops fq_edt = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fq/step02-edt-pacing/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/05-qdisc-fq/step02-edt-pacing/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

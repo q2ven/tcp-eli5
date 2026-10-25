@@ -151,13 +151,13 @@ From the `labs/` directory (`/usr/local/google/home/kuniyu/tcp-eli5/labs`), run 
 
 ```sh
 # Step 1: Verify that starter fails first, then implement the TODOs and re-run
-./run_test.sh reno/step01-slow-start-ai starter
+./run_test.sh 01-reno/step01-slow-start-ai starter
 # Run the Step 1 model solution (solution.bpf.c)
-./run_test.sh reno/step01-slow-start-ai solution
+./run_test.sh 01-reno/step01-slow-start-ai solution
 
 # Step 2: Verify starter and run the model solution
-./run_test.sh reno/step02-loss-undo starter
-./run_test.sh reno/step02-loss-undo solution
+./run_test.sh 01-reno/step02-loss-undo starter
+./run_test.sh 01-reno/step02-loss-undo solution
 ```
 
 Ready? Head over to [`step01-slow-start-ai/README.en.md`](step01-slow-start-ai/README.en.md) and write your first BPF congestion control algorithm!
@@ -367,7 +367,7 @@ Translate the integer Congestion Avoidance rule from Section 2.2 into C code (**
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let's walk through each function in [`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/solution.bpf.c).
+Let's walk through each function in [`solution.bpf.c`](../labs/01-reno/step01-slow-start-ai/solution.bpf.c).
 
 ### 4.1 `bpf_reno1_init()` — Initialising the Socket
 
@@ -450,7 +450,7 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
 
 ## 5. Understanding `test.pkt` and How to Run
 
-### 5.1 Walkthrough of [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/test.pkt)
+### 5.1 Walkthrough of [`test.pkt`](../labs/01-reno/step01-slow-start-ai/test.pkt)
 
 `test.pkt` drives `bpf_reno1` through the exact three-round sequence traced in Section 2.3 and verifies `tcpi_snd_cwnd` after each ACK using Python assertions:
 
@@ -478,12 +478,12 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
 Run the following commands to see `starter` fail and `solution` (or your completed `starter`) pass:
 
 ```sh
-../../run_test.sh reno/step01-slow-start-ai starter
-../../run_test.sh reno/step01-slow-start-ai solution
+../../run_test.sh 01-reno/step01-slow-start-ai starter
+../../run_test.sh 01-reno/step01-slow-start-ai solution
 ```
 
 
-### `labs/reno/step01-slow-start-ai/starter.bpf.c` (Starter skeleton)
+### `labs/01-reno/step01-slow-start-ai/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -566,7 +566,7 @@ struct tcp_congestion_ops bpf_reno1 = {
 };
 ```
 
-### `labs/reno/step01-slow-start-ai/test.pkt` (packetdrill test)
+### `labs/01-reno/step01-slow-start-ai/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -625,7 +625,7 @@ assert tcpi_snd_cwnd == 23, f"expected cwnd 23 after Reno AI, got {tcpi_snd_cwnd
 ```
 
 <details>
-<summary>Reference solution: <code>labs/reno/step01-slow-start-ai/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/01-reno/step01-slow-start-ai/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1046,12 +1046,12 @@ u32 BPF_PROG(bpf_reno2_undo_cwnd, struct sock *sk)
 ### How to Run
 
 ```sh
-../../run_test.sh reno/step02-loss-undo starter
-../../run_test.sh reno/step02-loss-undo solution
+../../run_test.sh 01-reno/step02-loss-undo starter
+../../run_test.sh 01-reno/step02-loss-undo solution
 ```
 
 
-### `labs/reno/step02-loss-undo/starter.bpf.c` (Starter skeleton)
+### `labs/01-reno/step02-loss-undo/starter.bpf.c` (Starter skeleton)
 
 ```c
 /* SPDX-License-Identifier: GPL-2.0 */
@@ -1158,7 +1158,7 @@ struct tcp_congestion_ops bpf_reno2 = {
 };
 ```
 
-### `labs/reno/step02-loss-undo/test.pkt` (packetdrill test)
+### `labs/01-reno/step02-loss-undo/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1205,7 +1205,7 @@ assert tcpi_snd_cwnd >= 10, tcpi_snd_cwnd
 ```
 
 <details>
-<summary>Reference solution: <code>labs/reno/step02-loss-undo/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/01-reno/step02-loss-undo/solution.bpf.c</code></summary>
 
 ```c
 /* SPDX-License-Identifier: GPL-2.0 */

@@ -121,12 +121,12 @@ From the `labs/` directory (`/usr/local/google/home/kuniyu/tcp-eli5/labs`), run:
 
 ```sh
 # Step 1: verify starter fails, then test solution
-./run_test.sh qdisc-fifo/step01-pfifo starter
-./run_test.sh qdisc-fifo/step01-pfifo solution
+./run_test.sh 04-qdisc-fifo/step01-pfifo starter
+./run_test.sh 04-qdisc-fifo/step01-pfifo solution
 
 # Step 2: verify starter fails, then test solution
-./run_test.sh qdisc-fifo/step02-bfifo-prio starter
-./run_test.sh qdisc-fifo/step02-bfifo-prio solution
+./run_test.sh 04-qdisc-fifo/step02-bfifo-prio starter
+./run_test.sh 04-qdisc-fifo/step02-bfifo-prio solution
 ```
 
 Now proceed to [`step01-pfifo/README.en.md`](step01-pfifo/README.en.md) ([Japanese](step01-pfifo/README.md)) to build your first BPF Qdisc!
@@ -304,7 +304,7 @@ What should `.dequeue()` do when `now < next_tx_ns`?
 
 ## 4. Implementation Details (`solution.bpf.c`)
 
-Let's review the key sections of [`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step01-pfifo/solution.bpf.c).
+Let's review the key sections of [`solution.bpf.c`](../labs/04-qdisc-fifo/step01-pfifo/solution.bpf.c).
 
 ### 4.1 Data Structures & State Variables
 
@@ -466,7 +466,7 @@ void BPF_PROG(bpf_pfifo_reset, struct Qdisc *sch)
 
 ### 5.1 Test Flow Walkthrough
 
-[`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step01-pfifo/test.pkt) executes the following sequence:
+[`test.pkt`](../labs/04-qdisc-fifo/step01-pfifo/test.pkt) executes the following sequence:
 
 1. **Setup**: Replaces the root Qdisc on `tun0` with `bpf_pfifo` and disables TSO/GSO with `ethtool -K tun0 tso off gso off`.
 2. **Handshake**: Completes passive TCP handshake with MSS = 1000 bytes.
@@ -485,14 +485,14 @@ void BPF_PROG(bpf_pfifo_reset, struct Qdisc *sch)
 
 ```sh
 # Verify starter failure
-../../run_test.sh qdisc-fifo/step01-pfifo starter
+../../run_test.sh 04-qdisc-fifo/step01-pfifo starter
 
 # Verify solution success
-../../run_test.sh qdisc-fifo/step01-pfifo solution
+../../run_test.sh 04-qdisc-fifo/step01-pfifo solution
 ```
 
 
-### `labs/qdisc-fifo/step01-pfifo/starter.bpf.c` (Starter skeleton)
+### `labs/04-qdisc-fifo/step01-pfifo/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -646,7 +646,7 @@ struct Qdisc_ops bpf_pfifo = {
 };
 ```
 
-### `labs/qdisc-fifo/step01-pfifo/test.pkt` (packetdrill test)
+### `labs/04-qdisc-fifo/step01-pfifo/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -684,7 +684,7 @@ struct Qdisc_ops bpf_pfifo = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fifo/step01-pfifo/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/04-qdisc-fifo/step01-pfifo/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -983,7 +983,7 @@ How do you implement "try `q_prio` first, then fall back to `q_normal`" under a 
 
 ## 4. Implementation Details (`solution.bpf.c`)
 
-Review [`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step02-bfifo-prio/solution.bpf.c).
+Review [`solution.bpf.c`](../labs/04-qdisc-fifo/step02-bfifo-prio/solution.bpf.c).
 
 ### 4.1 Data Structures & Two Priority Bands
 
@@ -1101,7 +1101,7 @@ struct sk_buff *BPF_PROG(bpf_bfifo_dequeue, struct Qdisc *sch)
 
 ### 5.1 Test Flow Walkthrough
 
-[`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step02-bfifo-prio/test.pkt) verifies:
+[`test.pkt`](../labs/04-qdisc-fifo/step02-bfifo-prio/test.pkt) verifies:
 
 1. **Dual Flow Setup**: Establishes Flow A (`fd = 4`, standard priority) and Flow B (`fd = 6`, `SO_PRIORITY = 7`).
 2. **Flow A Burst & Byte-Limit Tail-Drop (Line 29)**: `write(4, ..., 5000)` sends 5 segments. Segments 1–4 are admitted; Segment 5 exceeds `BYTE_LIMIT = 3500` and is dropped.
@@ -1112,14 +1112,14 @@ struct sk_buff *BPF_PROG(bpf_bfifo_dequeue, struct Qdisc *sch)
 
 ```sh
 # Verify starter failure
-../../run_test.sh qdisc-fifo/step02-bfifo-prio starter
+../../run_test.sh 04-qdisc-fifo/step02-bfifo-prio starter
 
 # Verify solution success
-../../run_test.sh qdisc-fifo/step02-bfifo-prio solution
+../../run_test.sh 04-qdisc-fifo/step02-bfifo-prio solution
 ```
 
 
-### `labs/qdisc-fifo/step02-bfifo-prio/starter.bpf.c` (Starter skeleton)
+### `labs/04-qdisc-fifo/step02-bfifo-prio/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1283,7 +1283,7 @@ struct Qdisc_ops bpf_bfifo = {
 };
 ```
 
-### `labs/qdisc-fifo/step02-bfifo-prio/test.pkt` (packetdrill test)
+### `labs/04-qdisc-fifo/step02-bfifo-prio/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1345,7 +1345,7 @@ struct Qdisc_ops bpf_bfifo = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fifo/step02-bfifo-prio/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/04-qdisc-fifo/step02-bfifo-prio/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

@@ -5,7 +5,7 @@ endif
 
 BPF_CFLAGS := -g -O2 -target bpf -Wno-missing-declarations -Iinclude
 
-SRCS := $(wildcard reno/step*/*.bpf.c cubic/step*/*.bpf.c bbr/step*/*.bpf.c qdisc-fifo/step*/*.bpf.c qdisc-fq/step*/*.bpf.c qdisc-fq-codel/step*/*.bpf.c)
+SRCS := $(wildcard 01-reno/step*/*.bpf.c 02-cubic/step*/*.bpf.c 03-bbr/step*/*.bpf.c 04-qdisc-fifo/step*/*.bpf.c 05-qdisc-fq/step*/*.bpf.c 06-qdisc-fq-codel/step*/*.bpf.c)
 OBJS := $(SRCS:.bpf.c=.bpf.o)
 
 .PHONY: all check clean vmlinux

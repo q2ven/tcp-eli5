@@ -264,26 +264,26 @@ Every step directory (`step01-pacing-rate/` through `step06-loss-ack-aggregation
 
 ### How to Run the Labs
 
-From the `labs/` directory (or from `labs/bbr/` using `../run_test.sh`), you can compile and test any step in seconds without rebuilding or rebooting your host kernel:
+From the `labs/` directory (or from `labs/03-bbr/` using `../run_test.sh`), you can compile and test any step in seconds without rebuilding or rebooting your host kernel:
 
 ```sh
 # Change to the labs/ directory
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. Run the unimplemented starter skeleton for Step 1 and observe the assertion failure
-./run_test.sh bbr/step01-pacing-rate starter
+./run_test.sh 03-bbr/step01-pacing-rate starter
 
 # 2. Fill in the TODO in bbr/step01-pacing-rate/starter.bpf.c and re-run
-./run_test.sh bbr/step01-pacing-rate starter
+./run_test.sh 03-bbr/step01-pacing-rate starter
 
 # 3. Run the reference solution (solution.bpf.c) to verify it passes
-./run_test.sh bbr/step01-pacing-rate solution
+./run_test.sh 03-bbr/step01-pacing-rate solution
 ```
 
 To run the reference solutions for all six BBR steps in sequence:
 
 ```sh
-for step in bbr/step0*; do ./run_test.sh "$step" solution; done
+for step in 03-bbr/step0*; do ./run_test.sh "$step" solution; done
 ```
 
 When you are ready, dive into [Step 1: The `.cong_control` Hook and Pacing Rate Calculation from Delivery Rate](step01-pacing-rate/README.en.md)!
@@ -459,7 +459,7 @@ Given a valid `rs`, write the C statements that compute the delivery rate in byt
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let's walk through each part of [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c).
+Let's walk through each part of [solution.bpf.c](../labs/03-bbr/step01-pacing-rate/solution.bpf.c).
 
 ### 1. Fixed-Point Constants
 
@@ -551,7 +551,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
 
 ## 5. Understanding `test.pkt` and How to Run
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/test.pkt) verifies `bpf_bbr1` in two stages:
+[test.pkt](../labs/03-bbr/step01-pacing-rate/test.pkt) verifies `bpf_bbr1` in two stages:
 
 1. **3-way Handshake and Initial Pacing Rate (Lines 13–22)**:
    ```
@@ -570,20 +570,20 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
    ```
    - The server writes `10,000` bytes (10 segments), and the client acknowledges all `10,000` bytes after `+0.01` (10 ms).
    - This produces a `rate_sample` with `rs->delivered = 10` and `rs->interval_us = 10,000` us, representing a delivery rate of `1,000,000 B/s` (1.0 MB/s).
-   - Why [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/starter.bpf.c) fails: `bpf_bbr1_cong_control()` is an empty stub, so `sk->sk_pacing_rate` stays at the initial `281,738 B/s` and fails `assert tcpi_pacing_rate > 500000` on line 32.
-   - Why [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) passes: `bpf_bbr1_cong_control()` updates `sk->sk_pacing_rate` to `1,000,000 * 2885 >> 10 = 2,817,382 B/s` (~2.82 MB/s), passing both `assert tcpi_pacing_rate > 500000` and `assert 2000000 < tcpi_pacing_rate < 3500000`.
+   - Why [starter.bpf.c](../labs/03-bbr/step01-pacing-rate/starter.bpf.c) fails: `bpf_bbr1_cong_control()` is an empty stub, so `sk->sk_pacing_rate` stays at the initial `281,738 B/s` and fails `assert tcpi_pacing_rate > 500000` on line 32.
+   - Why [solution.bpf.c](../labs/03-bbr/step01-pacing-rate/solution.bpf.c) passes: `bpf_bbr1_cong_control()` updates `sk->sk_pacing_rate` to `1,000,000 * 2885 >> 10 = 2,817,382 B/s` (~2.82 MB/s), passing both `assert tcpi_pacing_rate > 500000` and `assert 2000000 < tcpi_pacing_rate < 3500000`.
 
 ### How to Run the Test
 
 Run the commands below to see `starter` fail the assertion and `solution` pass:
 
 ```sh
-../../run_test.sh bbr/step01-pacing-rate starter
-../../run_test.sh bbr/step01-pacing-rate solution
+../../run_test.sh 03-bbr/step01-pacing-rate starter
+../../run_test.sh 03-bbr/step01-pacing-rate solution
 ```
 
 
-### `labs/bbr/step01-pacing-rate/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step01-pacing-rate/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -660,7 +660,7 @@ struct tcp_congestion_ops bpf_bbr1 = {
 };
 ```
 
-### `labs/bbr/step01-pacing-rate/test.pkt` (packetdrill test)
+### `labs/03-bbr/step01-pacing-rate/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -700,7 +700,7 @@ assert 2000000 < tcpi_pacing_rate < 3500000, f"expected pacing_rate ~2.82MB/s, g
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step01-pacing-rate/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step01-pacing-rate/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -794,7 +794,7 @@ struct tcp_congestion_ops bpf_bbr1 = {
 
 ## 1. Goal
 
-In Step 1, we updated `sk_pacing_rate` on every ACK by directly overwriting our bandwidth estimate with the latest delivery rate sample (`rs->delivered / rs->interval_us`). In a real network, however, a single ACK sample is noisy: router queues temporarily inflate RTT, and application pauses cause the measured delivery rate to drop far below the physical link capacity. In this step, we store per-socket state in `icsk_ca_priv` to track the two core parameters of BBR's network path model — **RTprop (Round-Trip Propagation Time via a minimum RTT filter)** and **BtlBw (Bottleneck Bandwidth via an application-limited-aware maximum bandwidth filter)** — and use their product, the **BDP (Bandwidth-Delay Product)**, to control both `snd_cwnd` and `sk_pacing_rate` (see [../README.md](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/README.md) for the BBR track overview).
+In Step 1, we updated `sk_pacing_rate` on every ACK by directly overwriting our bandwidth estimate with the latest delivery rate sample (`rs->delivered / rs->interval_us`). In a real network, however, a single ACK sample is noisy: router queues temporarily inflate RTT, and application pauses cause the measured delivery rate to drop far below the physical link capacity. In this step, we store per-socket state in `icsk_ca_priv` to track the two core parameters of BBR's network path model — **RTprop (Round-Trip Propagation Time via a minimum RTT filter)** and **BtlBw (Bottleneck Bandwidth via an application-limited-aware maximum bandwidth filter)** — and use their product, the **BDP (Bandwidth-Delay Product)**, to control both `snd_cwnd` and `sk_pacing_rate` (see [../README.md](../labs/03-bbr/README.md) for the BBR track overview).
 
 ---
 
@@ -901,7 +901,7 @@ Let us trace the exact numbers from `test.pkt` on a path with payload $\text{MSS
 
 ### What the Kernel Already Provides
 
-Before answering the design questions in Section 3, review the exact fields and helpers provided by the kernel and [bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h):
+Before answering the design questions in Section 3, review the exact fields and helpers provided by the kernel and [bpf_cc_helpers.h](../labs/include/bpf_cc_helpers.h):
 
 - **`inet_csk(sk)->icsk_ca_priv` and `inet_csk_ca(sk)`**:
   - Every TCP socket (`struct inet_connection_sock`) embeds a dedicated byte array `icsk_ca_priv` where a congestion control module can store per-socket state.
@@ -922,7 +922,7 @@ Before answering the design questions in Section 3, review the exact fields and 
   - `sk->sk_pacing_status`: Set to `SK_PACING_NEEDED` to enable TCP pacing.
   - `sk->sk_pacing_rate` (`unsigned long`): Pacing rate in bytes per second.
   - `sk->sk_max_pacing_rate` (`unsigned long`): Optional upper bound set via `SO_MAX_PACING_RATE`.
-- **Helper functions ([bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h))**:
+- **Helper functions ([bpf_cc_helpers.h](../labs/include/bpf_cc_helpers.h))**:
   - `before(seq1, seq2)`: Wrap-around-safe 32-bit comparison returning `true` when `seq1 < seq2`. Thus `!before(a, b)` means `a >= b`.
   - `div64_u64(dividend, divisor)`: Safe 64-bit unsigned integer division (returns `0` if `divisor == 0`).
 
@@ -930,7 +930,7 @@ Before answering the design questions in Section 3, review the exact fields and 
 
 ## 3. Design Checkpoints (Translate the Algorithm into Code)
 
-Use what you learned in Section 2 to work through these four design questions for [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c). Every question can be answered directly from Section 2.
+Use what you learned in Section 2 to work through these four design questions for [starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c). Every question can be answered directly from Section 2.
 
 ### Q1. How should we write the `RTprop` min-filter condition so that it also handles the very first RTT sample (`ca->min_rtt_us == 0`)?
 
@@ -950,7 +950,7 @@ In `bpf_bbr2_init()`, `ca->min_rtt_us` is initialised to `0`. What would go wron
 
 ### Q2. How should we write the `BtlBw` max-filter and app-limited check for TODO 2?
 
-In [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c), line 120 unconditionally overwrites `ca->max_bw = bw;`. How should you replace that line to implement the app-limited invariant and maximum filter explained in Section 2?
+In [starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c), line 120 unconditionally overwrites `ca->max_bw = bw;`. How should you replace that line to implement the app-limited invariant and maximum filter explained in Section 2?
 
 <details>
 <summary>Hint and Answer</summary>
@@ -986,7 +986,7 @@ After `bpf_bbr2_init()` sets `ca->next_rtt_delivered = tp->delivered;`, how does
 
 ### Q4. Why does `bbr_bdp()` check `if (!ca->min_rtt_us || !bw) return 10U;` and use ceiling division (`+ BW_UNIT - 1`)?
 
-Look at `bbr_bdp()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c). What two failure modes are prevented by the initial zero check and the `+ BW_UNIT - 1` term in `(((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT`?
+Look at `bbr_bdp()` in [starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c). What two failure modes are prevented by the initial zero check and the `+ BW_UNIT - 1` term in `(((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT`?
 
 <details>
 <summary>Hint and Answer</summary>
@@ -1000,7 +1000,7 @@ Look at `bbr_bdp()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let us walk through each part of [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c).
+Let us walk through each part of [solution.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c).
 
 ### 1. Scaling Constants and Per-Socket State `struct bpf_bbr2_ca`
 
@@ -1125,7 +1125,7 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ## 5. Understanding `test.pkt` and How to Run
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/test.pkt) tests both the `BtlBw` max-filter and the `RTprop` min-filter across two phases.
+[test.pkt](../labs/03-bbr/step02-btlbw-rtprop/test.pkt) tests both the `BtlBw` max-filter and the `RTprop` min-filter across two phases.
 
 ### Packet Trace Walkthrough
 
@@ -1138,20 +1138,20 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 3. **Phase 2: App-limited small burst with inflated RTT and second assertion (lines 39–46)**:
    - After a $30\text{ ms}$ pause (`+0.03`), the application writes only $2000\text{ Bytes}$ (2 segments), and the ACK (`ack 12001`) returns $20\text{ ms}$ later (`+0.02`).
    - This sample has `rs->rtt_us = 20000` (inflated to $20\text{ ms}$), `rs->delivered = 2`, `rs->interval_us = 50000` ($40\text{ pkts/s}$), and `rs->is_app_limited = true`.
-   - **Why `starter.bpf.c` fails**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) blindly overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->max_bw = bw`. On the Phase 2 ACK, `max_bw` collapses by $25\times$ to $40\text{ pkts/s}$, shrinking `tcpi_snd_cwnd` to `5` ($\text{BDP } 1 + 4$) and dropping `tcpi_pacing_rate` to $\approx 39.6\text{ KB/s}$, which fails the assertions on lines 44–45.
-   - **Why `solution.bpf.c` passes**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) rejects the inflated RTT via the min-filter (`min_rtt_us` stays `10000`) and rejects the low app-limited bandwidth sample via the max-filter (`max_bw` stays $1000\text{ pkts/s}$), preserving `tcpi_snd_cwnd == 14` and `tcpi_pacing_rate` ($\approx 990\text{ KB/s}$).
+   - **Why `starter.bpf.c` fails**: [starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c) blindly overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->max_bw = bw`. On the Phase 2 ACK, `max_bw` collapses by $25\times$ to $40\text{ pkts/s}$, shrinking `tcpi_snd_cwnd` to `5` ($\text{BDP } 1 + 4$) and dropping `tcpi_pacing_rate` to $\approx 39.6\text{ KB/s}$, which fails the assertions on lines 44–45.
+   - **Why `solution.bpf.c` passes**: [solution.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c) rejects the inflated RTT via the min-filter (`min_rtt_us` stays `10000`) and rejects the low app-limited bandwidth sample via the max-filter (`max_bw` stays $1000\text{ pkts/s}$), preserving `tcpi_snd_cwnd == 14` and `tcpi_pacing_rate` ($\approx 990\text{ KB/s}$).
 
 ### How to Run
 
 Run the following commands to see `starter` fail the Phase 2 assertion and `solution` pass:
 
 ```sh
-../../run_test.sh bbr/step02-btlbw-rtprop starter
-../../run_test.sh bbr/step02-btlbw-rtprop solution
+../../run_test.sh 03-bbr/step02-btlbw-rtprop starter
+../../run_test.sh 03-bbr/step02-btlbw-rtprop solution
 ```
 
 
-### `labs/bbr/step02-btlbw-rtprop/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1305,7 +1305,7 @@ struct tcp_congestion_ops bpf_bbr2 = {
 };
 ```
 
-### `labs/bbr/step02-btlbw-rtprop/test.pkt` (packetdrill test)
+### `labs/03-bbr/step02-btlbw-rtprop/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1357,7 +1357,7 @@ assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s to b
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1645,7 +1645,7 @@ Before writing the BPF code, review what the kernel already provides on each soc
 
 ## 3. Design Checkpoints (Translate the Algorithm into Code)
 
-Using the concepts from Section 2, think through the following three design questions before implementing the TODOs in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c).
+Using the concepts from Section 2, think through the following three design questions before implementing the TODOs in [starter.bpf.c](../labs/03-bbr/step03-startup-drain/starter.bpf.c).
 
 ### Q1. When should `bbr_check_full_bw_reached()` return early without touching `ca->full_bw_cnt`?
 
@@ -1676,13 +1676,13 @@ Using the concepts from Section 2, think through the following three design ques
 - With `else if`, the transition into `BBR_DRAIN` would prevent the second check from running on the same ACK. Even if `tcp_packets_in_flight(tp)` is already $\le 1.0\text{x BDP}$ (i.e. there is no excess queue left to drain), the socket would remain stuck in `BBR_DRAIN` with `pacing_gain = 0.35x` until a subsequent ACK arrives.
 - Writing two independent `if` statements allows execution to **fall through**:
   1. The first `if (ca->mode == BBR_STARTUP && ca->full_bw_reached)` sets `ca->mode = BBR_DRAIN` and records `tp->snd_ssthresh = bbr_bdp(sk, ca->max_bw, BBR_UNIT)`.
-  2. The second `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` immediately evaluates to true if in-flight packets are already $\le \text{BDP}$, advancing `ca->mode = BBR_PROBE_BW` on the very same ACK (which is exactly what happens in Round 4 of [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt)).
+  2. The second `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` immediately evaluates to true if in-flight packets are already $\le \text{BDP}$, advancing `ca->mode = BBR_PROBE_BW` on the very same ACK (which is exactly what happens in Round 4 of [test.pkt](../labs/03-bbr/step03-startup-drain/test.pkt)).
 
 </details>
 
 ### Q3. How should `bbr_update_gains()` assign `pacing_gain` and `cwnd_gain` in each of the three modes?
 
-Using the constants defined at the top of [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) (`bbr_high_gain`, `bbr_drain_gain`, `BBR_UNIT`, and `bbr_cwnd_gain`), what values should `bbr_update_gains()` assign to `ca->pacing_gain` and `ca->cwnd_gain` for `BBR_STARTUP`, `BBR_DRAIN`, and `BBR_PROBE_BW`?
+Using the constants defined at the top of [starter.bpf.c](../labs/03-bbr/step03-startup-drain/starter.bpf.c) (`bbr_high_gain`, `bbr_drain_gain`, `BBR_UNIT`, and `bbr_cwnd_gain`), what values should `bbr_update_gains()` assign to `ca->pacing_gain` and `ca->cwnd_gain` for `BBR_STARTUP`, `BBR_DRAIN`, and `BBR_PROBE_BW`?
 
 <details>
 <summary>Hint and Answer</summary>
@@ -1703,7 +1703,7 @@ Using the constants defined at the top of [starter.bpf.c](file:///usr/local/goog
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let's walk through each helper and fixed-point calculation in [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/solution.bpf.c).
+Let's walk through each helper and fixed-point calculation in [solution.bpf.c](../labs/03-bbr/step03-startup-drain/solution.bpf.c).
 
 ### 1. Fixed-Point Scales and Gain Constants
 
@@ -1778,7 +1778,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 
 ## 5. Understanding `test.pkt` and How to Run
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt) drives a connection across a constant `100 KB/s` bottleneck (1 segment of 1,000 bytes every 10 ms) and verifies the transition out of `BBR_STARTUP` after 3 plateau rounds:
+[test.pkt](../labs/03-bbr/step03-startup-drain/test.pkt) drives a connection across a constant `100 KB/s` bottleneck (1 segment of 1,000 bytes every 10 ms) and verifies the transition out of `BBR_STARTUP` after 3 plateau rounds:
 
 1. **Handshake and 5,000-Byte Bulk `write()`**:
    - Establishes a connection with `MSS = 1000` bytes and receive window `win 1000` (1 segment).
@@ -1802,12 +1802,12 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 Run the commands below to verify that `starter` fails before your changes and `solution` passes:
 
 ```sh
-../../run_test.sh bbr/step03-startup-drain starter
-../../run_test.sh bbr/step03-startup-drain solution
+../../run_test.sh 03-bbr/step03-startup-drain starter
+../../run_test.sh 03-bbr/step03-startup-drain solution
 ```
 
 
-### `labs/bbr/step03-startup-drain/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step03-startup-drain/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2064,7 +2064,7 @@ struct tcp_congestion_ops bpf_bbr3 = {
 };
 ```
 
-### `labs/bbr/step03-startup-drain/test.pkt` (packetdrill test)
+### `labs/03-bbr/step03-startup-drain/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2129,7 +2129,7 @@ assert tcpi_snd_cwnd == 4, f"Round 4 PROBE_BW: expected cwnd == 4, got {tcpi_snd
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step03-startup-drain/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step03-startup-drain/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2776,12 +2776,12 @@ static __always_inline void bbr_update_gains(struct sock *sk)
 Run the following commands to verify that `starter` fails on the unimplemented TODOs and `solution` passes all packetdrill assertions:
 
 ```sh
-../../run_test.sh bbr/step04-probe-bw starter
-../../run_test.sh bbr/step04-probe-bw solution
+../../run_test.sh 03-bbr/step04-probe-bw starter
+../../run_test.sh 03-bbr/step04-probe-bw solution
 ```
 
 
-### `labs/bbr/step04-probe-bw/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step04-probe-bw/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3151,7 +3151,7 @@ struct tcp_congestion_ops bpf_bbr4 = {
 };
 ```
 
-### `labs/bbr/step04-probe-bw/test.pkt` (packetdrill test)
+### `labs/03-bbr/step04-probe-bw/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3237,7 +3237,7 @@ assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expecte
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step04-probe-bw/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step04-probe-bw/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4017,12 +4017,12 @@ done:
 Run the following commands to verify `starter` (fails as expected before adding your code) and `solution` (passes):
 
 ```sh
-../../run_test.sh bbr/step05-probe-rtt starter
-../../run_test.sh bbr/step05-probe-rtt solution
+../../run_test.sh 03-bbr/step05-probe-rtt starter
+../../run_test.sh 03-bbr/step05-probe-rtt solution
 ```
 
 
-### `labs/bbr/step05-probe-rtt/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step05-probe-rtt/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4429,7 +4429,7 @@ struct tcp_congestion_ops bpf_bbr5 = {
 };
 ```
 
-### `labs/bbr/step05-probe-rtt/test.pkt` (packetdrill test)
+### `labs/03-bbr/step05-probe-rtt/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -4480,7 +4480,7 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step05-probe-rtt/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step05-probe-rtt/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -5038,7 +5038,7 @@ To translate these rules into BPF C code, you have access to the following kerne
 
 ## 3. Design Checkpoints (Translate the Algorithm into Code)
 
-Use the concepts from Section 2 to work through the design of the `TODO` items in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c).
+Use the concepts from Section 2 to work through the design of the `TODO` items in [starter.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c).
 
 ### Q1. How should `bbr_save_cwnd()` and `bpf_bbr6_ssthresh()` preserve `ca->prior_cwnd`?
 
@@ -5127,7 +5127,7 @@ When translating Section 2.2 into `bbr_update_ack_aggregation(sk, rs)` and `bbr_
 
 ## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
-Let us walk through each function implemented in [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c).
+Let us walk through each function implemented in [solution.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c).
 
 ### 4.1 `bbr_save_cwnd()` and `.ssthresh` / `.undo_cwnd` / `.set_state`
 
@@ -5234,7 +5234,7 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ### Packet Trace and Assertions in `test.pkt`
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/test.pkt) validates BBRv1's loss recovery, first-round packet conservation, and `prior_cwnd` restoration step by step:
+[test.pkt](../labs/03-bbr/step06-loss-ack-aggregation/test.pkt) validates BBRv1's loss recovery, first-round packet conservation, and `prior_cwnd` restoration step by step:
 
 1. **Initial Startup Window Growth (lines 17–24)**:
    - After establishing a connection with a 10 ms base RTT, the sender transmits 10 segments (`1:10001`, 10,000 bytes) and receives `ack 10001` 10 ms later.
@@ -5251,18 +5251,18 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
-- In [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c), `bbr_set_cwnd_to_recover_or_restore()` contains a placeholder that halves `cwnd` (`cwnd = max(cwnd >> 1U, 2U)`) like Reno/CUBIC and neither enables packet conservation nor restores `prior_cwnd`. Consequently, `starter.bpf.c` fails at line 42 (`assert tcpi_snd_cwnd == 1`).
-- In [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c), packet conservation sets `tcpi_snd_cwnd == 1` on entry to `TCP_CA_Recovery` and restores `tcpi_snd_cwnd >= 20` when `ack 14001` returns the connection to `TCP_CA_Open`, passing all assertions.
+- In [starter.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c), `bbr_set_cwnd_to_recover_or_restore()` contains a placeholder that halves `cwnd` (`cwnd = max(cwnd >> 1U, 2U)`) like Reno/CUBIC and neither enables packet conservation nor restores `prior_cwnd`. Consequently, `starter.bpf.c` fails at line 42 (`assert tcpi_snd_cwnd == 1`).
+- In [solution.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c), packet conservation sets `tcpi_snd_cwnd == 1` on entry to `TCP_CA_Recovery` and restores `tcpi_snd_cwnd >= 20` when `ack 14001` returns the connection to `TCP_CA_Open`, passing all assertions.
 
 ### How to Run
 
 ```sh
-../../run_test.sh bbr/step06-loss-ack-aggregation starter
-../../run_test.sh bbr/step06-loss-ack-aggregation solution
+../../run_test.sh 03-bbr/step06-loss-ack-aggregation starter
+../../run_test.sh 03-bbr/step06-loss-ack-aggregation solution
 ```
 
 
-### `labs/bbr/step06-loss-ack-aggregation/starter.bpf.c` (Starter skeleton)
+### `labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -5785,7 +5785,7 @@ struct tcp_congestion_ops bpf_bbr6 = {
 };
 ```
 
-### `labs/bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill test)
+### `labs/03-bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -5843,7 +5843,7 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 ```
 
 <details>
-<summary>Reference solution: <code>labs/bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

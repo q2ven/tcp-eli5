@@ -264,27 +264,27 @@ BBR の `.cong_control` プログラムは、この `rs` を入力として受�
 
 ### 実行コマンド
 
-`labs/` ディレクトリ（または `labs/bbr/` から `../run_test.sh`）を使って、カーネルの再ビルドなしで即座にコンパイルとテストを実行できます。
+`labs/` ディレクトリ（または `labs/03-bbr/` から `../run_test.sh`）を使って、カーネルの再ビルドなしで即座にコンパイルとテストを実行できます。
 
 ```sh
 # labs/ ディレクトリへ移動
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. まず Step 1 の starter（未実装スケルトン）を実行し、アサートが失敗することを確認する
-./run_test.sh bbr/step01-pacing-rate starter
+./run_test.sh 03-bbr/step01-pacing-rate starter
 
-# 2. bbr/step01-pacing-rate/starter.bpf.c の TODO を実装して再実行する
-./run_test.sh bbr/step01-pacing-rate starter
+# 2. 03-bbr/step01-pacing-rate/starter.bpf.c の TODO を実装して再実行する
+./run_test.sh 03-bbr/step01-pacing-rate starter
 
 # 3. 模範解答（solution.bpf.c）で PASS することを確認する
-./run_test.sh bbr/step01-pacing-rate solution
+./run_test.sh 03-bbr/step01-pacing-rate solution
 ```
 
 全ステップの模範解答をまとめてテストする場合は、任意のステップ名を指定するか `make check` を実行してください。
 
 ```sh
 # Step 1 〜 Step 6 を順番に実行する場合
-for step in bbr/step0*; do ./run_test.sh "$step" solution; done
+for step in 03-bbr/step0*; do ./run_test.sh "$step" solution; done
 ```
 
 それでは、[Step 1: .cong_control フックと Delivery Rate からの Pacing Rate 計算](step01-pacing-rate/README.md) から始めましょう！
@@ -460,7 +460,7 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) の各パートを順番に解説します。
+[solution.bpf.c](../labs/03-bbr/step01-pacing-rate/solution.bpf.c) の各パートを順番に解説します。
 
 ### 1. 固定小数点マクロの定義
 
@@ -553,7 +553,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/test.pkt) は以下のパケットシーケンスで `bpf_bbr1` の動作を検証します。
+[test.pkt](../labs/03-bbr/step01-pacing-rate/test.pkt) は以下のパケットシーケンスで `bpf_bbr1` の動作を検証します。
 
 1. **3-way ハンドシェイクと初期レートの検証（13〜22 行目）**:
    ```
@@ -572,20 +572,20 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
    ```
    - サーバーが `10,000` バイト（10 セグメント）を送信し、`+0.01`（10 ms）後にクライアントが `ack 10001` を返します。
    - この ACK によって `rs->delivered = 10`、`rs->interval_us = 10,000` us の `rate_sample` が生成され、瞬間配送レートは `1,000,000 B/s`（1 MB/s）となります。
-   - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/starter.bpf.c) では `bpf_bbr1_cong_control()` が未実装（空）であるため、`tcpi_pacing_rate` が初期値 `281,738 B/s` のまま変化せず、32 行目の `assert tcpi_pacing_rate > 500000` で失敗します。
-   - [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) では `1,000,000 * 2885 >> 10 = 2,817,382 B/s`（約 2.82 MB/s）に更新されるため、32〜33 行目のアサート（`2000000 < tcpi_pacing_rate < 3500000`）をすべてパスします。
+   - [starter.bpf.c](../labs/03-bbr/step01-pacing-rate/starter.bpf.c) では `bpf_bbr1_cong_control()` が未実装（空）であるため、`tcpi_pacing_rate` が初期値 `281,738 B/s` のまま変化せず、32 行目の `assert tcpi_pacing_rate > 500000` で失敗します。
+   - [solution.bpf.c](../labs/03-bbr/step01-pacing-rate/solution.bpf.c) では `1,000,000 * 2885 >> 10 = 2,817,382 B/s`（約 2.82 MB/s）に更新されるため、32〜33 行目のアサート（`2000000 < tcpi_pacing_rate < 3500000`）をすべてパスします。
 
 ### テストの実行コマンド
 
 以下のコマンドで `starter`（失敗を確認）と `solution`（テスト通過を確認）を実行できます。
 
 ```sh
-../../run_test.sh bbr/step01-pacing-rate starter
-../../run_test.sh bbr/step01-pacing-rate solution
+../../run_test.sh 03-bbr/step01-pacing-rate starter
+../../run_test.sh 03-bbr/step01-pacing-rate solution
 ```
 
 
-### `labs/bbr/step01-pacing-rate/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step01-pacing-rate/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -662,7 +662,7 @@ struct tcp_congestion_ops bpf_bbr1 = {
 };
 ```
 
-### `labs/bbr/step01-pacing-rate/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step01-pacing-rate/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -702,7 +702,7 @@ assert 2000000 < tcpi_pacing_rate < 3500000, f"expected pacing_rate ~2.82MB/s, g
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step01-pacing-rate/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step01-pacing-rate/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -796,7 +796,7 @@ struct tcp_congestion_ops bpf_bbr1 = {
 
 ## 1. 学習ゴール
 
-Step 1 では、直近の ACK から得られた配送レート（`rs->delivered / rs->interval_us`）を使って毎回 `sk_pacing_rate` を上書きしました。しかし実際のネットワークでは、ルータのキューにパケットが溜まれば RTT は一時的に膨らみ、アプリケーションの送信が一時停止すれば配送レートは本来の回線容量よりはるかに低い値になります。このステップでは、BBR のネットワーク経路モデルの 2 本柱である **RTprop（往復伝播遅延: 最小 RTT フィルタ）** と **BtlBw（ボトルネック帯域幅: 最大帯域フィルタ）** をソケットのプライベート領域（`icsk_ca_priv`）で追跡し、両者の積である **BDP（帯域遅延積: Bandwidth-Delay Product）** から `snd_cwnd` と `sk_pacing_rate` を決定する仕組みを実装します（トラック全体の概要は [../README.md](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/README.md) を参照してください）。
+Step 1 では、直近の ACK から得られた配送レート（`rs->delivered / rs->interval_us`）を使って毎回 `sk_pacing_rate` を上書きしました。しかし実際のネットワークでは、ルータのキューにパケットが溜まれば RTT は一時的に膨らみ、アプリケーションの送信が一時停止すれば配送レートは本来の回線容量よりはるかに低い値になります。このステップでは、BBR のネットワーク経路モデルの 2 本柱である **RTprop（往復伝播遅延: 最小 RTT フィルタ）** と **BtlBw（ボトルネック帯域幅: 最大帯域フィルタ）** をソケットのプライベート領域（`icsk_ca_priv`）で追跡し、両者の積である **BDP（帯域遅延積: Bandwidth-Delay Product）** から `snd_cwnd` と `sk_pacing_rate` を決定する仕組みを実装します（トラック全体の概要は [../README.md](../labs/03-bbr/README.md) を参照してください）。
 
 ---
 
@@ -904,7 +904,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ### カーネルが提供するフィールドとヘルパー（このステップで使うもの）
 
-コードを書く前に、カーネル（および [bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h)）がすでに用意している構造体フィールドとヘルパー関数を確認しておきましょう。
+コードを書く前に、カーネル（および [bpf_cc_helpers.h](../labs/include/bpf_cc_helpers.h)）がすでに用意している構造体フィールドとヘルパー関数を確認しておきましょう。
 
 - **`inet_csk(sk)->icsk_ca_priv` と `inet_csk_ca(sk)`**:
   - 各 TCP ソケット（`struct inet_connection_sock`）には、輻輳制御アルゴリズムがソケットごとの独自変数を保存できるバイト配列 `icsk_ca_priv` が組み込まれています。
@@ -925,7 +925,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
   - `sk->sk_pacing_status`: `SK_PACING_NEEDED` を設定することでカーネルの TCP ペーシングを有効化します。
   - `sk->sk_pacing_rate`（`unsigned long`）: 送信ペーシングレート（Bytes/sec）。
   - `sk->sk_max_pacing_rate`（`unsigned long`）: アプリケーションが `SO_MAX_PACING_RATE` で設定した上限レート。
-- **ヘルパー関数（[bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h)）**:
+- **ヘルパー関数（[bpf_cc_helpers.h](../labs/include/bpf_cc_helpers.h)）**:
   - `before(seq1, seq2)`: 32 ビット符号なし整数のラップアラウンドを考慮して `seq1 < seq2` を判定します。したがって `!before(a, b)` は `a >= b` を意味します。
   - `div64_u64(dividend, divisor)`: 64 ビット符号なし整数同士の安全な除算（`divisor == 0` のときは `0` を返す）を行います。
 
@@ -933,7 +933,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
-セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) の TODO を埋めるための設計を 4 つの問いで確認しましょう。すべての答えはセクション 2 の内容から導き出せます。
+セクション 2 の仕組みを踏まえて、[starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c) の TODO を埋めるための設計を 4 つの問いで確認しましょう。すべての答えはセクション 2 の内容から導き出せます。
 
 ### Q1. 初回サンプル（`ca->min_rtt_us == 0`）も考慮した `RTprop` 最小値フィルタの条件式はどう書くべきでしょうか？
 
@@ -953,7 +953,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ### Q2. `starter.bpf.c` の TODO 2 で `ca->max_bw` を更新する C コードはどう書くべきでしょうか？
 
-[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) では `ca->max_bw = bw;` と無条件に上書きしています。セクション 2 で学んだ「App-Limited サンプルの不変条件」と「最大値フィルタ」の両方を満たすには、この部分をどのような `if` 文に書き換えればよいでしょうか？
+[starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c) では `ca->max_bw = bw;` と無条件に上書きしています。セクション 2 で学んだ「App-Limited サンプルの不変条件」と「最大値フィルタ」の両方を満たすには、この部分をどのような `if` 文に書き換えればよいでしょうか？
 
 <details>
 <summary>ヒントと答え</summary>
@@ -1003,7 +1003,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) の各関数と固定小数点演算の流れを順に解説します。
+[solution.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c) の各関数と固定小数点演算の流れを順に解説します。
 
 ### 1. スケール定数とソケット状態構造体 `struct bpf_bbr2_ca`
 
@@ -1129,7 +1129,7 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/test.pkt) は、高帯域バーストのあとに「App-Limited かつ RTT が膨張した低レートサンプル」を入力し、フィルタの有無による挙動の差を検証します。
+[test.pkt](../labs/03-bbr/step02-btlbw-rtprop/test.pkt) は、高帯域バーストのあとに「App-Limited かつ RTT が膨張した低レートサンプル」を入力し、フィルタの有無による挙動の差を検証します。
 
 ### `test.pkt` のパケットトレース解説
 
@@ -1142,20 +1142,20 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 3. **Phase 2: App-Limited な小バースト＋膨張した RTT と 2 回目のアサート（39〜46 行目）**:
    - $30\text{ ms}$ のアイドル時間（`+0.03`）を空けたあと、`write(4, ..., 2000)` で 2 セグメント（ $2000\text{ Bytes}$ ）だけを送信し、`+0.02`（ $20\text{ ms}$ 後）に ACK（`ack 12001`）を受け取ります。
    - このサンプルでは `rs->rtt_us = 20000`（ $20\text{ ms}$ に倍増）、`rs->delivered = 2`、`rs->interval_us = 50000`（ $40\text{ pkts/s}$ に激減）、`rs->is_app_limited = true` となります。
-   - **なぜ `starter.bpf.c` は失敗するのか**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) は毎回 `ca->min_rtt_us = rs->rtt_us` と `ca->max_bw = bw` をそのまま上書きしてしまうため、Phase 2 の ACK で `max_bw` が $1/25$ （ $40\text{ pkts/s}$ ）に崩壊し、`tcpi_snd_cwnd` が `5`（ $\text{BDP } 1 + 4$ ）、`tcpi_pacing_rate` が約 $39.6\text{ KB/s}$ に落ちて 44〜45 行目のアサートに失敗します。
-   - **なぜ `solution.bpf.c` はパスするのか**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) では最小値フィルタが `min_rtt_us = 10000` を守り、App-Limited ガード付き最大値フィルタが `max_bw = 1000 pkts/s` を守るため、Phase 2 の後も `tcpi_snd_cwnd == 14` と `tcpi_pacing_rate`（約 $990\text{ KB/s}$ ）が維持されてテストをパスします。
+   - **なぜ `starter.bpf.c` は失敗するのか**: [starter.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c) は毎回 `ca->min_rtt_us = rs->rtt_us` と `ca->max_bw = bw` をそのまま上書きしてしまうため、Phase 2 の ACK で `max_bw` が $1/25$ （ $40\text{ pkts/s}$ ）に崩壊し、`tcpi_snd_cwnd` が `5`（ $\text{BDP } 1 + 4$ ）、`tcpi_pacing_rate` が約 $39.6\text{ KB/s}$ に落ちて 44〜45 行目のアサートに失敗します。
+   - **なぜ `solution.bpf.c` はパスするのか**: [solution.bpf.c](../labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c) では最小値フィルタが `min_rtt_us = 10000` を守り、App-Limited ガード付き最大値フィルタが `max_bw = 1000 pkts/s` を守るため、Phase 2 の後も `tcpi_snd_cwnd == 14` と `tcpi_pacing_rate`（約 $990\text{ KB/s}$ ）が維持されてテストをパスします。
 
 ### テストの実行コマンド
 
 以下のコマンドで、`starter` の失敗と `solution` の成功を確認できます。
 
 ```sh
-../../run_test.sh bbr/step02-btlbw-rtprop starter
-../../run_test.sh bbr/step02-btlbw-rtprop solution
+../../run_test.sh 03-bbr/step02-btlbw-rtprop starter
+../../run_test.sh 03-bbr/step02-btlbw-rtprop solution
 ```
 
 
-### `labs/bbr/step02-btlbw-rtprop/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step02-btlbw-rtprop/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1309,7 +1309,7 @@ struct tcp_congestion_ops bpf_bbr2 = {
 };
 ```
 
-### `labs/bbr/step02-btlbw-rtprop/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step02-btlbw-rtprop/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1361,7 +1361,7 @@ assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s to b
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1650,7 +1650,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 ## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
-セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) の 3 つの TODO を実装する前に、以下の設計上の問いを考えてみましょう。
+セクション 2 の仕組みを踏まえて、[starter.bpf.c](../labs/03-bbr/step03-startup-drain/starter.bpf.c) の 3 つの TODO を実装する前に、以下の設計上の問いを考えてみましょう。
 
 ### Q1. `bbr_check_full_bw_reached()` はどのような条件のときに早期リターン（スキップ）すべきでしょうか？
 
@@ -1681,13 +1681,13 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 - もし `else if` にしてしまうと、`ca->full_bw_reached == 1` になった ACK の時点でネットワーク上の過剰キューがすでにゼロ（`tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT)`）であっても、その ACK では `BBR_DRAIN` に止まり、`pacing_gain` が `0.35x` に落ちてしまいます。
 - 2 つの独立した `if` 文として並べて書けば：
   1. 最初の `if (ca->mode == BBR_STARTUP && ca->full_bw_reached)` で `ca->mode = BBR_DRAIN` に変更し、`tp->snd_ssthresh = bbr_bdp(sk, ca->max_bw, BBR_UNIT)` を記録します。
-  2. 直後の `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` にそのままフォールスルー（Fall-through）して評価されるため、インフライト数がすでに `1.0x BDP` 以下なら **同じ ACK の中で即座に `ca->mode = BBR_PROBE_BW` まで遷移** できます（[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt) の Round 4 がまさにこのケースです）。
+  2. 直後の `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` にそのままフォールスルー（Fall-through）して評価されるため、インフライト数がすでに `1.0x BDP` 以下なら **同じ ACK の中で即座に `ca->mode = BBR_PROBE_BW` まで遷移** できます（[test.pkt](../labs/03-bbr/step03-startup-drain/test.pkt) の Round 4 がまさにこのケースです）。
 
 </details>
 
 ### Q3. `bbr_update_gains()` では、3 つのモードそれぞれに対して `pacing_gain` と `cwnd_gain` にどの定数を設定すべきでしょうか？
 
-`BBR_STARTUP`、`BBR_DRAIN`、`BBR_PROBE_BW` の 3 モードにおいて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) の先頭で定義されている定数（`bbr_high_gain`、`bbr_drain_gain`、`BBR_UNIT`、`bbr_cwnd_gain`）をどのように割り当てればよいでしょうか？特に `BBR_DRAIN` の `cwnd_gain` と `BBR_PROBE_BW` の `cwnd_gain` に注意して整理してみましょう。
+`BBR_STARTUP`、`BBR_DRAIN`、`BBR_PROBE_BW` の 3 モードにおいて、[starter.bpf.c](../labs/03-bbr/step03-startup-drain/starter.bpf.c) の先頭で定義されている定数（`bbr_high_gain`、`bbr_drain_gain`、`BBR_UNIT`、`bbr_cwnd_gain`）をどのように割り当てればよいでしょうか？特に `BBR_DRAIN` の `cwnd_gain` と `BBR_PROBE_BW` の `cwnd_gain` に注意して整理してみましょう。
 
 <details>
 <summary>ヒントと答え</summary>
@@ -1708,7 +1708,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/solution.bpf.c) の各関数と固定小数点演算の流れを解説します。
+[solution.bpf.c](../labs/03-bbr/step03-startup-drain/solution.bpf.c) の各関数と固定小数点演算の流れを解説します。
 
 ### 1. スケール定数と各モードのゲイン定義
 
@@ -1783,7 +1783,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt) は、一定帯域（1 セグメント / 10 ms = `100 KB/s`）の経路でパケットを送り、3 ラウンド連続で帯域成長が頭打ちになった後に `BBR_STARTUP` を抜ける様子を検証します。
+[test.pkt](../labs/03-bbr/step03-startup-drain/test.pkt) は、一定帯域（1 セグメント / 10 ms = `100 KB/s`）の経路でパケットを送り、3 ラウンド連続で帯域成長が頭打ちになった後に `BBR_STARTUP` を抜ける様子を検証します。
 
 1. **3-way ハンドシェイクと 5,000 バイトの一括 `write()`**:
    - `MSS = 1000` バイト、受信ウィンドウ `win 1000`（1 セグメント）、`RTT = 10 ms`（ハンドシェイク時のみ 100 ms）で接続を確立します。
@@ -1807,12 +1807,12 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 以下のコマンドで、`starter` が失敗することと `solution` がパスすることを確認できます。
 
 ```sh
-../../run_test.sh bbr/step03-startup-drain starter
-../../run_test.sh bbr/step03-startup-drain solution
+../../run_test.sh 03-bbr/step03-startup-drain starter
+../../run_test.sh 03-bbr/step03-startup-drain solution
 ```
 
 
-### `labs/bbr/step03-startup-drain/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step03-startup-drain/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2069,7 +2069,7 @@ struct tcp_congestion_ops bpf_bbr3 = {
 };
 ```
 
-### `labs/bbr/step03-startup-drain/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step03-startup-drain/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2134,7 +2134,7 @@ assert tcpi_snd_cwnd == 4, f"Round 4 PROBE_BW: expected cwnd == 4, got {tcpi_snd
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step03-startup-drain/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step03-startup-drain/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2773,15 +2773,15 @@ static __always_inline void bbr_update_gains(struct sock *sk)
 
 ### テストの実行コマンド
 
-リポジトリの `labs/bbr/step04-probe-bw` ディレクトリから、以下のコマンドで `starter`（失敗の確認）と `solution`（成功の確認）を実行できます。
+リポジトリの `labs/03-bbr/step04-probe-bw` ディレクトリから、以下のコマンドで `starter`（失敗の確認）と `solution`（成功の確認）を実行できます。
 
 ```sh
-../../run_test.sh bbr/step04-probe-bw starter
-../../run_test.sh bbr/step04-probe-bw solution
+../../run_test.sh 03-bbr/step04-probe-bw starter
+../../run_test.sh 03-bbr/step04-probe-bw solution
 ```
 
 
-### `labs/bbr/step04-probe-bw/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step04-probe-bw/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3151,7 +3151,7 @@ struct tcp_congestion_ops bpf_bbr4 = {
 };
 ```
 
-### `labs/bbr/step04-probe-bw/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step04-probe-bw/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3237,7 +3237,7 @@ assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expecte
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step04-probe-bw/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step04-probe-bw/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4015,12 +4015,12 @@ done:
 以下のコマンドで `starter`（失敗の確認）と `solution`（パスの確認）を実行できます。
 
 ```sh
-../../run_test.sh bbr/step05-probe-rtt starter
-../../run_test.sh bbr/step05-probe-rtt solution
+../../run_test.sh 03-bbr/step05-probe-rtt starter
+../../run_test.sh 03-bbr/step05-probe-rtt solution
 ```
 
 
-### `labs/bbr/step05-probe-rtt/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step05-probe-rtt/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4427,7 +4427,7 @@ struct tcp_congestion_ops bpf_bbr5 = {
 };
 ```
 
-### `labs/bbr/step05-probe-rtt/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step05-probe-rtt/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -4478,7 +4478,7 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step05-probe-rtt/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step05-probe-rtt/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -5035,7 +5035,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
 
 ## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
-セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c) の `TODO` を埋めるための設計を 4 つの問いで確認しましょう。
+セクション 2 の仕組みを踏まえて、[starter.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c) の `TODO` を埋めるための設計を 4 つの問いで確認しましょう。
 
 ### Q1. `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` では、いつ・どのように `ca->prior_cwnd` を保存すべきでしょうか？
 
@@ -5126,7 +5126,7 @@ Fast Recovery（`TCP_CA_Recovery`）は `.cong_control` 内の `bbr_set_cwnd_to_
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c) の各関数と固定小数点演算の詳細を解説します。
+[solution.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c) の各関数と固定小数点演算の詳細を解説します。
 
 ### 4.1 `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` / `bpf_bbr6_undo_cwnd()` / `bpf_bbr6_set_state()`
 
@@ -5233,7 +5233,7 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ### `test.pkt` のパケットトレースと検証内容
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/test.pkt) は、ロス発生時のパケット保存則と Recovery 脱出後の `prior_cwnd` 復元を以下の順序で検証します。
+[test.pkt](../labs/03-bbr/step06-loss-ack-aggregation/test.pkt) は、ロス発生時のパケット保存則と Recovery 脱出後の `prior_cwnd` 復元を以下の順序で検証します。
 
 1. **初期スロースタートによるウィンドウ成長（行 17〜24）**:
    - 10 ms RTT で 3-way ハンドシェイク後、10 セグメント（`1:10001`、計 10,000 B）を送信し、10 ms 後に `ack 10001` を受信します。
@@ -5250,18 +5250,18 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
 
-- [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c) では、`bbr_set_cwnd_to_recover_or_restore()` がプレースホルダとして Reno 風のウィンドウ半減（`cwnd = max(cwnd >> 1U, 2U)`）を行うようになっており、パケット保存則も `prior_cwnd` の復元も未実装です。そのため行 42 の `assert tcpi_snd_cwnd == 1`（および Recovery 脱出後の `assert tcpi_snd_cwnd >= 20`）で失敗します。
-- [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c) では、Recovery 第 1 ラウンドのパケット保存則（`cwnd == 1`）と脱出時の `prior_cwnd` 復元（`cwnd >= 20`）が正しく動作するため、すべてのアサートをパスします。
+- [starter.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c) では、`bbr_set_cwnd_to_recover_or_restore()` がプレースホルダとして Reno 風のウィンドウ半減（`cwnd = max(cwnd >> 1U, 2U)`）を行うようになっており、パケット保存則も `prior_cwnd` の復元も未実装です。そのため行 42 の `assert tcpi_snd_cwnd == 1`（および Recovery 脱出後の `assert tcpi_snd_cwnd >= 20`）で失敗します。
+- [solution.bpf.c](../labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c) では、Recovery 第 1 ラウンドのパケット保存則（`cwnd == 1`）と脱出時の `prior_cwnd` 復元（`cwnd >= 20`）が正しく動作するため、すべてのアサートをパスします。
 
 ### 実行コマンド
 
 ```sh
-../../run_test.sh bbr/step06-loss-ack-aggregation starter
-../../run_test.sh bbr/step06-loss-ack-aggregation solution
+../../run_test.sh 03-bbr/step06-loss-ack-aggregation starter
+../../run_test.sh 03-bbr/step06-loss-ack-aggregation solution
 ```
 
 
-### `labs/bbr/step06-loss-ack-aggregation/starter.bpf.c` (穴埋めスケルトン)
+### `labs/03-bbr/step06-loss-ack-aggregation/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -5784,7 +5784,7 @@ struct tcp_congestion_ops bpf_bbr6 = {
 };
 ```
 
-### `labs/bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill テスト)
+### `labs/03-bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -5842,7 +5842,7 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 ```
 
 <details>
-<summary>模範解答: <code>labs/bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/03-bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

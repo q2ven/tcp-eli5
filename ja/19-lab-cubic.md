@@ -229,13 +229,13 @@ flowchart TD
 
 ```sh
 # 1. まず未完成の starter が packetdrill のアサートで失敗することを確認する
-./run_test.sh cubic/step01-cubic-curve starter
+./run_test.sh 02-cubic/step01-cubic-curve starter
 
 # 2. step01-cubic-curve/starter.bpf.c の TODO を実装して再テストする
-./run_test.sh cubic/step01-cubic-curve starter
+./run_test.sh 02-cubic/step01-cubic-curve starter
 
 # 3. 模範解答 (solution.bpf.c) の動作を確認する
-./run_test.sh cubic/step01-cubic-curve solution
+./run_test.sh 02-cubic/step01-cubic-curve solution
 ```
 
 
@@ -390,7 +390,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
    - `sample->rtt_us`: 今回の ACK で計測された RTT（マイクロ秒単位。再送等で計測不能な場合は負の値 `< 0`）
 3. **`inet_csk_ca(sk)` / `icsk_ca_priv`（私たちが定義する `struct bpf_cubic3_ca`）**:
    - `struct inet_connection_sock` の末尾には、各輻輳制御アルゴリズムが自由に使えるプライベートメモリ領域 `icsk_ca_priv` が用意されており、`inet_csk_ca(sk)` ヘルパーでポインタを取得できます。
-   - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) には、すでに以下の `struct bpf_cubic3_ca` が定義されています：
+   - [starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c) には、すでに以下の `struct bpf_cubic3_ca` が定義されています：
      - `cnt`: 計算された増加インターバル（何パケット ACK されたら `snd_cwnd` を $+1$ するか）
      - `last_max_cwnd`: 前回のロス発生時のウィンドウサイズ $W_{\max}$
      - `last_cwnd`, `last_time`: 短時間（1/32 秒以内）に同じ `cwnd` で `bictcp_update()` が重複実行されるのを防ぐキャッシュ
@@ -403,7 +403,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 ## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
-セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) の 3 つの `TODO` を書く前に以下の 4 つの設計の問いを考えてみましょう。
+セクション 2 の仕組みを踏まえて、[starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c) の 3 つの `TODO` を書く前に以下の 4 つの設計の問いを考えてみましょう。
 
 ### Q1. なぜ `bic_K` は ACK のたびではなく `ca->epoch_start == 0` のときだけ計算するのか？
 
@@ -474,7 +474,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/solution.bpf.c) の各関数と固定小数点式の実装を順番に見ていきましょう。
+[solution.bpf.c](../labs/02-cubic/step01-cubic-curve/solution.bpf.c) の各関数と固定小数点式の実装を順番に見ていきましょう。
 
 ### 4.1 `cubic_root(__u64 a)` — テーブル参照とニュートン法による整数立方根（TODO 1）
 
@@ -613,13 +613,13 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 
 ### 5.1 `test.pkt` のシナリオと検証内容
 
-[test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/test.pkt) は、実効 MSS = 1000 バイト・RTT = 100 ms（`delay_min = 100,000` usec）のコネクション上で、セクション 2.5 で計算した通りの 7 ステップを順番にアサートします。
+[test.pkt](../labs/02-cubic/step01-cubic-curve/test.pkt) は、実効 MSS = 1000 バイト・RTT = 100 ms（`delay_min = 100,000` usec）のコネクション上で、セクション 2.5 で計算した通りの 7 ステップを順番にアサートします。
 
 1. **3-way ハンドシェイクと Slow Start（`cwnd: 10 -> 20`）**:
    10 セグメント（`10000` バイト）を送信し、100 ms 後の ACK で `tcpi_snd_cwnd == 20` に倍増するとともに、`bpf_cubic3_acked()` で `delay_min = 100 ms` が記録されます。
 2. **パケットロス発生と $\beta = 0.7$ の検証（`cwnd = 20 -> ssthresh = 14`）**:
    4 セグメント（`10001:14001`）を送信し、先頭セグメント `10001:11001` がドロップして 3 個の SACK が到着することで Fast Recovery（`TCP_CA_Recovery`）に入ります。
-   - **なぜ `starter.bpf.c` は失敗するのか？**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) の `bpf_cubic3_ssthresh()` は Reno の半分（`tp->snd_cwnd >> 1U = 10`）を返すため、42 行目の `assert tcpi_snd_ssthresh == 14` で即座に失敗します。また、`bictcp_update()` も `ca->cnt = cwnd` のままなので、仮に `ssthresh` だけを直しても以降の凹領域・プラトーのアサートで失敗します。
+   - **なぜ `starter.bpf.c` は失敗するのか？**: [starter.bpf.c](../labs/02-cubic/step01-cubic-curve/starter.bpf.c) の `bpf_cubic3_ssthresh()` は Reno の半分（`tp->snd_cwnd >> 1U = 10`）を返すため、42 行目の `assert tcpi_snd_ssthresh == 14` で即座に失敗します。また、`bictcp_update()` も `ca->cnt = cwnd` のままなので、仮に `ssthresh` だけを直しても以降の凹領域・プラトーのアサートで失敗します。
    - **なぜ `solution.bpf.c` はパスするのか？**: `20 * 717 / 1024 = 14` により `tcpi_snd_ssthresh == 14` となり、Recovery 完了後の ACK（46 行目）で `tcpi_snd_cwnd == 14`、 $W_{\max} = 20$ から輻輳回避エポックが始まります。
 3. **Flight 1（エポック開始・凹領域の立ち上がり, $t_{\text{elapsed}} = 0.0\text{ s}$ ）**:
    `14000` バイト（14 セグメント）を送信して ACK を受けると、`bic_K = 2523`、`bic_target = 15`、`ca->cnt = 14` が計算され、`tcpi_snd_cwnd == 15` になります。
@@ -637,12 +637,12 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 `labs/` の各ステップディレクトリ（またはリポジトリ内の任意の場所）から以下のコマンドを実行してください。
 
 ```sh
-../../run_test.sh cubic/step01-cubic-curve starter
-../../run_test.sh cubic/step01-cubic-curve solution
+../../run_test.sh 02-cubic/step01-cubic-curve starter
+../../run_test.sh 02-cubic/step01-cubic-curve solution
 ```
 
 
-### `labs/cubic/step01-cubic-curve/starter.bpf.c` (穴埋めスケルトン)
+### `labs/02-cubic/step01-cubic-curve/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -908,7 +908,7 @@ struct tcp_congestion_ops bpf_cubic3 = {
 };
 ```
 
-### `labs/cubic/step01-cubic-curve/test.pkt` (packetdrill テスト)
+### `labs/02-cubic/step01-cubic-curve/test.pkt` (packetdrill テスト)
 
 ```python
 // Step 3: Fixed-Point Cubic Root and W_cubic(t) Curve (Concave & Convex)
@@ -1015,7 +1015,7 @@ assert tcpi_snd_cwnd > 20, f"expected cwnd > 20 in convex region, got {tcpi_snd_
 ```
 
 <details>
-<summary>模範解答: <code>labs/cubic/step01-cubic-curve/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/02-cubic/step01-cubic-curve/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1729,12 +1729,12 @@ tcp_friendliness:
 `labs/` ディレクトリから見ても、このステップのディレクトリ（`cubic/step02-reno-friendly-fast-conv`）から相対パスで実行する場合も、以下のコマンドでテストできます。
 
 ```sh
-../../run_test.sh cubic/step02-reno-friendly-fast-conv starter
-../../run_test.sh cubic/step02-reno-friendly-fast-conv solution
+../../run_test.sh 02-cubic/step02-reno-friendly-fast-conv starter
+../../run_test.sh 02-cubic/step02-reno-friendly-fast-conv solution
 ```
 
 
-### `labs/cubic/step02-reno-friendly-fast-conv/starter.bpf.c` (穴埋めスケルトン)
+### `labs/02-cubic/step02-reno-friendly-fast-conv/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2055,7 +2055,7 @@ struct tcp_congestion_ops bpf_cubic4 = {
 };
 ```
 
-### `labs/cubic/step02-reno-friendly-fast-conv/test.pkt` (packetdrill テスト)
+### `labs/02-cubic/step02-reno-friendly-fast-conv/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2187,7 +2187,7 @@ assert tcpi_snd_cwnd > 11, f"expected Reno-friendly region to grow cwnd > 11 at 
 ```
 
 <details>
-<summary>模範解答: <code>labs/cubic/step02-reno-friendly-fast-conv/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/02-cubic/step02-reno-friendly-fast-conv/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2828,12 +2828,12 @@ struct tcp_congestion_ops bpf_cubic5 = {
 ### 5.2 テストの実行方法
 
 ```sh
-../../run_test.sh cubic/step03-idle-epoch-shift starter
-../../run_test.sh cubic/step03-idle-epoch-shift solution
+../../run_test.sh 02-cubic/step03-idle-epoch-shift starter
+../../run_test.sh 02-cubic/step03-idle-epoch-shift solution
 ```
 
 
-### `labs/cubic/step03-idle-epoch-shift/starter.bpf.c` (穴埋めスケルトン)
+### `labs/02-cubic/step03-idle-epoch-shift/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3155,7 +3155,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 };
 ```
 
-### `labs/cubic/step03-idle-epoch-shift/test.pkt` (packetdrill テスト)
+### `labs/02-cubic/step03-idle-epoch-shift/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3228,7 +3228,7 @@ assert tcpi_snd_cwnd <= 15, tcpi_snd_cwnd
 ```
 
 <details>
-<summary>模範解答: <code>labs/cubic/step03-idle-epoch-shift/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/02-cubic/step03-idle-epoch-shift/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3963,12 +3963,12 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 ### テストの実行コマンド
 
 ```sh
-../../run_test.sh cubic/step04-hystart starter
-../../run_test.sh cubic/step04-hystart solution
+../../run_test.sh 02-cubic/step04-hystart starter
+../../run_test.sh 02-cubic/step04-hystart solution
 ```
 
 
-### `labs/cubic/step04-hystart/starter.bpf.c` (穴埋めスケルトン)
+### `labs/02-cubic/step04-hystart/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4299,7 +4299,7 @@ struct tcp_congestion_ops bpf_cubic6 = {
 };
 ```
 
-### `labs/cubic/step04-hystart/test.pkt` (packetdrill テスト)
+### `labs/02-cubic/step04-hystart/test.pkt` (packetdrill テスト)
 
 ```python
 // Test HyStart delay detection in bpf_cubic6
@@ -4359,7 +4359,7 @@ struct tcp_congestion_ops bpf_cubic6 = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/cubic/step04-hystart/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/02-cubic/step04-hystart/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

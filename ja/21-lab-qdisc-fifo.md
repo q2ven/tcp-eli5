@@ -121,12 +121,12 @@ if (now < next_tx_ns) {
 
 ```sh
 # Step 1: starter が失敗することを確認し、solution を検証する
-./run_test.sh qdisc-fifo/step01-pfifo starter
-./run_test.sh qdisc-fifo/step01-pfifo solution
+./run_test.sh 04-qdisc-fifo/step01-pfifo starter
+./run_test.sh 04-qdisc-fifo/step01-pfifo solution
 
 # Step 2: 優先度制御キューの検証
-./run_test.sh qdisc-fifo/step02-bfifo-prio starter
-./run_test.sh qdisc-fifo/step02-bfifo-prio solution
+./run_test.sh 04-qdisc-fifo/step02-bfifo-prio starter
+./run_test.sh 04-qdisc-fifo/step02-bfifo-prio solution
 ```
 
 それでは、[`step01-pfifo/README.md`](step01-pfifo/README.md) に進み、最初の BPF Qdisc を組み立てていきましょう！
@@ -304,7 +304,7 @@ Linux の Qdisc では、これを **Watchdog タイマー**（高精度ハー�
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step01-pfifo/solution.bpf.c) の各関数と実装内容を確認します。
+[`solution.bpf.c`](../labs/04-qdisc-fifo/step01-pfifo/solution.bpf.c) の各関数と実装内容を確認します。
 
 ### 4.1 データ構造とグローバル状態
 
@@ -466,7 +466,7 @@ void BPF_PROG(bpf_pfifo_reset, struct Qdisc *sch)
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-### 5.1 [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step01-pfifo/test.pkt) のシナリオ解説
+### 5.1 [`test.pkt`](../labs/04-qdisc-fifo/step01-pfifo/test.pkt) のシナリオ解説
 
 `test.pkt` は、セクション 2.4 の数値トレースと完全に一致する 6 パケットのバースト送信を行い、キューイング、レート制御、テールダンプを厳密に検証します。
 
@@ -492,14 +492,14 @@ void BPF_PROG(bpf_pfifo_reset, struct Qdisc *sch)
 
 ```sh
 # starter の失敗を確認する
-../../run_test.sh qdisc-fifo/step01-pfifo starter
+../../run_test.sh 04-qdisc-fifo/step01-pfifo starter
 
 # solution（模範解答）の合格を確認する
-../../run_test.sh qdisc-fifo/step01-pfifo solution
+../../run_test.sh 04-qdisc-fifo/step01-pfifo solution
 ```
 
 
-### `labs/qdisc-fifo/step01-pfifo/starter.bpf.c` (穴埋めスケルトン)
+### `labs/04-qdisc-fifo/step01-pfifo/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -653,7 +653,7 @@ struct Qdisc_ops bpf_pfifo = {
 };
 ```
 
-### `labs/qdisc-fifo/step01-pfifo/test.pkt` (packetdrill テスト)
+### `labs/04-qdisc-fifo/step01-pfifo/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -691,7 +691,7 @@ struct Qdisc_ops bpf_pfifo = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fifo/step01-pfifo/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/04-qdisc-fifo/step01-pfifo/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -992,7 +992,7 @@ Step 1 で扱ったパケット数制限（`sch->limit`）には、ネットワ�
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step02-bfifo-prio/solution.bpf.c) の主要部分を確認します。
+[`solution.bpf.c`](../labs/04-qdisc-fifo/step02-bfifo-prio/solution.bpf.c) の主要部分を確認します。
 
 ### 4.1 データ構造の定義
 
@@ -1110,7 +1110,7 @@ struct sk_buff *BPF_PROG(bpf_bfifo_dequeue, struct Qdisc *sch)
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-### 5.1 [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/qdisc-fifo/step02-bfifo-prio/test.pkt) のシナリオ解説
+### 5.1 [`test.pkt`](../labs/04-qdisc-fifo/step02-bfifo-prio/test.pkt) のシナリオ解説
 
 1. **通常フロー A (`fd = 4`) と優先フロー B (`fd = 6`) の並行確立**:
    - フロー A は通常のソケットとして接続。
@@ -1127,14 +1127,14 @@ struct sk_buff *BPF_PROG(bpf_bfifo_dequeue, struct Qdisc *sch)
 
 ```sh
 # starter の失敗を確認する
-../../run_test.sh qdisc-fifo/step02-bfifo-prio starter
+../../run_test.sh 04-qdisc-fifo/step02-bfifo-prio starter
 
 # solution（模範解答）の合格を確認する
-../../run_test.sh qdisc-fifo/step02-bfifo-prio solution
+../../run_test.sh 04-qdisc-fifo/step02-bfifo-prio solution
 ```
 
 
-### `labs/qdisc-fifo/step02-bfifo-prio/starter.bpf.c` (穴埋めスケルトン)
+### `labs/04-qdisc-fifo/step02-bfifo-prio/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1298,7 +1298,7 @@ struct Qdisc_ops bpf_bfifo = {
 };
 ```
 
-### `labs/qdisc-fifo/step02-bfifo-prio/test.pkt` (packetdrill テスト)
+### `labs/04-qdisc-fifo/step02-bfifo-prio/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1360,7 +1360,7 @@ struct Qdisc_ops bpf_bfifo = {
 ```
 
 <details>
-<summary>模範解答: <code>labs/qdisc-fifo/step02-bfifo-prio/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/04-qdisc-fifo/step02-bfifo-prio/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

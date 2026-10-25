@@ -138,13 +138,13 @@ From the `labs/` directory (`/usr/local/google/home/kuniyu/tcp-eli5/labs`), buil
 
 ```sh
 # Step 1: verify starter fails, then implement TODOs
-./run_test.sh qdisc-fq/step01-flow-drr starter
+./run_test.sh 05-qdisc-fq/step01-flow-drr starter
 # Run Step 1 solution
-./run_test.sh qdisc-fq/step01-flow-drr solution
+./run_test.sh 05-qdisc-fq/step01-flow-drr solution
 
 # Step 2: verify starter and run solution
-./run_test.sh qdisc-fq/step02-edt-pacing starter
-./run_test.sh qdisc-fq/step02-edt-pacing solution
+./run_test.sh 05-qdisc-fq/step02-edt-pacing starter
+./run_test.sh 05-qdisc-fq/step02-edt-pacing solution
 ```
 
 Proceed to [`step01-flow-drr/README.en.md`](step01-flow-drr/README.en.md) to implement your first BPF FQ scheduler!
@@ -279,14 +279,14 @@ Parameters: `INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, Packet size $\approx 102
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. Verify starter fails
-./run_test.sh qdisc-fq/step01-flow-drr starter
+./run_test.sh 05-qdisc-fq/step01-flow-drr starter
 
 # 2. Verify solution passes
-./run_test.sh qdisc-fq/step01-flow-drr solution
+./run_test.sh 05-qdisc-fq/step01-flow-drr solution
 ```
 
 
-### `labs/qdisc-fq/step01-flow-drr/starter.bpf.c` (Starter skeleton)
+### `labs/05-qdisc-fq/step01-flow-drr/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -554,7 +554,7 @@ struct Qdisc_ops fq_drr = {
 };
 ```
 
-### `labs/qdisc-fq/step01-flow-drr/test.pkt` (packetdrill test)
+### `labs/05-qdisc-fq/step01-flow-drr/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -595,7 +595,7 @@ struct Qdisc_ops fq_drr = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fq/step01-flow-drr/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/05-qdisc-fq/step01-flow-drr/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1071,14 +1071,14 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 cd /usr/local/google/home/kuniyu/tcp-eli5/labs
 
 # 1. Verify starter fails
-./run_test.sh qdisc-fq/step02-edt-pacing starter
+./run_test.sh 05-qdisc-fq/step02-edt-pacing starter
 
 # 2. Verify solution passes
-./run_test.sh qdisc-fq/step02-edt-pacing solution
+./run_test.sh 05-qdisc-fq/step02-edt-pacing solution
 ```
 
 
-### `labs/qdisc-fq/step02-edt-pacing/starter.bpf.c` (Starter skeleton)
+### `labs/05-qdisc-fq/step02-edt-pacing/starter.bpf.c` (Starter skeleton)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1462,7 +1462,7 @@ struct Qdisc_ops fq_edt = {
 };
 ```
 
-### `labs/qdisc-fq/step02-edt-pacing/test.pkt` (packetdrill test)
+### `labs/05-qdisc-fq/step02-edt-pacing/test.pkt` (packetdrill test)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1506,7 +1506,7 @@ struct Qdisc_ops fq_edt = {
 ```
 
 <details>
-<summary>Reference solution: <code>labs/qdisc-fq/step02-edt-pacing/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/05-qdisc-fq/step02-edt-pacing/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0

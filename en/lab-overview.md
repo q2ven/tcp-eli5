@@ -16,17 +16,17 @@ labs/
 │   ├── vmlinux.h               # Kernel BTF type definitions
 │   ├── bpf_cc_helpers.h        # Common inline helpers for BPF CC programs
 │   └── bpf_qdisc_helpers.h     # BPF Qdisc kfunc declarations and inline helpers
-├── reno/                       # Track 1: TCP Reno — The Foundation of All Congestion Control (2 steps)
+├── 01-reno/                    # Track 1: TCP Reno — The Foundation of All Congestion Control (2 steps)
 │   ├── README.en.md            # Reno algorithm guide (AIMD, Slow Start, CA, and tcp_sock layout)
 │   ├── step01-slow-start-ai/   # Step 1: Slow Start and Additive Increase
 │   └── step02-loss-undo/       # Step 2: Loss (Multiplicative Decrease) and DSACK Undo
-├── cubic/                      # Track 2: TCP CUBIC for High-BDP Networks (4 steps)
+├── 02-cubic/                   # Track 2: TCP CUBIC for High-BDP Networks (4 steps)
 │   ├── README.en.md            # Why Reno falls short & how CUBIC's 3rd-order polynomial works
 │   ├── step01-cubic-curve/     # Step 1: beta=0.7, fixed-point cube root, and W_cubic(t) curve
 │   ├── step02-reno-friendly-fast-conv/ # Step 2: Reno-friendly region (W_est) and Fast Convergence
 │   ├── step03-idle-epoch-shift/# Step 3: Epoch shift after idle periods (CA_EVENT_TX_START)
 │   └── step04-hystart/         # Step 4: HyStart (ACK Train & Delay increase Slow Start exit)
-├── bbr/                        # Track 3: Model-Based TCP BBRv1 — BtlBw and RTprop (6 steps)
+├── 03-bbr/                     # Track 3: Model-Based TCP BBRv1 — BtlBw and RTprop (6 steps)
 │   ├── README.en.md            # Why loss-based CC struggles & BBR's pipe model
 │   ├── step01-pacing-rate/     # Step 1: .cong_control hook and Pacing Rate from Delivery Rate
 │   ├── step02-btlbw-rtprop/    # Step 2: BDP calculation from BtlBw (max bw) and RTprop (min RTT)
@@ -34,15 +34,15 @@ labs/
 │   ├── step04-probe-bw/        # Step 4: 8-phase PROBE_BW gain cycling
 │   ├── step05-probe-rtt/       # Step 5: PROBE_RTT transition and cwnd = 4
 │   └── step06-loss-ack-aggregation/ # Step 6: Loss cwnd save/restore and extra_acked compensation
-├── qdisc-fifo/                 # Track 4: BPF Qdisc Basics — Packet/Byte FIFO & Priority Bands (2 steps)
+├── 04-qdisc-fifo/              # Track 4: BPF Qdisc Basics — Packet/Byte FIFO & Priority Bands (2 steps)
 │   ├── README.en.md            # Qdisc_ops architecture, kfuncs, and link-rate emulation guide
 │   ├── step01-pfifo/           # Step 1: Packet-limit FIFO (pfifo) and Tail Drop
 │   └── step02-bfifo-prio/      # Step 2: Byte-limit FIFO (bfifo) and 2-band Strict Priority Queue
-├── qdisc-fq/                   # Track 5: Fair Queueing (FQ) and EDT Pacing (2 steps)
+├── 05-qdisc-fq/                # Track 5: Fair Queueing (FQ) and EDT Pacing (2 steps)
 │   ├── README.en.md            # Head-of-Line blocking, DRR, and EDT (Earliest Departure Time) guide
 │   ├── step01-flow-drr/        # Step 1: Flow hashing, new_flows sparse-flow boost, and DRR scheduling
 │   └── step02-edt-pacing/      # Step 2: skb->tstamp (EDT) and bpf_qdisc_watchdog_schedule pacing
-└── qdisc-fq-codel/             # Track 6: CoDel AQM and FQ-CoDel (2 steps)
+└── 06-qdisc-fq-codel/          # Track 6: CoDel AQM and FQ-CoDel (2 steps)
     ├── README.en.md            # Bufferbloat, CoDel sojourn time & inverse-sqrt law, and FQ-CoDel guide
     ├── step01-codel-aqm/       # Step 1: CoDel sojourn-time tracking and 1/sqrt(count) head-drop
     └── step02-fq-codel/        # Step 2: Combining per-flow DRR queues with per-flow CoDel AQM
@@ -68,13 +68,13 @@ labs/
 3. Run `starter` first to confirm that the unimplemented skeleton fails the `packetdrill` assertion as expected:
    ```sh
    cd labs
-   ./run_test.sh reno/step01-slow-start-ai starter
-   ./run_test.sh qdisc-fifo/step01-pfifo starter
+   ./run_test.sh 01-reno/step01-slow-start-ai starter
+   ./run_test.sh 04-qdisc-fifo/step01-pfifo starter
    ```
 4. Fill in the `TODO` markers in `starter.bpf.c` and re-run, or run the reference `solution` to verify that all `packetdrill` assertions pass:
    ```sh
-   ./run_test.sh reno/step01-slow-start-ai solution
-   ./run_test.sh qdisc-fifo/step01-pfifo solution
+   ./run_test.sh 01-reno/step01-slow-start-ai solution
+   ./run_test.sh 04-qdisc-fifo/step01-pfifo solution
    ```
 
 ### 2. Build and Verify All 18 Reference Solutions at Once

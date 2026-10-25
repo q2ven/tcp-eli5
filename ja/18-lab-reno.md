@@ -152,13 +152,13 @@ Linux の TCP スタックは歴史的に Reno をベースに作られたため
 
 ```sh
 # Step 1: まず starter が失敗することを確認し、TODO を実装してテストする
-./run_test.sh reno/step01-slow-start-ai starter
+./run_test.sh 01-reno/step01-slow-start-ai starter
 # Step 1 の模範解答 (solution.bpf.c) を実行する
-./run_test.sh reno/step01-slow-start-ai solution
+./run_test.sh 01-reno/step01-slow-start-ai solution
 
 # Step 2: starter の確認と模範解答の実行
-./run_test.sh reno/step02-loss-undo starter
-./run_test.sh reno/step02-loss-undo solution
+./run_test.sh 01-reno/step02-loss-undo starter
+./run_test.sh 01-reno/step02-loss-undo solution
 ```
 
 それでは、[`step01-slow-start-ai/README.md`](step01-slow-start-ai/README.md) に進んで最初の BPF 輻輳制御アルゴリズムを書いてみましょう！
@@ -370,7 +370,7 @@ Linux のすべての TCP ソケット（`struct tcp_sock`）には、**Reno 用
 
 ## 4. 実装ステップと解説 (`solution.bpf.c`)
 
-[`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/solution.bpf.c) の各関数と計算式を順番に確認します。
+[`solution.bpf.c`](../labs/01-reno/step01-slow-start-ai/solution.bpf.c) の各関数と計算式を順番に確認します。
 
 ### 4.1 `bpf_reno1_init()` — ソケットの初期化
 
@@ -453,7 +453,7 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
 
 ## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-### 5.1 [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/test.pkt) のシナリオ解説
+### 5.1 [`test.pkt`](../labs/01-reno/step01-slow-start-ai/test.pkt) のシナリオ解説
 
 `test.pkt` はセクション 2.3 の数値トレースと完全に一致する 3 ラウンドのパケット交換を行い、各段階の `tcpi_snd_cwnd` を Python アサーションで検証します。
 
@@ -481,12 +481,12 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
 以下のコマンドで、`starter` の失敗確認と `solution`（または自分で編集した `starter`）のテストを実行できます。
 
 ```sh
-../../run_test.sh reno/step01-slow-start-ai starter
-../../run_test.sh reno/step01-slow-start-ai solution
+../../run_test.sh 01-reno/step01-slow-start-ai starter
+../../run_test.sh 01-reno/step01-slow-start-ai solution
 ```
 
 
-### `labs/reno/step01-slow-start-ai/starter.bpf.c` (穴埋めスケルトン)
+### `labs/01-reno/step01-slow-start-ai/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -569,7 +569,7 @@ struct tcp_congestion_ops bpf_reno1 = {
 };
 ```
 
-### `labs/reno/step01-slow-start-ai/test.pkt` (packetdrill テスト)
+### `labs/01-reno/step01-slow-start-ai/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -628,7 +628,7 @@ assert tcpi_snd_cwnd == 23, f"expected cwnd 23 after Reno AI, got {tcpi_snd_cwnd
 ```
 
 <details>
-<summary>模範解答: <code>labs/reno/step01-slow-start-ai/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/01-reno/step01-slow-start-ai/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1049,12 +1049,12 @@ u32 BPF_PROG(bpf_reno2_undo_cwnd, struct sock *sk)
 ### テストの実行コマンド
 
 ```sh
-../../run_test.sh reno/step02-loss-undo starter
-../../run_test.sh reno/step02-loss-undo solution
+../../run_test.sh 01-reno/step02-loss-undo starter
+../../run_test.sh 01-reno/step02-loss-undo solution
 ```
 
 
-### `labs/reno/step02-loss-undo/starter.bpf.c` (穴埋めスケルトン)
+### `labs/01-reno/step02-loss-undo/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 /* SPDX-License-Identifier: GPL-2.0 */
@@ -1161,7 +1161,7 @@ struct tcp_congestion_ops bpf_reno2 = {
 };
 ```
 
-### `labs/reno/step02-loss-undo/test.pkt` (packetdrill テスト)
+### `labs/01-reno/step02-loss-undo/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1208,7 +1208,7 @@ assert tcpi_snd_cwnd >= 10, tcpi_snd_cwnd
 ```
 
 <details>
-<summary>模範解答: <code>labs/reno/step02-loss-undo/solution.bpf.c</code></summary>
+<summary>模範解答: <code>labs/01-reno/step02-loss-undo/solution.bpf.c</code></summary>
 
 ```c
 /* SPDX-License-Identifier: GPL-2.0 */
