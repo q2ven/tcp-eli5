@@ -168,7 +168,7 @@ void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 ```
 
 - `TCP_CLOSE` のチェック: `tcp_set_state(TCP_CLOSE)` 後でも write queue が残ることがあります（`tcp_done()` 経路など）。そのデータは送らず、後で purge されるのを待ちます。
-- `sk_gfp_mask(sk, GFP_ATOMIC)`: 送信路は softirq からも呼ばれるので、clone の割り当ては `GFP_ATOMIC` です。`sk_gfp_mask()` は `SOCK_MEMALLOC`（Swap over NFS や NBD / iSCSI など、メモリ解放のためのスワップ先になっているソケット）で `__GFP_MEMALLOC` を足し、空きメモリ枯渇時でも緊急予備メモリ（pfmemalloc reserves）を使って送信を完遂できるようにします（詳細は [付録: `PF_MEMALLOC` / `pfmemalloc` とは？](appendix-notes.md#pfmemalloc) を参照）。
+- `sk_gfp_mask(sk, GFP_ATOMIC)`: 送信路は softirq からも呼ばれるので、clone の割り当ては `GFP_ATOMIC` です。`sk_gfp_mask()` は `SOCK_MEMALLOC`（Swap over NFS や NBD / iSCSI など、メモリ解放のためのスワップ先になっているソケット）で `__GFP_MEMALLOC` を足し、空きメモリ枯渇時でも緊急予備メモリ（pfmemalloc reserves）を使って送信を完遂できるようにします（詳細は [付録: `PF_MEMALLOC` / `pfmemalloc` とは？](appendix/10-pfmemalloc.md) を参照）。
 - 戻り値が `true` のとき `tcp_check_probe_timer()` を呼びます。`tcp_write_xmit()` が `true` を返すのは「送信中のパケットが 0 なのに、キューにデータがあるのに何も送れなかった」ときだけです。この状態では ACK が来ないので、自分で起き上がる手段がありません。だから probe0 タイマ（zero window probe、[RFC 9293 §3.8.6.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.1)）を張ります。
 
 ```c
@@ -1334,7 +1334,7 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 - **EDT の決定**: `tcp_wstamp_ns = max(tcp_wstamp_ns, tcp_clock_cache)`。pacing で予約された出発時刻が未来ならそれを使い、過去なら「いま」を使います。`prior_wstamp` は、更新前の値を `tcp_update_skb_after_send()` での jitter 補正に使うために保存します。
 - `skb_set_delivery_time(skb, ..., SKB_CLOCK_MONOTONIC)`: **原本の** skb の `skb->tstamp`（= `skb_mstamp_ns`）に EDT を書きます。clone の前なので clone にもコピーされます。原本の値は「この skb を送った時刻」として RTT 計測、RACK、TSO defer（`head->tstamp`）で使われます。clone の値は `sch_fq` が「この時刻まで出すな」として使います。1 つのフィールドが両方の意味を持つのは、ab408b6dc744 で EDT モデルに統一されたからです。pacing で遅らせた分は RTT 計測に含まれません。
-- **clone か copy か**: 通常の初回送信では `skb_clone()` が呼ばれ、第 3 章の `alloc_skb_fclone()` で同じスラブオブジェクト（`struct sk_buff_fclones`）の隣に確保されていた予備の `skb2` がアロケーションなしで即座に使われます（[補足ノート: `alloc_skb_fclone()` と `struct sk_buff_fclones`](appendix-notes.md#skb-fclone) を参照）。一方、原本がすでに clone されている（`skb_cloned(oskb)`）のは、前回送った clone がまだ qdisc やドライバにいる状態で再送しようとしたときです。ここで `skb_clone()` すると、両方の clone が同じデータ領域（ヘッダを push する headroom を含む）を共有します。新しいヘッダを書くと、まだ送信待ちの古い clone のヘッダを壊します。だから `pskb_copy()` で線形部分をコピーします（frag ページは共有のまま）。なお、通常は `tcp_retransmit_skb()` 側の `skb_still_in_host_queue()` で、まだホスト内にある skb の再送自体を避けています（f4dae54e486d）。
+- **clone か copy か**: 通常の初回送信では `skb_clone()` が呼ばれ、第 3 章の `alloc_skb_fclone()` で同じスラブオブジェクト（`struct sk_buff_fclones`）の隣に確保されていた予備の `skb2` がアロケーションなしで即座に使われます（[補足ノート: `alloc_skb_fclone()` と `struct sk_buff_fclones`](appendix/06-skb-fclone.md) を参照）。一方、原本がすでに clone されている（`skb_cloned(oskb)`）のは、前回送った clone がまだ qdisc やドライバにいる状態で再送しようとしたときです。ここで `skb_clone()` すると、両方の clone が同じデータ領域（ヘッダを push する headroom を含む）を共有します。新しいヘッダを書くと、まだ送信待ちの古い clone のヘッダを壊します。だから `pskb_copy()` で線形部分をコピーします（frag ページは共有のまま）。なお、通常は `tcp_retransmit_skb()` 側の `skb_still_in_host_queue()` で、まだホスト内にある skb の再送自体を避けています（f4dae54e486d）。
 - `tcp_skb_tsorted_save/restore`: `skb->tcp_tsorted_anchor`（RACK 用の送信時刻順リスト）は `_skb_refdst` + `destructor` と union です。clone がリストのポインタを dst や destructor として引き継がないように、clone の間だけ 0 にします。
 - `skb->dev = NULL`: retransmit queue の skb では `dev` が `rbnode.rb_left` と alias しています。再送の clone に rb-tree のポインタが dev として残らないようにしています。
 - `-ENOBUFS` は呼び出し元でループ脱出になります。
@@ -1474,7 +1474,7 @@ static void tcp_options_write(struct tcphdr *th, struct tcp_sock *tp,
 ```
 
 - **`skb->ooo_okay`**: XPS や `sk_txhash` に基づいて TX キューを選び直してよいかのヒントです。同じフローのパケットが別の TX キューに分かれると、ホスト内でリオーダが起きます。だから「このフローのデータが qdisc やデバイスに 1 つもない」（`sk_wmem_alloc < SKB_TRUESIZE(1)`）か、「retransmit queue が空」（全部 ACK 済み）のときだけ許可します。後者は 726e9e8b94b9 で追加されました。TX 完了が遅い忙しいキューに RPC フローが固定される問題に対して、「ACK はもう全部来たが TX 完了はまだ」という状態でもキューを移れるようにしたものです。
-- `pfmemalloc = 0`: 緊急予備メモリ（pfmemalloc reserves）から確保した `sk_buff` には `skb->pfmemalloc = 1` の印が付いており、そのまま loopback で同一ホスト内の別ソケットに渡すと、相手ソケットが `SOCK_MEMALLOC` を持っていなければ受信検問（`sk_filter_trim_cap()` / `sk_add_backlog()`）で即 drop されてしまいます。送信パケットとして外へ出す時点でこの印は不要なため `0` にクリアします（[付録](appendix-notes.md#pfmemalloc) 参照）。
+- `pfmemalloc = 0`: 緊急予備メモリ（pfmemalloc reserves）から確保した `sk_buff` には `skb->pfmemalloc = 1` の印が付いており、そのまま loopback で同一ホスト内の別ソケットに渡すと、相手ソケットが `SOCK_MEMALLOC` を持っていなければ受信検問（`sk_filter_trim_cap()` / `sk_add_backlog()`）で即 drop されてしまいます。送信パケットとして外へ出す時点でこの印は不要なため `0` にクリアします（[付録](appendix/10-pfmemalloc.md) 参照）。
 - `__skb_push(skb, tcp_header_size)`: TCP ヘッダ分の headroom を確保します。送信キューの skb は `MAX_TCP_HEADER` 分の headroom を持って確保されているので、チェックなしの `__skb_push()` で済みます（59b5e7f47c7c）。
 - **所有権と TSQ の会計**: `skb_orphan()` の後、`skb->sk = sk`、destructor を設定し、`sk_wmem_alloc += truesize` とします。純 ACK（ペイロードなし）は `__sock_wfree`、データは `tcp_wfree` です。TSQ は「データの滞留」を制御するもので、純 ACK の TX 完了で送信路を起こす必要はありません。ここで加算した truesize が、Step 5 の `tcp_small_queue_check()` が比較する値です。
 - `skb_set_dst_pending_confirm()`: 前進する ACK を受けたときに立つフラグを skb に移します。neighbour 層が「この経路はまだ生きている」と確認（neighbour confirm）するために使います。

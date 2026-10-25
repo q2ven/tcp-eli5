@@ -82,7 +82,7 @@ URGENT フラグは `MSG_OOB` に対応します。[§3.8.5](https://www.rfc-edi
 
 [RFC 896](https://www.rfc-editor.org/rfc/rfc896) "Congestion Control in IP/TCP Internetworks" は、1 バイトずつ打鍵される telnet のような通信が「41 バイトのパケットに 1 バイトのデータ」を大量に生んでネットワークを詰まらせる問題を扱いました。解決策（Nagle アルゴリズム）は「未 ACK のデータがある間は、小さいセグメントを新たに送らずに溜めておく」というものです。[RFC 9293 §3.7.4](https://www.rfc-editor.org/rfc/rfc9293#section-3.7.4) はこれを SHOULD とし、アプリが接続ごとに無効化できること（`TCP_NODELAY`）を MUST としています。
 
-もう 1 つ、小さなパケットが大量発生する古典的な病気に **SWS（Silly Window Syndrome：愚かなウィンドウ症候群、[RFC 813](https://www.rfc-editor.org/rfc/rfc813)）** があります。これは受信バッファが満杯（`WIN = 0`）になった後、受信アプリが数バイト読んだだけで受信側が小さな窓（`WIN = 数バイト`）を広告し、送信側がそれに飛びついて数バイトの極小セグメントを送ってしまう悪循環です（図解と詳細は [補足ノート: SWS（Silly Window Syndrome）と回避策](appendix-notes.md#sws-avoidance) を参照）。[RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) の送信側 SWS 回避アルゴリズムは、送信してよい条件の 1 つとして「相手がこれまでに広告した最大ウィンドウ `max(SND.WND)` の Fs 割（推奨 Fs = 1/2）以上を送れること」を挙げています。この「最大ウィンドウの半分」という基準は、本章の `forced_push()` と `tcp_bound_to_half_wnd()` に `tp->max_window >> 1` という形で出てきます。
+もう 1 つ、小さなパケットが大量発生する古典的な病気に **SWS（Silly Window Syndrome：愚かなウィンドウ症候群、[RFC 813](https://www.rfc-editor.org/rfc/rfc813)）** があります。これは受信バッファが満杯（`WIN = 0`）になった後、受信アプリが数バイト読んだだけで受信側が小さな窓（`WIN = 数バイト`）を広告し、送信側がそれに飛びついて数バイトの極小セグメントを送ってしまう悪循環です（図解と詳細は [補足ノート: SWS（Silly Window Syndrome）と回避策](appendix/09-sws-avoidance.md) を参照）。[RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) の送信側 SWS 回避アルゴリズムは、送信してよい条件の 1 つとして「相手がこれまでに広告した最大ウィンドウ `max(SND.WND)` の Fs 割（推奨 Fs = 1/2）以上を送れること」を挙げています。この「最大ウィンドウの半分」という基準は、本章の `forced_push()` と `tcp_bound_to_half_wnd()` に `tp->max_window >> 1` という形で出てきます。
 
 Nagle 判定そのもの（`tcp_nagle_test()`、`TCP_CORK`、`tcp_tso_should_defer()`）は第 4 章で扱います。本章で出てくるのは、`tcp_push()` が第 4 章へ渡す `nonagle` 引数（`TCP_NAGLE_OFF` / `TCP_NAGLE_CORK` / `TCP_NAGLE_PUSH`）だけです。
 
@@ -314,7 +314,7 @@ static inline void tcp_add_write_queue_tail(struct sock *sk, struct sk_buff *skb
 - `tcp_write_queue_tail()`（[include/net/tcp.h#L2286](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2286)） はまだ送っていない `sk_buff` のうち **いちばん新しいもの** を返します。`sendmsg()` は基本的にここへ追記します。
 - `tcp_send_head()`（[include/net/tcp.h#L2294](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2294)） はまだ送っていない `sk_buff` のうち **いちばん古いもの** で、次に `tcp_write_xmit()` が送るものです。送信済みの `sk_buff` は第 4 章の `tcp_event_new_data_sent()` で write queue から外され、rb-tree の `tcp_rtx_queue` に移ります。
 - `tcp_write_queue_empty()`（[include/net/tcp.h#L2312](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2312)） は `skb_queue_empty()` ではなく `write_seq == snd_nxt` で判定します。コメントにあるとおり、`sendmsg()` が作ったばかりでまだ空の `sk_buff` が一時的にキューにいることがあるためです（`tcp_remove_empty_skb()` で後片付けします）。
-- `tcp_add_write_queue_tail()`（[include/net/tcp.h#L2329](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2329)） はキューが空から非空になったときに `tcp_chrono_start(sk, TCP_CHRONO_BUSY)` を呼び、送信稼働時間のストップウォッチを開始します（`enum tcp_chrono` の 4 つの状態と計測の仕組みは [補足ノート: `enum tcp_chrono` と `TCP_CHRONO_BUSY`](appendix-notes.md#tcp-chrono-busy) を参照）。
+- `tcp_add_write_queue_tail()`（[include/net/tcp.h#L2329](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2329)） はキューが空から非空になったときに `tcp_chrono_start(sk, TCP_CHRONO_BUSY)` を呼び、送信稼働時間のストップウォッチを開始します（`enum tcp_chrono` の 4 つの状態と計測の仕組みは [補足ノート: `enum tcp_chrono` と `TCP_CHRONO_BUSY`](appendix/04-tcp-chrono-busy.md) を参照）。
 
 各 `sk_buff` の制御情報は `skb->cb[]` に置かれた `struct tcp_skb_cb`（[include/net/tcp.h#L1138](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1138)） です。
 
@@ -768,7 +768,7 @@ bool tcp_stream_memory_free(const struct sock *sk, int wake)
 }
 ```
 
-  ここで 2 つの条件を見ます。1 つは `sk_wmem_queued`（キューにある全 `sk_buff` の truesize の合計。送信済み・未 ACK も含みます）が `sk_sndbuf` に達していないこと、もう 1 つは `tcp_stream_memory_free()`（[net/ipv4/tcp.c#L510](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n510)） の **未送信バイト数**（`write_seq - snd_nxt`）が `TCP_NOTSENT_LOWAT` 未満であることです。後者の既定値は `sysctl_tcp_notsent_lowat = UINT_MAX`（無制限）で、小さく設定すると再送用の In-Flight バッファ（`sk_sndbuf`）を犠牲にせず未送信データの上限だけを抑えられます。また `wake = 1`（起床判定）では `<< 1` で閾値を半分にして `EPOLLOUT` のチャタリングを防ぎます（図解と詳細は [補足ノート: `TCP_NOTSENT_LOWAT` と `tcp_stream_memory_free()`](appendix-notes.md#tcp-notsent-lowat) を参照）。
+  ここで 2 つの条件を見ます。1 つは `sk_wmem_queued`（キューにある全 `sk_buff` の truesize の合計。送信済み・未 ACK も含みます）が `sk_sndbuf` に達していないこと、もう 1 つは `tcp_stream_memory_free()`（[net/ipv4/tcp.c#L510](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n510)） の **未送信バイト数**（`write_seq - snd_nxt`）が `TCP_NOTSENT_LOWAT` 未満であることです。後者の既定値は `sysctl_tcp_notsent_lowat = UINT_MAX`（無制限）で、小さく設定すると再送用の In-Flight バッファ（`sk_sndbuf`）を犠牲にせず未送信データの上限だけを抑えられます。また `wake = 1`（起床判定）では `<< 1` で閾値を半分にして `EPOLLOUT` のチャタリングを防ぎます（図解と詳細は [補足ノート: `TCP_NOTSENT_LOWAT` と `tcp_stream_memory_free()`](appendix/05-tcp-notsent-lowat.md) を参照）。
 - **backlog の消化**: 新しい `sk_buff` を 16 個作るごとに `sk_flush_backlog()`（[include/net/sock.h#L1252](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sock.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1252)） を呼びます。
 
 ```c
@@ -844,8 +844,8 @@ struct sk_buff *tcp_stream_alloc_skb(struct sock *sk, gfp_t gfp,
 }
 ```
 
-  - `alloc_skb_fclone()` は **fast clone** 付きで確保します。第 4 章の `tcp_transmit_skb()` は送信のたびに `sk_buff` を clone して下位層に渡します（元は再送用に残ります）。fclone を使うと、clone 用の `sk_buff` が同じスラブオブジェクト（`struct sk_buff_fclones`）に隣接して確保済みなので、clone のたびのメモリ確保がいりません（図解と詳細は [補足ノート: `alloc_skb_fclone()` と `struct sk_buff_fclones`](appendix-notes.md#skb-fclone) を参照）。
-  - 線形領域は `MAX_TCP_HEADER`（`L1_CACHE_ALIGN(128 + MAX_HEADER)`）の **ヘッドルームだけ** で、ペイロード用の線形領域は 0 です。ペイロードはすべてページ frag に入ります（5882efff88aa で `size` 引数自体がなくなりました）。ペイロードが線形領域にないので、SACK 処理での `sk_buff` のシフト・結合（第 8 章の `tcp_shift_skb_data()`）が `(page, offset, size)` の付け替えだけでゼロコピーでできます（3613b3dbd1ad の動機。図解と詳細は [補足ノート: SACK shifting と線形領域のペイロードを 0 にする理由](appendix-notes.md#sack-shifting) を参照）。
+  - `alloc_skb_fclone()` は **fast clone** 付きで確保します。第 4 章の `tcp_transmit_skb()` は送信のたびに `sk_buff` を clone して下位層に渡します（元は再送用に残ります）。fclone を使うと、clone 用の `sk_buff` が同じスラブオブジェクト（`struct sk_buff_fclones`）に隣接して確保済みなので、clone のたびのメモリ確保がいりません（図解と詳細は [補足ノート: `alloc_skb_fclone()` と `struct sk_buff_fclones`](appendix/06-skb-fclone.md) を参照）。
+  - 線形領域は `MAX_TCP_HEADER`（`L1_CACHE_ALIGN(128 + MAX_HEADER)`）の **ヘッドルームだけ** で、ペイロード用の線形領域は 0 です。ペイロードはすべてページ frag に入ります（5882efff88aa で `size` 引数自体がなくなりました）。ペイロードが線形領域にないので、SACK 処理での `sk_buff` のシフト・結合（第 8 章の `tcp_shift_skb_data()`）が `(page, offset, size)` の付け替えだけでゼロコピーでできます（3613b3dbd1ad の動機。図解と詳細は [補足ノート: SACK shifting と線形領域のペイロードを 0 にする理由](appendix/07-sack-shifting.md) を参照）。
   - `truesize` を `SKB_TRUESIZE(skb_end_offset(skb))` で先に決め、`sk_wmem_schedule()` で forward alloc を予約します。メモリアカウンティングの詳細は第 10 章に譲ります。ここでは「ソケットの予算（`sk_forward_alloc`）から truesize 分を前借りできるか」を見ているとだけ理解してください。`force_schedule` のときは `sk_forced_mem_schedule()`（[net/ipv4/tcp.c#L909](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n909)） で、グローバル上限を無視して強制的に予約します。
   - `ip_summed = CHECKSUM_PARTIAL` は、チェックサムは後で（NIC か GSO が）計算する、という意味です。TCP の送信キューには `CHECKSUM_PARTIAL` 以外の `sk_buff` はありません（65ec60973af9）。
   - `tcp_tsorted_anchor` は、送信後に `tsorted_sent_queue`（RACK 用の送信時刻順リスト、第 8 章）につなぐためのリストノードです。
@@ -883,7 +883,7 @@ void tcp_skb_entail(struct sock *sk, struct sk_buff *skb)
 - `__skb_header_release()` は「この `sk_buff` のヘッダ領域は clone 側が自由に書いてよい」という印（`skb->nohdr`）を付けます。`tcp_transmit_skb()` は clone にヘッダを `skb_push()` しますが、その際 `skb_header_cloned()` が偽になるので `pskb_expand_head()` のコピーが要りません。
 - `psp_enqueue_set_decrypted()` は PSP（暗号化オフロード）用で、通常は何もしません（659a2899a57d）。
 - `sk_wmem_queued_add()` と `sk_mem_charge()` で、空の `sk_buff` の truesize（ヘッダ分）を家計簿に記帳します。前者は `sk_sndbuf` との比較用、後者は forward alloc の消費です。
-- `TCP_NAGLE_PUSH` は、`setsockopt(TCP_NODELAY, 1)` や cork 解除の時点で「すでにキューにあるデータだけは（たとえ `TCP_CORK` 中でも）押し出せ」という一回限りの指示ビットです。新しく `write()` されたデータには効かせないため、新しい `sk_buff` をキューにつなぐここで必ず消します（89ebd197eb2c。詳しい仕組みと具体例は [補足ノート: `tp->nonagle` の 3 つのビットと `TCP_NAGLE_PUSH` の役割](appendix-notes.md#tcp-nagle-push) を参照）。
+- `TCP_NAGLE_PUSH` は、`setsockopt(TCP_NODELAY, 1)` や cork 解除の時点で「すでにキューにあるデータだけは（たとえ `TCP_CORK` 中でも）押し出せ」という一回限りの指示ビットです。新しく `write()` されたデータには効かせないため、新しい `sk_buff` をキューにつなぐここで必ず消します（89ebd197eb2c。詳しい仕組みと具体例は [補足ノート: `tp->nonagle` の 3 つのビットと `TCP_NAGLE_PUSH` の役割](appendix/08-tcp-nagle-push.md) を参照）。
 - `tcp_slow_start_after_idle_check()`（[include/net/tcp.h#L1754](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1754)） は、RFC 5681 §4.1 の「RTO 以上アイドルだったら cwnd を restart window に戻す」を実行します。
 
 ```c

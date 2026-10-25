@@ -1111,7 +1111,7 @@ TSO で送った大きな skb に飛び飛びの SACK が来ると、`tcp_match_
 ```
 
 - 1967〜1969 行: L の無い R（S|R に遷移する skb）は、prev（純粋な S）と状態が違うのでまとめられません。
-- 1970〜1971 行: `skb_can_shift()` は「linear 部分が空で frags だけ」の skb に限ります。ページの参照（`frags[]` の `(page, offset, size)`）を付け替えるだけでゼロコピーで移せるからです（[補足ノート: SACK shifting と線形領域のペイロードを 0 にする理由](appendix-notes.md#sack-shifting) を参照）。
+- 1970〜1971 行: `skb_can_shift()` は「linear 部分が空で frags だけ」の skb に限ります。ページの参照（`frags[]` の `(page, offset, size)`）を付け替えるだけでゼロコピーで移せるからです（[補足ノート: SACK shifting と線形領域のペイロードを 0 にする理由](appendix/07-sack-shifting.md) を参照）。
 - 1981〜1982 行: prev が **純粋な S**（L も R も無い）でなければなりません。
 - 1984〜1985 行: `tcp_skb_can_collapse()` は EOR（`MSG_EOR`）や zerocopy などでまとめてはいけない skb を弾きます。
 - 1998〜1999 行: prev と MSS（`tcp_skb_seglen()`）が一致しなければなりません。pcount の整合性を保つためです（skb の一部だけを移す場合も 2039 行で同じ確認をします）。その間の省略部分では、skb の一部だけがブロックに含まれる場合に、移す長さを MSS の倍数に丸めています。

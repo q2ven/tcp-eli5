@@ -340,7 +340,7 @@ RFC 変数との対応は次のとおりです。
 | （Linux 独自） | `tp->write_seq` | アプリが積んだデータの末尾 + 1 |
 | （Linux 独自） | `tp->copied_seq` | アプリがまだ読んでいない先頭 |
 
-RFC のシーケンス変数はワイヤ上の境界しか定義していないため、Linux はアプリ（`sendmsg()` / `recvmsg()`）とソケットバッファの境界として、送信側に `write_seq`、受信側に `copied_seq` をそれぞれ追加しています（具体的な数値例と ISN からの境界図は [補足ノート: `write_seq` や `copied_seq` はなぜ `0` から始まらないのか？](appendix-notes.md#write-seq-copied-seq) を参照）。
+RFC のシーケンス変数はワイヤ上の境界しか定義していないため、Linux はアプリ（`sendmsg()` / `recvmsg()`）とソケットバッファの境界として、送信側に `write_seq`、受信側に `copied_seq` をそれぞれ追加しています（具体的な数値例と ISN からの境界図は [補足ノート: `write_seq` や `copied_seq` はなぜ `0` から始まらないのか？](appendix/01-write-seq-copied-seq.md) を参照）。
 
 ```
 送信側:  snd_una <= snd_nxt <= write_seq
@@ -376,7 +376,7 @@ static inline u32 tcp_receive_window(const struct tcp_sock *tp)
 - `tcp_receive_window()`（[include/net/tcp.h#L956](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n956)）: `rcv_wnd` は「最後に広告したときの」ウィンドウで、基準点は `rcv_wup` です。データを受けて `rcv_nxt` が進むと残りは減ります。RFC の RCV.WND は「今の残り」なので、こちらが RFC の RCV.WND に相当します。右端を後退させないという §3.8.6 の要求は、この右端 `rcv_wup + rcv_wnd` を基準に `tcp_select_window()` が守ります（第 10 章）。
 - `tcp_wnd_end()`（[include/net/tcp.h#L1614](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1614)）は単に `snd_una + snd_wnd` を返し、送信ウィンドウの右端 SND.UNA + SND.WND を表します。
 
-`struct tcp_sock` に `SND.WL1`（`tp->snd_wl1`）はあるのに `SND.WL2` が無い理由は、`tcp_ack_update_window()`（[net/ipv4/tcp_input.c#L3951](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3951)）と `tcp_may_update_window()`（[net/ipv4/tcp_input.c#L3881](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3881)）を見ると分かります（そもそもなぜ `SND.WL1` / `SND.WL2` が必要なのかの図解は [補足ノート: `SND.WL1` と `SND.WL2`](appendix-notes.md#snd-wl1-wl2) を参照）。
+`struct tcp_sock` に `SND.WL1`（`tp->snd_wl1`）はあるのに `SND.WL2` が無い理由は、`tcp_ack_update_window()`（[net/ipv4/tcp_input.c#L3951](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3951)）と `tcp_may_update_window()`（[net/ipv4/tcp_input.c#L3881](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_input.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3881)）を見ると分かります（そもそもなぜ `SND.WL1` / `SND.WL2` が必要なのかの図解は [補足ノート: `SND.WL1` と `SND.WL2`](appendix/02-snd-wl1-wl2.md) を参照）。
 
 ```c
 static inline bool tcp_may_update_window(const struct tcp_sock *tp,
@@ -391,7 +391,7 @@ static inline bool tcp_may_update_window(const struct tcp_sock *tp,
 
 `tcp_ack_update_window()` は `tp->snd_una` を更新する **前に** `tcp_may_update_window()` を呼ぶため、その時点の `tp->snd_una` が「前回ウィンドウを更新した `SEG.ACK`（= RFC の `SND.WL2`）」をそのまま兼ねています（引数名は `ack` が `SEG.ACK`、`ack_seq` が `SEG.SEQ` です）。また 3 つ目の条件は、`(SEQ, ACK)` が同じ pure ACK がリオーダリングしたときに古い小さなウィンドウで上書きされないよう、`nwin > tp->snd_wnd || !nwin` のときだけ更新を許しています（第 7 章）。
 
-最後に、in-flight の会計です。`packets_out`, `sacked_out`, `lost_out`, `retrans_out` は skb 数ではなく **セグメント数**（`tcp_skb_pcount()` の和）で、すべて `snd_una`〜`snd_nxt` 間の現在値を表すゲージです（いつ増えていつ `0` に戻るかの詳細は [補足ノート: `packets_out` / `sacked_out` / `lost_out` / `retrans_out` の増減](appendix-notes.md#packets-out-sacked-out-lifecycle) を参照）。`tcp_packets_in_flight()`（[include/net/tcp.h#L1549](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1549)）は `packets_out - (sacked_out + lost_out) + retrans_out` を返し、RFC 6675 の "pipe" に相当します。この値が `snd_cwnd` と比較されます（第 4・8 章）。この 4 つのカウンタは次の Step の `sacked` ビットの集計値なので、両者がずれると `WARN_ON` や cwnd の暴走につながります。
+最後に、in-flight の会計です。`packets_out`, `sacked_out`, `lost_out`, `retrans_out` は skb 数ではなく **セグメント数**（`tcp_skb_pcount()` の和）で、すべて `snd_una`〜`snd_nxt` 間の現在値を表すゲージです（いつ増えていつ `0` に戻るかの詳細は [補足ノート: `packets_out` / `sacked_out` / `lost_out` / `retrans_out` の増減](appendix/03-packets-out-lifecycle.md) を参照）。`tcp_packets_in_flight()`（[include/net/tcp.h#L1549](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1549)）は `packets_out - (sacked_out + lost_out) + retrans_out` を返し、RFC 6675 の "pipe" に相当します。この値が `snd_cwnd` と比較されます（第 4・8 章）。この 4 つのカウンタは次の Step の `sacked` ビットの集計値なので、両者がずれると `WARN_ON` や cwnd の暴走につながります。
 
 ### Step 6: `sk_buff`、`skb_shared_info`、`tcp_skb_cb`
 

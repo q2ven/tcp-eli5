@@ -43,4 +43,14 @@
 
 ## 付録
 
-- [補足ノート・Q&A（よくある疑問の深掘り）](appendix-notes.md)
+- [補足ノート・ Q&A 一覧](appendix/README.md)
+  - [A1. write_seq や copied_seq はなぜ 0 から始まらないのか？](appendix/01-write-seq-copied-seq.md)
+  - [A2. SND.WL1 (snd_wl1) と SND.WL2 (snd_wl2) は何のためにあるのか？](appendix/02-snd-wl1-wl2.md)
+  - [A3. packets_out / sacked_out / lost_out / retrans_out は増え続けるフィールドか？](appendix/03-packets-out-lifecycle.md)
+  - [A4. enum tcp_chrono と TCP_CHRONO_BUSY は何を測っているのか？](appendix/04-tcp-chrono-busy.md)
+  - [A5. TCP_NOTSENT_LOWAT (notsent_lowat) と tcp_stream_memory_free()](appendix/05-tcp-notsent-lowat.md)
+  - [A6. alloc_skb_fclone() と struct sk_buff_fclones：なぜ最初から双子の sk_buff を確保するのか](appendix/06-skb-fclone.md)
+  - [A7. SACK shifting（tcp_shift_skb_data() / skb_shift()）と「線形領域のペイロードを 0 にする理由」](appendix/07-sack-shifting.md)
+  - [A8. tp->nonagle の 3 つのビットと TCP_NAGLE_PUSH の役割](appendix/08-tcp-nagle-push.md)
+  - [A9. SWS（Silly Window Syndrome / 愚かなウィンドウ症候群）と回避策](appendix/09-sws-avoidance.md)
+  - [A10. PF_MEMALLOC / pfmemalloc / SOCK_MEMALLOC とは？](appendix/10-pfmemalloc.md)
