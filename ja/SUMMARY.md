@@ -31,3 +31,7 @@
 - [15. ハンズオン (1): BPF CC と packetdrill で作る TCP Reno](15-lab-reno.md)
 - [16. ハンズオン (2): BPF CC と packetdrill で作る TCP CUBIC](16-lab-cubic.md)
 - [17. ハンズオン (3): BPF CC と packetdrill で作る TCP BBR](17-lab-bbr.md)
+
+## 付録
+
+- [補足ノート・Q&A（よくある疑問の深掘り）](appendix-notes.md)

@@ -1111,7 +1111,7 @@ Prerequisite checks and determination of the transfer length in `tcp_shift_skb_d
 ```
 
 - Lines 1967–1969: An skb with R but no L (which transitions to S|R) cannot be coalesced because its state differs from `prev` (a pure S).
-- Lines 1970–1971: `skb_can_shift()` restricts shifting to skbs where the linear buffer is empty and only page fragments (`frags`) are present.  This is because it requires nothing more than reassigning page references.
+- Lines 1970–1971: `skb_can_shift()` restricts shifting to skbs where the linear buffer is empty and only page fragments (`frags`) are present.  This is because it requires nothing more than reassigning `(page, offset, size)` page fragment descriptors without copying payload bytes (see [Appendix: SACK Shifting and Why Linear Payload Is Always 0](appendix-notes.md#sack-shifting)).
 - Lines 1981–1982: `prev` must be a **pure S** (neither L nor R set).
 - Lines 1984–1985: `tcp_skb_can_collapse()` rejects skbs that must not be merged due to boundaries such as EOR (`MSG_EOR`) or zerocopy buffers.
 - Lines 1998–1999: The MSS (`tcp_skb_seglen()`) must match `prev` in order to preserve `pcount` consistency (the identical check is performed on line 2039 when shifting only a portion of an skb).  The omitted code in between rounds the shifted length down to multiples of MSS when only part of the skb falls within the block.
