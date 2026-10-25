@@ -54,3 +54,4 @@
   - [A8. The 3 Bits of tp->nonagle and the Role of TCP_NAGLE_PUSH](appendix/08-tcp-nagle-push.md)
   - [A9. SWS (Silly Window Syndrome) and Its Avoidance](appendix/09-sws-avoidance.md)
   - [A10. What Are PF_MEMALLOC, pfmemalloc, and SOCK_MEMALLOC?](appendix/10-pfmemalloc.md)
+  - [A11. What Is MTU Probing (tcp_mtu_probe() / PLPMTUD)?](appendix/11-mtu-probing.md)

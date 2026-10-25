@@ -262,7 +262,7 @@ static inline void tcp_mstamp_refresh_inline(struct tcp_sock *tp)
 
 `tcp_mtu_probe()` の `0` 返却が安全な理由: `0` を返す 2 つの経路（`after(snd_nxt + size_needed, tcp_wnd_end)` と `in_flight + 2 > cwnd` かつ `in_flight != 0`）は、どちらも in-flight のデータがある状態です。だから ACK が必ず戻ってきて、再び `tcp_write_xmit()` が呼ばれます。in-flight が 0 のときは `-1` を返して停止を避けています（コメント "With none in flight, don't stall"）。
 
-`tcp_mtu_probe()`（[net/ipv4/tcp_output.c#L2692](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2692)）の判定部分を見ておきます（Packetization Layer PMTUD、RFC 4821/8899。`net.ipv4.tcp_mtu_probing` で有効化）。
+`tcp_mtu_probe()` （ [net/ipv4/tcp_output.c#L2692](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2692) ）の判定部分を見ておきます（ Packetization Layer PMTUD 、 RFC 4821/8899 。 `net.ipv4.tcp_mtu_probing` で有効化。背景と二分探索の全体像は [補足ノート 11: MTU Probing（ `tcp_mtu_probe()` / PLPMTUD ）とは？](appendix/11-mtu-probing.md) を参照）。
 
 ```c
 static int tcp_mtu_probe(struct sock *sk)

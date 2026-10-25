@@ -262,7 +262,7 @@ static inline void tcp_mstamp_refresh_inline(struct tcp_sock *tp)
 
 Why returning `0` from `tcp_mtu_probe()` is safe: Both paths returning `0` (`after(snd_nxt + size_needed, tcp_wnd_end)` and `in_flight + 2 > cwnd` with `in_flight != 0`) occur when data is already in flight.  Therefore, an ACK is guaranteed to return and call `tcp_write_xmit()` again.  When in-flight is 0, it returns `-1` to avoid stalling (as noted in the comment: "With none in flight, don't stall").
 
-Let us examine the decision logic of `tcp_mtu_probe()`（[net/ipv4/tcp_output.c#L2692](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2692)）(Packetization Layer PMTUD, RFC 4821/8899; enabled via `net.ipv4.tcp_mtu_probing`).
+Let us examine the decision logic of `tcp_mtu_probe()` ([net/ipv4/tcp_output.c#L2692](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2692)) (Packetization Layer PMTUD, RFC 4821/8899; enabled via `net.ipv4.tcp_mtu_probing` — see [Appendix Note 11: What Is MTU Probing (`tcp_mtu_probe()` / PLPMTUD)?](appendix/11-mtu-probing.md) for the full background and binary-search lifecycle).
 
 ```c
 static int tcp_mtu_probe(struct sock *sk)

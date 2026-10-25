@@ -54,3 +54,4 @@
   - [A8. tp->nonagle の 3 つのビットと TCP_NAGLE_PUSH の役割](appendix/08-tcp-nagle-push.md)
   - [A9. SWS（Silly Window Syndrome / 愚かなウィンドウ症候群）と回避策](appendix/09-sws-avoidance.md)
   - [A10. PF_MEMALLOC / pfmemalloc / SOCK_MEMALLOC とは？](appendix/10-pfmemalloc.md)
+  - [A11. MTU Probing（ tcp_mtu_probe() / PLPMTUD ）とは？](appendix/11-mtu-probing.md)
