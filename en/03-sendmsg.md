@@ -1266,8 +1266,8 @@ static inline bool forced_push(const struct tcp_sock *tp)
 }
 ```
 
-    In this case, PSH is marked and all transmittable data is pushed using `TCP_NAGLE_PUSH` (bypassing cork and Nagle).  The comment on `pushed_seq` ("required to talk to windows") refers to interoperability with receiver implementations (historically Windows) that hold buffered data until observing PSH.  Injecting PSH every half window allows receiver applications to receive streaming data periodically.
-  - Otherwise, if the filled `sk_buff` is the **send head** (the oldest unsent buffer), `tcp_push_one()` ([net/ipv4/tcp_output.c#L3261](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3261)) transmits that single buffer:
+In this case, PSH is marked and all transmittable data is pushed using `TCP_NAGLE_PUSH` (bypassing cork and Nagle).  The comment on `pushed_seq` ("required to talk to windows") refers to interoperability with receiver implementations (historically Windows) that hold buffered data until observing PSH.  Injecting PSH every half window allows receiver applications to receive streaming data periodically.
+- Otherwise, if the filled `sk_buff` is the **send head** (the oldest unsent buffer), `tcp_push_one()` ([net/ipv4/tcp_output.c#L3261](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3261)) transmits that single buffer:
 
 ```c
 void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
@@ -1298,8 +1298,8 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
 }
 ```
 
-    Passing `push_one = 1` instructs `tcp_write_xmit()` to transmit only a single buffer, leaving housekeeping like zero-window probe timers to the final `tcp_push()`.  `BUG_ON(!skb || skb->len < mss_now)` asserts the invariant that buffers reaching this point are filled up to `size_goal` (≥ `mss_now`).  If it is not the send head (earlier `sk_buff`s are stalled on cwnd or rwnd), nothing is transmitted because transmission would be blocked anyway.
-  - Historically, mid-loop pushes fired on every MSS.  Transitioning to `size_goal` enabled TSO `sk_buff`s to grow beyond a single page (69d150673116).
+Passing `push_one = 1` instructs `tcp_write_xmit()` to transmit only a single buffer, leaving housekeeping like zero-window probe timers to the final `tcp_push()`.  `BUG_ON(!skb || skb->len < mss_now)` asserts the invariant that buffers reaching this point are filled up to `size_goal` (≥ `mss_now`).  If it is not the send head (earlier `sk_buff`s are stalled on cwnd or rwnd), nothing is transmitted because transmission would be blocked anyway.
+- Historically, mid-loop pushes fired on every MSS.  Transitioning to `size_goal` enabled TSO `sk_buff`s to grow beyond a single page (69d150673116).
 
 ### Step 11: tcp_sendmsg_locked() (6) — wait_for_space
 
@@ -1600,7 +1600,7 @@ void tcp_wfree(struct sk_buff *skb)
 	} while (!try_cmpxchg(&sk->sk_tsq_flags, &oval, nval));
 ```
 
-    In `tcp_wfree()`, after decrementing `sk_wmem_alloc` via `refcount_sub_and_test()`, it reads `sk_tsq_flags` with `smp_load_acquire()`.  If THROTTLED is set, it swaps THROTTLED for QUEUED using `try_cmpxchg()` and schedules transmission on a tasklet (BH workqueue).
+In `tcp_wfree()`, after decrementing `sk_wmem_alloc` via `refcount_sub_and_test()`, it reads `sk_tsq_flags` with `smp_load_acquire()`.  If THROTTLED is set, it swaps THROTTLED for QUEUED using `try_cmpxchg()` and schedules transmission on a tasklet (BH workqueue).
 - When **`MSG_MORE`** is passed, `nonagle = TCP_NAGLE_CORK` is selected.  Similar to `TCP_CORK`, this enforces "do not send partial `sk_buff`s" for the duration of this call.  `MSG_MORE` takes precedence even on sockets with `TCP_NODELAY` enabled (verified by packetdrill's `tcp_nagle_sendmsg_msg_more.pkt`).  The actual cork evaluation is performed in Chapter 4 by `tcp_nagle_test()`.
 - Finally, the queue is passed to `__tcp_push_pending_frames()` ([net/ipv4/tcp_output.c#L3243](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3243)):
 

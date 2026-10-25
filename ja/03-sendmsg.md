@@ -1266,8 +1266,8 @@ static inline bool forced_push(const struct tcp_sock *tp)
 }
 ```
 
-    このときは PSH を立て、`TCP_NAGLE_PUSH`（cork や Nagle を無視）で、キューにある送れるものをすべて送ります。`pushed_seq` のコメント "required to talk to windows" は、受信側が PSH を見るまでアプリに渡さない実装（歴史的には Windows とされます）と話すため、という意味です。大きな転送でも最大ウィンドウの半分ごとに PSH を入れておけば、受信側のアプリは定期的にデータを受け取れます。
-  - そうでなく、満杯になった `sk_buff` が **send head**（未送信の先頭）であれば、`tcp_push_one()`（[net/ipv4/tcp_output.c#L3261](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3261)） でその 1 個だけを送ります。
+このときは PSH を立て、`TCP_NAGLE_PUSH`（cork や Nagle を無視）で、キューにある送れるものをすべて送ります。`pushed_seq` のコメント "required to talk to windows" は、受信側が PSH を見るまでアプリに渡さない実装（歴史的には Windows とされます）と話すため、という意味です。大きな転送でも最大ウィンドウの半分ごとに PSH を入れておけば、受信側のアプリは定期的にデータを受け取れます。
+- そうでなく、満杯になった `sk_buff` が **send head**（未送信の先頭）であれば、`tcp_push_one()`（[net/ipv4/tcp_output.c#L3261](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3261)） でその 1 個だけを送ります。
 
 ```c
 void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
@@ -1298,8 +1298,8 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
 }
 ```
 
-    `tcp_write_xmit()` の `push_one = 1` は、「1 個だけ送って、プローブタイマなどの後処理は最後の `tcp_push()` に任せる」という指示です。`BUG_ON(skb->len < mss_now)` は、ここに来る `sk_buff` は `size_goal`（≥ `mss_now`）まで満たされている、という不変条件の確認です。send head でない場合（前の `sk_buff` がまだ cwnd やウィンドウで止まっている）は、どうせ送れないので何もしません。
-  - 歴史的には、ループ内の push は MSS ごとでした。それを `size_goal` ごとに変えたことで、TSO の `sk_buff` が 1 ページを超えて育つようになりました（69d150673116）。
+`tcp_write_xmit()` の `push_one = 1` は、「1 個だけ送って、プローブタイマなどの後処理は最後の `tcp_push()` に任せる」という指示です。`BUG_ON(skb->len < mss_now)` は、ここに来る `sk_buff` は `size_goal`（≥ `mss_now`）まで満たされている、という不変条件の確認です。send head でない場合（前の `sk_buff` がまだ cwnd やウィンドウで止まっている）は、どうせ送れないので何もしません。
+- 歴史的には、ループ内の push は MSS ごとでした。それを `size_goal` ごとに変えたことで、TSO の `sk_buff` が 1 ページを超えて育つようになりました（69d150673116）。
 
 ### Step 11: tcp_sendmsg_locked() (6) — wait_for_space
 
@@ -1600,7 +1600,7 @@ void tcp_wfree(struct sk_buff *skb)
 	} while (!try_cmpxchg(&sk->sk_tsq_flags, &oval, nval));
 ```
 
-    `tcp_wfree()` の側は、`refcount_sub_and_test()` で `sk_wmem_alloc` を減らした後に、`smp_load_acquire()` で `sk_tsq_flags` を読み、THROTTLED が立っていれば `try_cmpxchg()` で THROTTLED を QUEUED に付け替えて、tasklet（BH workqueue）に送信を頼みます。
+`tcp_wfree()` の側は、`refcount_sub_and_test()` で `sk_wmem_alloc` を減らした後に、`smp_load_acquire()` で `sk_tsq_flags` を読み、THROTTLED が立っていれば `try_cmpxchg()` で THROTTLED を QUEUED に付け替えて、tasklet（BH workqueue）に送信を頼みます。
 - **`MSG_MORE`** なら `nonagle = TCP_NAGLE_CORK` にします。`TCP_CORK` と同じく「満杯でない `sk_buff` は送らない」という扱いを、この呼び出しに限って行います。`TCP_NODELAY` のソケットでも `MSG_MORE` が優先されます（packetdrill の `tcp_nagle_sendmsg_msg_more.pkt` がこれを確認しています）。cork の判定そのものは第 4 章の `tcp_nagle_test()` です。
 - 最後に `__tcp_push_pending_frames()`（[net/ipv4/tcp_output.c#L3243](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n3243)） に渡します。
 
