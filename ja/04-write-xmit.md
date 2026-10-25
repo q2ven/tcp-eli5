@@ -168,7 +168,7 @@ void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 ```
 
 - `TCP_CLOSE` のチェック: `tcp_set_state(TCP_CLOSE)` 後でも write queue が残ることがあります（`tcp_done()` 経路など）。そのデータは送らず、後で purge されるのを待ちます。
-- `sk_gfp_mask(sk, GFP_ATOMIC)`: 送信路は softirq からも呼ばれるので、clone の割り当ては `GFP_ATOMIC` です。`sk_gfp_mask()` は `SOCK_MEMALLOC`（swap over NFS など）のソケットで `__GFP_MEMALLOC` を足します。
+- `sk_gfp_mask(sk, GFP_ATOMIC)`: 送信路は softirq からも呼ばれるので、clone の割り当ては `GFP_ATOMIC` です。`sk_gfp_mask()` は `SOCK_MEMALLOC`（Swap over NFS や NBD / iSCSI など、メモリ解放のためのスワップ先になっているソケット）で `__GFP_MEMALLOC` を足し、空きメモリ枯渇時でも緊急予備メモリ（pfmemalloc reserves）を使って送信を完遂できるようにします（詳細は [付録: `PF_MEMALLOC` / `pfmemalloc` とは？](appendix-notes.md#pfmemalloc) を参照）。
 - 戻り値が `true` のとき `tcp_check_probe_timer()` を呼びます。`tcp_write_xmit()` が `true` を返すのは「送信中のパケットが 0 なのに、キューにデータがあるのに何も送れなかった」ときだけです。この状態では ACK が来ないので、自分で起き上がる手段がありません。だから probe0 タイマ（zero window probe、[RFC 9293 §3.8.6.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.1)）を張ります。
 
 ```c
@@ -1474,7 +1474,7 @@ static void tcp_options_write(struct tcphdr *th, struct tcp_sock *tp,
 ```
 
 - **`skb->ooo_okay`**: XPS や `sk_txhash` に基づいて TX キューを選び直してよいかのヒントです。同じフローのパケットが別の TX キューに分かれると、ホスト内でリオーダが起きます。だから「このフローのデータが qdisc やデバイスに 1 つもない」（`sk_wmem_alloc < SKB_TRUESIZE(1)`）か、「retransmit queue が空」（全部 ACK 済み）のときだけ許可します。後者は 726e9e8b94b9 で追加されました。TX 完了が遅い忙しいキューに RPC フローが固定される問題に対して、「ACK はもう全部来たが TX 完了はまだ」という状態でもキューを移れるようにしたものです。
-- `pfmemalloc = 0`: 緊急予備メモリで確保した skb を loopback で他のソケットに渡すと、相手が `SOCK_MEMALLOC` でなければ drop されます。送信パケットではこの印は不要です。
+- `pfmemalloc = 0`: 緊急予備メモリ（pfmemalloc reserves）から確保した `sk_buff` には `skb->pfmemalloc = 1` の印が付いており、そのまま loopback で同一ホスト内の別ソケットに渡すと、相手ソケットが `SOCK_MEMALLOC` を持っていなければ受信検問（`sk_filter_trim_cap()` / `sk_add_backlog()`）で即 drop されてしまいます。送信パケットとして外へ出す時点でこの印は不要なため `0` にクリアします（[付録](appendix-notes.md#pfmemalloc) 参照）。
 - `__skb_push(skb, tcp_header_size)`: TCP ヘッダ分の headroom を確保します。送信キューの skb は `MAX_TCP_HEADER` 分の headroom を持って確保されているので、チェックなしの `__skb_push()` で済みます（59b5e7f47c7c）。
 - **所有権と TSQ の会計**: `skb_orphan()` の後、`skb->sk = sk`、destructor を設定し、`sk_wmem_alloc += truesize` とします。純 ACK（ペイロードなし）は `__sock_wfree`、データは `tcp_wfree` です。TSQ は「データの滞留」を制御するもので、純 ACK の TX 完了で送信路を起こす必要はありません。ここで加算した truesize が、Step 5 の `tcp_small_queue_check()` が比較する値です。
 - `skb_set_dst_pending_confirm()`: 前進する ACK を受けたときに立つフラグを skb に移します。neighbour 層が「この経路はまだ生きている」と確認（neighbour confirm）するために使います。

@@ -168,7 +168,7 @@ void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 ```
 
 - Checking `TCP_CLOSE`: Even after `tcp_set_state(TCP_CLOSE)`, data can still remain in the write queue (such as through the `tcp_done()` path).  That data is not sent, but left to be purged later.
-- `sk_gfp_mask(sk, GFP_ATOMIC)`: Because the transmission path can also be called from softirq, clone allocation uses `GFP_ATOMIC`.  `sk_gfp_mask()` adds `__GFP_MEMALLOC` for sockets with `SOCK_MEMALLOC` (such as swap over NFS).
+- `sk_gfp_mask(sk, GFP_ATOMIC)`: Because the transmission path can also be called from softirq, clone allocation uses `GFP_ATOMIC`.  `sk_gfp_mask()` adds `__GFP_MEMALLOC` for sockets marked `SOCK_MEMALLOC` (network swap/block transports such as swap-over-NFS, NBD, or iSCSI) so they can dip into emergency `pfmemalloc` memory reserves without deadlocking reclaim (see [Appendix: What is `PF_MEMALLOC` / `pfmemalloc`?](appendix-notes.md#pfmemalloc)).
 - When the return value is `true`, `tcp_check_probe_timer()` is invoked.  `tcp_write_xmit()` returns `true` only when "there are 0 packets in flight, yet despite data waiting in the queue, nothing could be sent".  In this state, no ACKs will arrive, leaving the connection with no way to wake itself up.  It therefore sets the probe0 timer (zero window probe, [RFC 9293 §3.8.6.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.1)).
 
 ```c
@@ -1474,7 +1474,7 @@ static void tcp_options_write(struct tcphdr *th, struct tcp_sock *tp,
 ```
 
 - **`skb->ooo_okay`**: A hint indicating whether a different TX queue may be selected based on XPS or `sk_txhash`.  If packets of the same flow diverge across different TX queues, out-of-order delivery occurs within the host.  Hence, it is permitted only when "no data for this flow is queued in the qdisc or device" (`sk_wmem_alloc < SKB_TRUESIZE(1)`) or "the retransmit queue is empty" (all acknowledged).  The latter was added in 726e9e8b94b9.  To address RPC flows pinned to busy queues with slow TX completion, it allows changing queues once all ACKs have arrived, even if TX completion is still pending.
-- `pfmemalloc = 0`: Passing an skb allocated from emergency memory reserves across loopback to another socket causes drops unless the peer also possesses `SOCK_MEMALLOC`.  Outgoing packets do not require this mark.
+- `pfmemalloc = 0`: An `sk_buff` allocated from emergency `pfmemalloc` reserves carries `skb->pfmemalloc = 1`; if looped back locally to another socket, the receive path (`sk_filter_trim_cap()` / `sk_add_backlog()`) drops it unless that peer socket also has `SOCK_MEMALLOC`.  Outgoing packets do not need this mark, so it is cleared here (see [Appendix](appendix-notes.md#pfmemalloc)).
 - `__skb_push(skb, tcp_header_size)`: Reserves headroom for the TCP header.  Because skbs on the write queue are allocated with `MAX_TCP_HEADER` headroom, an unchecked `__skb_push()` suffices (59b5e7f47c7c).
 - **Ownership and TSQ accounting**: After `skb_orphan()`, it sets `skb->sk = sk`, assigns the destructor, and executes `sk_wmem_alloc += truesize`.  Pure ACKs (no payload) use `__sock_wfree`, whilst data uses `tcp_wfree`.  TSQ regulates data backlog; pure ACK TX completion does not need to wake the send path.  The truesize added here is what `tcp_small_queue_check()` evaluates in Step 5.
 - `skb_set_dst_pending_confirm()`: Propagates the flag set upon receiving an advancing ACK onto the skb.  The neighbour layer uses this to confirm that the path remains alive (neighbour confirmation).
