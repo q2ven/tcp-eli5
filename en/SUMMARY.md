@@ -27,6 +27,7 @@
 
 ## BPF CC hands-on labs
 
+- [Lab overview and setup](lab-overview.md)
 - [15. Hands-on (1): Building TCP Reno with BPF CC and packetdrill](15-lab-reno.md)
 - [16. Hands-on (2): Building TCP CUBIC with BPF CC and packetdrill](16-lab-cubic.md)
 - [17. Hands-on (3): Building TCP BBR with BPF CC and packetdrill](17-lab-bbr.md)

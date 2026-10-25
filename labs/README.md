@@ -1,5 +1,7 @@
 # BPF TCP Congestion Control Hands-on Labs (`reno`, `cubic`, `bbr`)
 
+[English](README.en.md)
+
 Linux カーネルの BPF `struct_ops`（`struct tcp_congestion_ops`）と `packetdrill` を使って、**Reno**・**CUBIC**・**BBRv1** の 3 つの輻輳制御アルゴリズムをステップバイステップでゼロから実装・検証するハンズオン教材です。
 
 事前知識がなくても読めるよう、各トラックの冒頭（`reno/README.md`、`cubic/README.md`、`bbr/README.md`）と各ステップの最初に **「なぜそのアルゴリズムが生まれたのか」「どういう仕組み・数式で動くのか」「`struct tcp_sock` に最初から何が用意されているのか」** の解説を置き、その仕組みを理解したうえで **設計チェックポイント（VibeWise 方式の設計問答）** → **BPF 実装** → **`packetdrill` テスト** に進む構成になっています。
