@@ -31,7 +31,7 @@ Thanks to this mechanism, even when scaled to a million rooms, only a single kit
 `sch_fq` and EDT are not defined in a single RFC; rather, they originated from a combination of the following research papers, RFCs, and design documents:
 
 - **M. Shreedhar, G. Varghese, "Efficient Fair Queueing Using Deficit Round-Robin", ACM SIGCOMM 1995 (IEEE/ACM Transactions on Networking, Vol. 4, No. 3, 1996)**
-  Ideal bit-by-bit fair queueing (PGPS / WFQ) requires sorting virtual finish times with $O(\log N)$ complexity upon every packet arrival and departure. Conversely, naive packet-by-packet round robin allows flows transmitting larger packets to consume disproportionate bandwidth. **Deficit Round Robin (DRR)** allocates a byte-denominated deficit counter (`credit`) to each flow, adds a `quantum` of bytes per round, and deducts the packet length `plen` upon transmission, thereby achieving byte-level fairness with $O(1)$ complexity per packet.
+  Ideal bit-by-bit fair queueing (PGPS / WFQ) requires sorting virtual finish times with $$O(\log N)$$ complexity upon every packet arrival and departure. Conversely, naive packet-by-packet round robin allows flows transmitting larger packets to consume disproportionate bandwidth. **Deficit Round Robin (DRR)** allocates a byte-denominated deficit counter (`credit`) to each flow, adds a `quantum` of bytes per round, and deducts the packet length `plen` upon transmission, thereby achieving byte-level fairness with $$O(1)$$ complexity per packet.
 - **[RFC 8290](https://www.rfc-editor.org/rfc/rfc8290) — The FlowQueue-CoDel Packet Scheduler and Active Queue Management Algorithm (2018)**
   The standards document that formalised dividing the active DRR flow list into **`new_flows` (newly arrived flows) and `old_flows` (backlogged, established flows)** ([RFC 8290 §4.2](https://www.rfc-editor.org/rfc/rfc8290#section-4.2)). The original concept traces back to Shortest Queue First (SQF) and `sch_fq_codel` in Linux 3.5, and the same dual-list `new_flows` / `old_flows` structure was adopted by `sch_fq` in Linux 3.12 (2013). Sparse flows whose queues drain before exhausting their initial quantum (`initial_quantum`) in a single round (DNS, SSH, VoIP, TCP handshakes, pure ACKs) are consistently dequeued ahead of bulk transfer flows (`old_flows`).
 - **A. Saeed, N. Dukkipati, V. Valancius, V. The Lam, C. Contavalli, A. Vahdat, "Carousel: Scalable Traffic Shaping at End Hosts", ACM SIGCOMM 2017** and **V. Jacobson, E. Dumazet et al., "TCP Pacing and Earliest Departure Time (EDT)", Netdev 0x12 / IETF 2018**
@@ -41,7 +41,7 @@ Thanks to this mechanism, even when scaled to a million rooms, only a single kit
 
 #### 1. Single FIFO Head-of-Line (HoL) blocking and bursts
 
-When a bulk flow pushes a TSO/GSO burst or an entire congestion window of $B$ bytes into a single FIFO queue (such as `pfifo_fast`) at link rate $C$, any interactive flow (or ACK from another connection) arriving immediately afterwards experiences a queueing delay of up to:
+When a bulk flow pushes a TSO/GSO burst or an entire congestion window of $$B$$ bytes into a single FIFO queue (such as `pfifo_fast`) at link rate $$C$$, any interactive flow (or ACK from another connection) arriving immediately afterwards experiences a queueing delay of up to:
 
 $$d_{\text{FIFO}} = \frac{B}{C}$$
 
@@ -62,12 +62,12 @@ Eliminating bursts requires pacing (controlling inter-packet time spacing), but 
 `sch_fq` implements a two-tier scheduling hierarchy:
 
 1. **Upper tier: 3-band WRR (`fq_perband_flows`)**
-   Packets have their `skb->priority` (a value from 0 to 15 derived from `SO_PRIORITY` or the IP TOS field) mapped to a band $b \in \{0, 1, 2\}$ using the 2-bit lookup table `prio2band`. Each band $b$ has a configured weight `quantum` $Q_b$ (defaulting to $9 \times 2^{16} = 589{,}824$ bytes for band 0, $3 \times 2^{16} = 196{,}608$ bytes for band 1, and $1 \times 2^{16} = 65{,}536$ bytes for band 2, yielding a ratio of **$9 : 3 : 1$**) along with an accumulated deficit `credit` $C_b$.
-   Whenever a packet of length $L$ bytes is dequeued from band $b$:
+   Packets have their `skb->priority` (a value from 0 to 15 derived from `SO_PRIORITY` or the IP TOS field) mapped to a band $$b \in \{0, 1, 2\}$$ using the 2-bit lookup table `prio2band`. Each band $$b$$ has a configured weight `quantum` $$Q_b$$ (defaulting to $$9 \times 2^{16} = 589{,}824$$ bytes for band 0, $$3 \times 2^{16} = 196{,}608$$ bytes for band 1, and $$1 \times 2^{16} = 65{,}536$$ bytes for band 2, yielding a ratio of **$$9 : 3 : 1$$**) along with an accumulated deficit `credit` $$C_b$$.
+   Whenever a packet of length $$L$$ bytes is dequeued from band $$b$$:
 
    $$C_b \leftarrow C_b - L$$
 
-   When no sendable flows remain in that band or $C_b \le 0$, the scheduler advances to the next band and replenishes credits according to:
+   When no sendable flows remain in that band or $$C_b \le 0$$, the scheduler advances to the next band and replenishes credits according to:
 
    $$C_b \leftarrow \min(C_b + Q_b,\ Q_b)$$
 
@@ -75,48 +75,48 @@ Eliminating bursts requires pacing (controlling inter-packet time spacing), but 
 
 2. **Lower tier: Intra-band DRR via `new_flows` and `old_flows` (`fq_flow`)**
    Each band maintains two singly-linked lists: `new_flows` and `old_flows`.
-   - When a packet arrives for an unattached flow (in the `detached` state), the flow is appended to the tail of `new_flows`. A new flow receives an initial credit of $c_f = Q_{\text{init}}$ (`initial_quantum`, default $10 \times \text{MTU}$). Furthermore, an existing flow whose queue has been empty for at least `flow_refill_delay` (default 40 ms) has its credit replenished to $c_f \leftarrow \max(c_f, Q_{\text{flow}})$.
+   - When a packet arrives for an unattached flow (in the `detached` state), the flow is appended to the tail of `new_flows`. A new flow receives an initial credit of $$c_f = Q_{\text{init}}$$ (`initial_quantum`, default $$10 \times \text{MTU}$$). Furthermore, an existing flow whose queue has been empty for at least `flow_refill_delay` (default 40 ms) has its credit replenished to $$c_f \leftarrow \max(c_f, Q_{\text{flow}})$$.
    - `fq_dequeue()` always examines **`new_flows` first**, falling back to `old_flows` only when `new_flows` is empty.
-   - When a packet of length $L$ is dequeued from flow $f$:
+   - When a packet of length $$L$$ is dequeued from flow $$f$$:
 
      $$c_f \leftarrow c_f - L$$
 
-     If $c_f \le 0$ on the subsequent round:
+     If $$c_f \le 0$$ on the subsequent round:
 
      $$c_f \leftarrow c_f + Q_{\text{flow}} \quad (\text{default } Q_{\text{flow}} = 2 \times \text{MTU})$$
 
-     is added, and flow $f$ is moved to the **tail of `old_flows`**.
-   - If a flow on `new_flows` empties its queue while $c_f > 0$, it is not transitioned to `detached` immediately. Instead, it is moved while empty to the **tail of `old_flows`**, and only becomes `detached` if it remains empty when its turn arrives in `old_flows`. This prevents flows sending solitary packets at short intervals from continually jumping to `new_flows` and starving `old_flows`.
+     is added, and flow $$f$$ is moved to the **tail of `old_flows`**.
+   - If a flow on `new_flows` empties its queue while $$c_f > 0$$, it is not transitioned to `detached` immediately. Instead, it is moved while empty to the **tail of `old_flows`**, and only becomes `detached` if it remains empty when its turn arrives in `old_flows`. This prevents flows sending solitary packets at short intervals from continually jumping to `new_flows` and starving `old_flows`.
 
 #### 2. EDT (Earliest Departure Time) and jitter correction equations
 
-A TCP socket tracks the earliest departure time for its next packet in nanoseconds using `tp->tcp_wstamp_ns` (denoted below as $T_w$).
+A TCP socket tracks the earliest departure time for its next packet in nanoseconds using `tp->tcp_wstamp_ns` (denoted below as $$T_w$$).
 
 1. **EDT stamping during transmission (`__tcp_transmit_skb()`)**
-   Let $T_{\text{now}}$ be the cached current timestamp `tp->tcp_clock_cache`. Immediately prior to transmission:
+   Let $$T_{\text{now}}$$ be the cached current timestamp `tp->tcp_clock_cache`. Immediately prior to transmission:
 
    $$T_{\text{prior}} = T_w, \qquad T_w \leftarrow \max(T_w,\ T_{\text{now}}), \qquad \text{skb}\to\text{tstamp} \leftarrow T_w$$
 
    This stamps the earliest departure time onto the packet.
 
 2. **Advancing the next packet time and compensating for jitter post-send (`tcp_update_skb_after_send()`)**
-   Let $R$ [bytes/sec] be the socket's pacing rate (`sk->sk_pacing_rate`), and $L$ [bytes] be the transmitted skb length (`skb->len`). Once at least 10 data segments have been sent over the connection (`tp->data_segs_out >= 10`), the ideal inter-packet interval is:
+   Let $$R$$ [bytes/sec] be the socket's pacing rate (`sk->sk_pacing_rate`), and $$L$$ [bytes] be the transmitted skb length (`skb->len`). Once at least 10 data segments have been sent over the connection (`tp->data_segs_out >= 10`), the ideal inter-packet interval is:
 
    $$\Delta t_{\text{ideal}} = \frac{L \times 10^9}{R}\ \text{[ns]}$$
 
-   However, if OS scheduling latency or SoftIRQ delays cause the actual execution time $T_{\text{now}}$ to fall behind the previously scheduled departure time $T_{\text{prior}}$, simply adding $\Delta t_{\text{ideal}}$ to $T_w$ each time while ignoring the gap $T_w - T_{\text{prior}}$ would allow delays to accumulate indefinitely, preventing the socket from achieving target rate $R$. Linux therefore treats the accumulated delay $\Delta t_{\text{credit}} = T_w - T_{\text{prior}}$ as a "time credit" and deducts up to $\Delta t_{\text{ideal}} / 2$ from the current interval:
+   However, if OS scheduling latency or SoftIRQ delays cause the actual execution time $$T_{\text{now}}$$ to fall behind the previously scheduled departure time $$T_{\text{prior}}$$, simply adding $$\Delta t_{\text{ideal}}$$ to $$T_w$$ each time while ignoring the gap $$T_w - T_{\text{prior}}$$ would allow delays to accumulate indefinitely, preventing the socket from achieving target rate $$R$$. Linux therefore treats the accumulated delay $$\Delta t_{\text{credit}} = T_w - T_{\text{prior}}$$ as a "time credit" and deducts up to $$\Delta t_{\text{ideal}} / 2$$ from the current interval:
 
    $$\Delta t = \Delta t_{\text{ideal}} - \min\!\left(\frac{\Delta t_{\text{ideal}}}{2},\ T_w - T_{\text{prior}}\right), \qquad T_w \leftarrow T_w + \Delta t$$
 
 3. **Departure checking, throttling, and ECN CE marking in `sch_fq` (`fq_dequeue()`)**
-   At enqueue time, `sch_fq` normalises `skb->tstamp` to a monotonic nanosecond timestamp $T_{\text{pkt}}$ (`fq_skb_cb(skb)->time_to_send`) against `CLOCK_MONOTONIC`. At dequeue time, when extracting the head packet of flow $f$, the packet's effective departure time $T_{\text{next}}$ is computed as the maximum of $T_{\text{pkt}}$ and the flow's next allowed transmit time $T_{\text{flow}}$ (`f->time_next_packet`, determined by the Qdisc `maxrate` limit or pacing for non-EDT sockets):
+   At enqueue time, `sch_fq` normalises `skb->tstamp` to a monotonic nanosecond timestamp $$T_{\text{pkt}}$$ (`fq_skb_cb(skb)->time_to_send`) against `CLOCK_MONOTONIC`. At dequeue time, when extracting the head packet of flow $$f$$, the packet's effective departure time $$T_{\text{next}}$$ is computed as the maximum of $$T_{\text{pkt}}$$ and the flow's next allowed transmit time $$T_{\text{flow}}$$ (`f->time_next_packet`, determined by the Qdisc `maxrate` limit or pacing for non-EDT sockets):
 
    $$T_{\text{next}} = \max(T_{\text{pkt}},\ T_{\text{flow}})$$
 
-   Let $H_{\text{offload}}$ be the NIC hardware pacing offload horizon (typically 0), and $\delta_{\text{slack}}$ be the permissible timer slack (`timer_slack`):
+   Let $$H_{\text{offload}}$$ be the NIC hardware pacing offload horizon (typically 0), and $$\delta_{\text{slack}}$$ be the permissible timer slack (`timer_slack`):
 
-   - If $T_{\text{now}} + H_{\text{offload}} < T_{\text{next}}$, the packet's departure time has not yet arrived. The flow $f$ is removed from the DRR active list and inserted into the `q->delayed` red-black tree keyed by $T_{\text{next}}$ (throttled). A single `qdisc_watchdog` timer for the entire Qdisc is then scheduled in the interval $[T_{\min},\ T_{\min} + \delta_{\text{slack}}]$ targeting the earliest delayed flow time $T_{\min} = \min_{g \in \text{delayed}} T_{\text{flow}}(g)$.
-   - If $T_{\text{now}} + H_{\text{offload}} \ge T_{\text{next}}$, the packet is dequeued and transmitted. If the actual scheduling delay beyond the planned departure time $T_{\text{now}} - T_{\text{next}}$ exceeds `ce_threshold` ($\theta_{\text{CE}}$):
+   - If $$T_{\text{now}} + H_{\text{offload}} < T_{\text{next}}$$, the packet's departure time has not yet arrived. The flow $$f$$ is removed from the DRR active list and inserted into the `q->delayed` red-black tree keyed by $$T_{\text{next}}$$ (throttled). A single `qdisc_watchdog` timer for the entire Qdisc is then scheduled in the interval $$[T_{\min},\ T_{\min} + \delta_{\text{slack}}]$$ targeting the earliest delayed flow time $$T_{\min} = \min_{g \in \text{delayed}} T_{\text{flow}}(g)$$.
+   - If $$T_{\text{now}} + H_{\text{offload}} \ge T_{\text{next}}$$, the packet is dequeued and transmitted. If the actual scheduling delay beyond the planned departure time $$T_{\text{now}} - T_{\text{next}}$$ exceeds `ce_threshold` ($$\theta_{\text{CE}}$$):
 
      $$T_{\text{now}} - T_{\text{next}} - \theta_{\text{CE}} > 0$$
 
@@ -267,7 +267,7 @@ struct fq_flow {
 - `fq_skb_cb`: A control block private to `sch_fq`, stored within `qdisc_skb_cb(skb)->data` (20 bytes), which the Qdisc layer is free to use. `time_to_send` is the scheduled departure time normalised to `CLOCK_MONOTONIC` nanoseconds, and `band` is the band number (0–2) determined at enqueue time. Recording `band` per skb rather than relying solely on `f->band` ensures that even if subsequent packets alter the socket's priority and overwrite `f->band`, `q->band_pkt_count[]` can still be decremented from the correct band at dequeue time.
 - `struct fq_flow`: A structure measuring exactly 128 bytes (two 64-byte cache lines), allocated from a dedicated slab cache `fq_flow_cachep` (with `SLAB_HWCACHE_ALIGN`).
 - **First cache line (64 bytes)**: Gathers all fields touched across `fq_gc()`, `fq_enqueue()`, and `fq_dequeue()`.
-  - `t_root` and `head` / `tail`: The packet queue within a flow employs a **hybrid structure**. Because TCP EDT packets generally have monotonically increasing `time_to_send`, they are appended in $O(1)$ to the singly-linked list (`skb->next`) formed by `head` and `tail`. Only when UDP/QUIC applications using `SO_TXTIME` transmit packets with out-of-order EDTs, or when packets with past timestamps arrive late, are packets inserted into the `t_root` red-black tree (`skb->rbnode`).
+  - `t_root` and `head` / `tail`: The packet queue within a flow employs a **hybrid structure**. Because TCP EDT packets generally have monotonically increasing `time_to_send`, they are appended in $$O(1)$$ to the singly-linked list (`skb->next`) formed by `head` and `tail`. Only when UDP/QUIC applications using `SO_TXTIME` transmit packets with out-of-order EDTs, or when packets with past timestamps arrive late, are packets inserted into the `t_root` red-black tree (`skb->rbnode`).
   - `union { struct sk_buff *tail; unsigned long age; }`: Whilst a flow is off the DRR lists (in the `detached` state), its queue is empty and `tail` is unused. The same 8 bytes are therefore reused for `age` (`jiffies | 1UL` at the time it became empty) for garbage collection. Since `struct sk_buff` is aligned to at least 2 bytes, the least significant bit (bit 0) of a valid `tail` pointer is always `0`. Forcing bit 0 of `age` to `1` allows checking whether a flow is currently `detached` via `f->age & 1UL` alone, without requiring an additional flag variable.
   - `union { struct rb_node fq_node; u64 stat_fastpath_packets; }`: In regular flows, this is used as the 24-byte red-black tree node `fq_node` in the `q->fq_root[]` hash buckets. Meanwhile, `q->internal` (the special `fq_flow` embedded in `fq_sched_data` for the fast path) is never registered in `fq_root[]`, so this storage is reused as the `stat_fastpath_packets` counter.
   - `sk` and `socket_hash`: The `struct sock *` pointer corresponding to this flow (or a pseudo-pointer `(hash << 1) | 1UL` for orphaned or unconnected UDP sockets) and the socket's `sk->sk_hash`. Because `sch_fq` does not immediately free `fq_flow` when a flow runs dry, the original socket may be closed and slab allocation might assign another new `struct sock` at the exact same address. Since `f->sk == sk` alone cannot distinguish whether it is the identical socket, `f->socket_hash != sk->sk_hash` detects socket reallocation (Step 2).
@@ -351,7 +351,7 @@ struct fq_sched_data {
 - `struct fq_perband_flows`: The per-band WRR state. It maintains two list heads, `new_flows` and `old_flows`, along with the band's remaining `credit` and its per-round weight `quantum`.
 - `FQ_PRIO2BAND_CRUMB_SIZE`: When mapping `TC_PRIO_MAX + 1` (16) priorities (0–15) to 3 bands (0–2), each entry is compressed into 2 bits (a "crumb"), packing the entire mapping into just **4 bytes** via `u8 prio2band[4]`. This allows the preceding read-mostly region to fit neatly within cache lines.
 - `struct fq_sched_data`: Divided into three regions based on access patterns:
-  1. **Read mostly cache line**: Configuration parameters that are only modified during `tc qdisc change` (`fq_change()`), alongside the pointer `fq_root` to the hash table array (by default, $2^{10} = 1024$ instances of `struct rb_root`).
+  1. **Read mostly cache line**: Configuration parameters that are only modified during `tc qdisc change` (`fq_change()`), alongside the pointer `fq_root` to the hash table array (by default, $$2^{10} = 1024$$ instances of `struct rb_root`).
   2. **Read/Write fields**: Fields updated on every packet enqueue and dequeue. These include the currently serviced band number `band_nr`, `band_flows[FQ_BANDS]` for the three bands, the fast path queue `internal`, the red-black tree `delayed` for throttled flows along with its minimum timestamp cache `time_next_delayed_flow`, an exponential moving average of timer unthrottle latency `unthrottle_latency_ns`, per-band packet counts `band_pkt_count`, total flow count `flows`, empty flow count `inactive_flows`, throttled flow count `throttled_flows`, and `watchdog` (`struct qdisc_watchdog`) wrapping a single hrtimer.
   3. **Seldom used fields**: Statistics counters incremented only during exceptional or congested conditions, such as packet drops and CE markings, isolated at the end of the structure so they do not pollute cache lines on the common path.
 
@@ -520,7 +520,7 @@ static void fq_gc(struct fq_sched_data *q,
 ```
 
 - `sch_fq` does not immediately free an `fq_flow` when its packet count drops to zero. This is because further data will likely arrive one RTT later, and when retransmissions or additional packets arrive within `flow_refill_delay` (40 ms), earlier state (credits and `old_flows` history) must be retained. Furthermore, invoking callbacks from the TCP socket destruction path (`sk_destruct()`) into the Qdisc would introduce lock contention; hence, the lifecycles of the socket and the `fq_flow` are completely decoupled.
-- Instead, whilst `fq_classify()` traverses the red-black tree of the hash bucket `root` looking for `sk`, any node encountered along the search path that is `detached` and has remained idle for at least `FQ_GC_AGE` (3 seconds) is linked into the `tofree` singly-linked list (`f->next` is unused in `detached` flows and can be safely utilised). Once the search finishes, these nodes are pruned and freed in a batch via `rb_erase()` + `kmem_cache_free()`. Without using timers or scanning every bucket, this clever lazy GC reclaims nodes along the enqueue lookup path in $O(\log N)$.
+- Instead, whilst `fq_classify()` traverses the red-black tree of the hash bucket `root` looking for `sk`, any node encountered along the search path that is `detached` and has remained idle for at least `FQ_GC_AGE` (3 seconds) is linked into the `tofree` singly-linked list (`f->next` is unused in `detached` flows and can be safely utilised). Once the search finishes, these nodes are pruned and freed in a batch via `rb_erase()` + `kmem_cache_free()`. Without using timers or scanning every bucket, this clever lazy GC reclaims nodes along the enqueue lookup path in $$O(\log N)$$.
 
 #### `fq_offload_horizon()` and `fq_fastpath_check()`
 
@@ -740,7 +740,7 @@ static struct fq_flow *fq_classify(struct Qdisc *sch, struct sk_buff *skb,
 - **Fast path check (lines 420–432)**: If `fq_fastpath_check()` returns true, `&q->internal` is returned. Even in this case, if it is a real socket (`skb->sk == sk`), it does not neglect to set `sk->sk_pacing_status` to `SK_PACING_FQ` (commit `81a416985698`). Failing to do so would prevent the TCP socket from realising on the first packet through an idle Qdisc that `sch_fq` is attached to this NIC, causing it to wastefully continue running its internal `pacing_timer` (hrtimer).
 - **Hash lookup and socket reuse detection (lines 434–467)**: One of the 1,024 buckets (default) is selected via `hash_ptr(sk, q->fq_trees_log)`, stale `detached` flows are reclaimed using `fq_gc()`, and the red-black tree is searched via binary search on `f->sk`.
   - When a match is found with `f->sk == sk`, if `skb->sk == sk && f->socket_hash != sk->sk_hash`, it indicates that the previous socket was closed and a new socket was allocated at the same address in the slab cache. In this situation, the leftover credits and throttle state of the previous socket must not be inherited; hence `f->credit` is reset to `q->initial_quantum`, `SK_PACING_FQ` is set, and if the old socket was throttled (`fq_flow_is_throttled(f)`), it is removed from the `q->delayed` tree via `fq_flow_unset_throttled(q, f)` and `f->time_next_packet` is cleared to `0ULL` (commit `7df40c2673a1`).
-- **Allocating a new `fq_flow` (lines 469–491)**: If not present in the red-black tree, a new flow is allocated from `fq_flow_cachep` with `GFP_ATOMIC | __GFP_NOWARN`. Under memory exhaustion, rather than dropping the packet, it falls back to `&q->internal`. The new flow is first marked as `detached` via `fq_flow_set_detached(f)`, granted `f->credit = q->initial_quantum` (default $10 \times \text{MTU}$), inserted into the red-black tree, and returned after incrementing `q->flows++` and `q->inactive_flows++` (since `f->qlen == 0`, it is counted temporarily as inactive, and will be decremented via `inactive_flows--` in the subsequent `fq_enqueue()`).
+- **Allocating a new `fq_flow` (lines 469–491)**: If not present in the red-black tree, a new flow is allocated from `fq_flow_cachep` with `GFP_ATOMIC | __GFP_NOWARN`. Under memory exhaustion, rather than dropping the packet, it falls back to `&q->internal`. The new flow is first marked as `detached` via `fq_flow_set_detached(f)`, granted `f->credit = q->initial_quantum` (default $$10 \times \text{MTU}$$), inserted into the red-black tree, and returned after incrementing `q->flows++` and `q->inactive_flows++` (since `f->qlen == 0`, it is counted temporarily as inactive, and will be decremented via `inactive_flows--` in the subsequent `fq_enqueue()`).
 
 ---
 
@@ -838,7 +838,7 @@ static void fq_mono_to_skb_tstamp(struct sk_buff *skb, ktime_t time_to_send)
 ```
 
 - `flow_queue_add()` ([net/sched/sch_fq.c#L537](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_fq.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n537)):
-  - If the singly linked list `flow->head` is empty, or if the new packet's `time_to_send` is greater than or equal to (monotonically non-decreasing compared to) the `time_to_send` of the list tail `flow->tail`, it simply appends the packet behind `flow->tail` in $O(1)$ time. Because all packets generated by a TCP connection advance with monotonically non-decreasing `tp->tcp_wstamp_ns`, **TCP takes this $O(1)$ path 100% of the time**. Furthermore, assigning `flow->tail = skb` when `flow->head` is empty overwrites the union member `flow->age` (bit 0 = 1) with a pointer (bit 0 = 0), automatically clearing the `detached` state.
+  - If the singly linked list `flow->head` is empty, or if the new packet's `time_to_send` is greater than or equal to (monotonically non-decreasing compared to) the `time_to_send` of the list tail `flow->tail`, it simply appends the packet behind `flow->tail` in $$O(1)$$ time. Because all packets generated by a TCP connection advance with monotonically non-decreasing `tp->tcp_wstamp_ns`, **TCP takes this $$O(1)$$ path 100% of the time**. Furthermore, assigning `flow->tail = skb` when `flow->head` is empty overwrites the union member `flow->age` (bit 0 = 1) with a pointer (bit 0 = 0), automatically clearing the `detached` state.
   - Only when a packet arrives with an earlier `time_to_send` than the preceding packet (e.g. via `SO_TXTIME`) is it inserted into the `flow->t_root` red-black tree using `skb->rbnode`.
 - `fq_packet_beyond_horizon()` ([net/sched/sch_fq.c#L569](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_fq.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n569)): Checks whether the packet's `time_to_send` exceeds `now + q->horizon` (10 seconds by default). This acts as a barrier preventing buggy user-space applications (such as those confusing `CLOCK_REALTIME` with `CLOCK_MONOTONIC` and passing a timestamp 50 years into the future via `SCM_TXTIME`) from monopolising socket buffers and Qdisc memory for hours on end.
 - `fq_flow_adjust_timer()` ([net/sched/sch_fq.c#L575](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_fq.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n575)): Called when a packet with a `time_to_send` **earlier** than the currently configured `flow->time_next_packet` is subsequently enqueued to a flow already throttled in the `q->delayed` red-black tree (e.g. when packets are submitted out-of-order via `SO_TXTIME`) (commit `fabcf8cad67b`). If the new timestamp is less than or equal to `now`, it immediately moves the flow back to `old_flows` via `fq_flow_unset_throttled()`; if it remains in the future, it removes the flow from the `q->delayed` tree and re-inserts it with the updated `time_next_packet`.
@@ -925,7 +925,7 @@ static int fq_enqueue(struct sk_buff *skb, struct Qdisc *sch,
   - If `skb->tstamp != 0` (TCP or `SO_TXTIME`), it aligns the clock to `CLOCK_MONOTONIC` using `fq_skb_tstamp_to_mono(skb)` and checks via `fq_packet_beyond_horizon()` whether the timestamp exceeds `now + q->horizon` (10 seconds by default). If it exceeds the horizon and `q->horizon_drop` is 1 (the default `horizon_drop` policy), it increments `stat_horizon_drops++` and drops the packet with `QDISC_DROP_HORIZON_LIMIT` (for TCP, `__tcp_transmit_skb()` receives no error and recovers via retransmit timers or similar mechanisms). If it is 0 (`horizon_cap` policy), it increments `stat_horizon_caps++`, caps the time to `now + q->horizon`, and writes it back to `skb->tstamp`.
 - **Lines 657–677 (Per-flow limit and addition to `new_flows`)**:
   - Obtains the flow `f` via `fq_classify()`. Outside of the fastpath (`&q->internal`), it first verifies the individual flow queue length `f->qlen >= q->flow_plimit` (100 packets by default), dropping the packet with `QDISC_DROP_FLOW_LIMIT` if exceeded.
-  - Next, `if (fq_flow_is_detached(f))` represents the **core of sparse flow prioritisation**. A flow currently on neither DRR list nor throttled (in the `detached` state) is appended to the **tail of `new_flows`** for that band via `fq_flow_add_tail(q, f, NEW_FLOW)`. Moreover, if more than `q->flow_refill_delay` (40 ms by default) has elapsed since the time `f->age` when the flow became empty, `f->credit` is replenished to at least `q->quantum` ($2 \times \text{MTU}$). Conversely, if a packet arrives again in under 40 ms, the remaining credit from the previous round is reused, preventing flows from exploiting brief pauses to unfairly accumulate credit.
+  - Next, `if (fq_flow_is_detached(f))` represents the **core of sparse flow prioritisation**. A flow currently on neither DRR list nor throttled (in the `detached` state) is appended to the **tail of `new_flows`** for that band via `fq_flow_add_tail(q, f, NEW_FLOW)`. Moreover, if more than `q->flow_refill_delay` (40 ms by default) has elapsed since the time `f->age` when the flow became empty, `f->credit` is replenished to at least `q->quantum` ($$2 \times \text{MTU}$$). Conversely, if a packet arrives again in under 40 ms, the remaining credit from the previous round is reused, preventing flows from exploiting brief pauses to unfairly accumulate credit.
   - Note that **after** reading `f->age` here, `flow_queue_add(f, skb)` on line 681 writes `f->tail = skb`, overwriting `f->age`; this explains the comment on line 680: `/* Note: this overwrites f->age */`.
 - **Lines 683–685 (Advancing wake-up time for throttled flows)**: When an EDT packet arrives with a timestamp earlier than `f->time_next_packet` for an already throttled flow (and no Qdisc-level `maxrate` limit is enforced), `fq_flow_adjust_timer()` adjusts its position in the `q->delayed` red-black tree.
 
@@ -1034,8 +1034,8 @@ static struct fq_flow_head *fq_pband_head_select(struct fq_perband_flows *pband)
 ```
 
 - `fq_check_throttled()`:
-  - First, it compares the cached earliest timestamp `q->time_next_delayed_flow` with `now + offload_horizon`. If no flow has expired yet (or if the `delayed` tree is empty with `~0ULL`), it returns in $O(1)$ time without touching the red-black tree at all.
-  - If a flow has expired, it calculates `now - q->time_next_delayed_flow` (the latency between the intended wake-up time and the time `fq_dequeue()` was actually invoked) and updates `q->unthrottle_latency_ns` using an exponentially weighted moving average (EWMA) with weight $1/8$ (`>> 3`). This metric appears as `unthrottle_latency` in `tc -s qdisc show` and proves immensely useful for diagnosing kernel timer or softirq latencies.
+  - First, it compares the cached earliest timestamp `q->time_next_delayed_flow` with `now + offload_horizon`. If no flow has expired yet (or if the `delayed` tree is empty with `~0ULL`), it returns in $$O(1)$$ time without touching the red-black tree at all.
+  - If a flow has expired, it calculates `now - q->time_next_delayed_flow` (the latency between the intended wake-up time and the time `fq_dequeue()` was actually invoked) and updates `q->unthrottle_latency_ns` using an exponentially weighted moving average (EWMA) with weight $$1/8$$ (`>> 3`). This metric appears as `unthrottle_latency` in `tc -s qdisc show` and proves immensely useful for diagnosing kernel timer or softirq latencies.
   - It then iterates starting from `rb_first(&q->delayed)`, removing every flow where `f->time_next_packet <= now` (with `offload_horizon` added) from the red-black tree via `fq_flow_unset_throttled(q, f)`, and appends each to the **tail of `old_flows`** in its respective band. It records the `time_next_packet` of the first flow that remains in the future into `q->time_next_delayed_flow` and exits the loop.
 - `fq_pband_head_select()`:
   - Returns `NULL` if the band's remaining credit `pband->credit` is less than or equal to 0 (signalling a transition to the next band).
@@ -1098,7 +1098,7 @@ begin:
 - **Lines 759–762**: Fetches `now = ktime_get_ns()` exactly once, and calls `fq_check_throttled()` to return expired throttled flows back to `old_flows`.
 - **Lines 763–781 (3-band WRR loop)**:
   - Calls `fq_pband_head_select(pband)` for the band currently being serviced `q->band_nr` (carried over from the previous `fq_dequeue()` call).
-  - If `head == NULL` (meaning no active flows remain in this band, or the band has `credit <= 0`), it advances to the next band via `while (++retry <= FQ_BANDS)`. It cycles the band index `q->band_nr` as $0 \to 1 \to 2 \to 0$ and replenishes the new band's credit with `min(pband->credit + pband->quantum, pband->quantum)`.
+  - If `head == NULL` (meaning no active flows remain in this band, or the band has `credit <= 0`), it advances to the next band via `while (++retry <= FQ_BANDS)`. It cycles the band index `q->band_nr` as $$0 \to 1 \to 2 \to 0$$ and replenishes the new band's credit with `min(pband->credit + pband->quantum, pband->quantum)`.
   - The rationale for `min(..., pband->quantum)` rather than simply `pband->credit += pband->quantum` is to prevent an idle band from accumulating unbounded credit across multiple skipped rounds. Furthermore, if a band's `quantum` (weight) is set to the minimum `FQ_MIN_WEIGHT` (16 KB) and a 64 KB TSO/GSO packet was just transmitted, leaving `credit` heavily negative (e.g. `-48 KB`), a single `+ quantum` replenishment might still leave `pband->credit <= 0`. In that case, `retry = 0;` on line 774 resets the retry counter to allow another cycle, resolving the negative balance (commit `bc21000e99f9`).
   - If all three bands have been checked (`++retry > FQ_BANDS`) without finding a single transmittable flow, all packets currently queued are waiting in the `q->delayed` red-black tree for their future transmission times. In this situation, it invokes `qdisc_watchdog_schedule_range_ns()` to program an hrtimer for the earliest time `q->time_next_delayed_flow` (with slack `q->timer_slack`, 10 µs by default) and returns `NULL`.
 
@@ -1203,7 +1203,7 @@ out:
 }
 ```
 
-- **Lines 784–789 (Per-flow DRR credit replenishment)**: If `f->credit <= 0` for the flow `f` at the head of the list, it adds `q->quantum` ($2 \times \text{MTU}$ by default), detaches `f` from the head of the current list (`new_flows` or `old_flows`), chains it to the **tail of `old_flows`**, and executes `goto begin` to evaluate the next flow.
+- **Lines 784–789 (Per-flow DRR credit replenishment)**: If `f->credit <= 0` for the flow `f` at the head of the list, it adds `q->quantum` ($$2 \times \text{MTU}$$ by default), detaches `f` from the head of the current list (`new_flows` or `old_flows`), chains it to the **tail of `old_flows`**, and executes `goto begin` to evaluate the next flow.
 - **Lines 791–801 (EDT departure time check and transition to throttled state)**:
   - Peeks at the skb at the head of the flow using `fq_peek(f)`.
   - When a packet is present, `time_next_packet` is determined as the maximum of the packet's own EDT (`fq_skb_cb(skb)->time_to_send`) and the flow's next eligible transmission time (`f->time_next_packet`).
@@ -1453,8 +1453,8 @@ void tcp_update_pacing_rate(struct sock *sk)
 }
 ```
 
-- Because `srtt_us` is stored in units of $1/8$ microsecond (actual RTT [µs] $\times 8$), the numerator is scaled with `<< 3` ($\times 8$).
-- During `cwnd < ssthresh / 2` (the first half of slow start), cwnd doubles in 1 RTT, so the rate is set to **200%** (`sysctl_tcp_pacing_ss_ratio`) of the current $\text{cwnd} \times \text{MSS} / \text{RTT}$. Once `cwnd >= ssthresh / 2` (the second half of slow start and congestion avoidance), it is reduced to **120%** (`sysctl_tcp_pacing_ca_ratio`), mitigating overshoot towards the end of slow start.
+- Because `srtt_us` is stored in units of $$1/8$$ microsecond (actual RTT [µs] $$\times 8$$), the numerator is scaled with `<< 3` ($$\times 8$$).
+- During `cwnd < ssthresh / 2` (the first half of slow start), cwnd doubles in 1 RTT, so the rate is set to **200%** (`sysctl_tcp_pacing_ss_ratio`) of the current $$\text{cwnd} \times \text{MSS} / \text{RTT}$$. Once `cwnd >= ssthresh / 2` (the second half of slow start and congestion avoidance), it is reduced to **120%** (`sysctl_tcp_pacing_ca_ratio`), mitigating overshoot towards the end of slow start.
 
 2. **BBR — `bbr_set_pacing_rate()` ([net/ipv4/tcp_bbr.c#L287](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_bbr.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n287))**:
    As explored in detail in Chapter 13, BBR defines a `cong_control()` hook and thus bypasses `tcp_update_pacing_rate()`. It multiplies the max-filtered bottleneck bandwidth estimate `bw` by `pacing_gain` (subtracting a 1% margin `bbr_pacing_margin_percent`), clamps the result via `min(rate, sk->sk_max_pacing_rate)`, and writes it via `WRITE_ONCE(sk->sk_pacing_rate, rate)`.
@@ -1588,11 +1588,11 @@ static int fq_init(struct Qdisc *sch, struct nlattr *opt,
 - The meaning of each default value can be clearly observed:
   - `sch->limit = 10000`: Maximum number of packets per band.
   - `q->flow_plimit = 100`: Maximum packet limit per flow.
-  - `q->quantum = 2 * mtu` (3,028 bytes for an MTU of 1,500, since `psched_mtu()` includes the 14-byte Ethernet header: $1514 \times 2 = 3028$): DRR credit increment added per round in `old_flows`.
+  - `q->quantum = 2 * mtu` (3,028 bytes for an MTU of 1,500, since `psched_mtu()` includes the 14-byte Ethernet header: $$1514 \times 2 = 3028$$): DRR credit increment added per round in `old_flows`.
   - `q->initial_quantum = 10 * mtu` (15,140 bytes for MTU 1,500): Initial credit awarded to new flows (corresponding to IW10).
   - `q->flow_refill_delay = 40 ms`: Minimum idle duration required before replenishing credit up to `quantum` when a `detached` flow returns to `new_flows`.
-  - `q->band_flows[0..2].quantum`: $9 \times 65536 = 589824$, $3 \times 65536 = 196608$, $1 \times 65536 = 65536$ (weight ratio $9 : 3 : 1$).
-  - `q->fq_trees_log = 10` ($2^{10} = 1024$ buckets), `q->orphan_mask = 1023`.
+  - `q->band_flows[0..2].quantum`: $$9 \times 65536 = 589824$$, $$3 \times 65536 = 196608$$, $$1 \times 65536 = 65536$$ (weight ratio $$9 : 3 : 1$$).
+  - `q->fq_trees_log = 10` ($$2^{10} = 1024$$ buckets), `q->orphan_mask = 1023`.
   - `q->low_rate_threshold = 550000 / 8` (68,750 bytes/sec = 550 kbps).
   - `q->timer_slack = 10 us`, `q->horizon = 10 s`, `q->horizon_drop = 1`.
   - `q->ce_threshold = 1000 * ~0U` (approximately 4,294 seconds—effectively disabled by default).
@@ -1604,10 +1604,10 @@ static int fq_init(struct Qdisc *sch, struct nlattr *opt,
 | Item | Theory / Academic / RFC (DRR / RFC 8290 / Carousel) | Linux (`sch_fq` + TCP EDT) | Rationale |
 | --- | --- | --- | --- |
 | Flow classification | Stochastic buckets via 5-tuple hash ([RFC 8290 §4.1](https://www.rfc-editor.org/rfc/rfc8290#section-4.1)) | Local traffic is completely isolated using the `skb->sk` pointer (even upon hash collisions, flows are strictly distinguished via a red-black tree within the bucket). Only forwarded traffic, SYN-ACKs, and unconnected UDP use `skb_get_hash(skb) & orphan_mask`. | For locally generated traffic, `skb->sk` is already known, avoiding 5-tuple hash calculation whilst completely eliminating inter-flow mixing caused by hash collisions. |
-| Packet queuing within a flow | Single FIFO queue | Hybrid of a linear FIFO (`head`/`tail`) for monotonically increasing timestamps and a red-black tree (`t_root`) for out-of-order packets. | Allows TCP to be handled rapidly via an $O(1)$ linear list while still supporting out-of-order EDT specification via `SO_TXTIME` (`eeb84aa0d0af`). |
+| Packet queuing within a flow | Single FIFO queue | Hybrid of a linear FIFO (`head`/`tail`) for monotonically increasing timestamps and a red-black tree (`t_root`) for out-of-order packets. | Allows TCP to be handled rapidly via an $$O(1)$$ linear list while still supporting out-of-order EDT specification via `SO_TXTIME` (`eeb84aa0d0af`). |
 | Scheduler structure for delayed packets | The Carousel paper uses a hierarchical timing wheel. | Per-flow red-black tree `q->delayed` + a single `qdisc_watchdog` (hrtimer) + `timer_slack` (default 10 µs). | Timing wheels have constraints on horizon and granularity and require scanning empty slots, whereas a per-flow red-black tree handles arbitrary nanosecond timestamps and coalesces timer interrupts via `timer_slack`. |
-| Priority bands | Original papers and early `sch_fq` used a single band (+ an `internal` queue for retransmissions and high-priority packets). | 3-band WRR (`band_flows[0..2]`, default weights $9:3:1$) + `q->internal` repurposed exclusively as a fastpath during idle periods. | Prioritises high-priority traffic classes (e.g. AF4) whilst preventing starvation of best-effort traffic; also repurposed `internal` because placing TCP retransmissions into a separate queue inadvertently provoked packet reordering (`90caf67b01fa`, `29f834aa326e`, `076433bd78d7`). |
-| Boundary between new and continuing flows | [RFC 8290 §4.2](https://www.rfc-editor.org/rfc/rfc8290#section-4.2): New flows are granted `quantum`; once depleted in `new_flows`, they transition via `old_flows` before leaving. | New flows receive `initial_quantum` ($10 \times \text{MTU}$); upon restarting after becoming `detached`, credit is restored up to `quantum` ($2 \times \text{MTU}$) only after `flow_refill_delay` (40 ms) has elapsed. | Allows TCP to send its initial window of 10 packets (IW10) within the very first round, whilst preventing gaming attacks where flows briefly pause for under 40 ms to unfairly replenish credits. |
+| Priority bands | Original papers and early `sch_fq` used a single band (+ an `internal` queue for retransmissions and high-priority packets). | 3-band WRR (`band_flows[0..2]`, default weights $$9:3:1$$) + `q->internal` repurposed exclusively as a fastpath during idle periods. | Prioritises high-priority traffic classes (e.g. AF4) whilst preventing starvation of best-effort traffic; also repurposed `internal` because placing TCP retransmissions into a separate queue inadvertently provoked packet reordering (`90caf67b01fa`, `29f834aa326e`, `076433bd78d7`). |
+| Boundary between new and continuing flows | [RFC 8290 §4.2](https://www.rfc-editor.org/rfc/rfc8290#section-4.2): New flows are granted `quantum`; once depleted in `new_flows`, they transition via `old_flows` before leaving. | New flows receive `initial_quantum` ($$10 \times \text{MTU}$$); upon restarting after becoming `detached`, credit is restored up to `quantum` ($$2 \times \text{MTU}$$) only after `flow_refill_delay` (40 ms) has elapsed. | Allows TCP to send its initial window of 10 packets (IW10) within the very first round, whilst preventing gaming attacks where flows briefly pause for under 40 ms to unfairly replenish credits. |
 | EDT jitter compensation | Ideally `wstamp += len / rate` | Computes `credit = tcp_wstamp_ns - prior_wstamp` and shortens interval via `len_ns -= min(len_ns / 2, credit)` by up to half. | Prevents scheduling delays and softirq latencies from accumulating and causing the effective throughput to fall below the target pacing rate (`a7a2563064e9`). |
 | ECN marking criteria | Instantaneous queue length or sojourn time (packet count thresholds in CoDel / RED / DCTCP). | EDT delay at dequeue time: `now - time_next_packet > ce_threshold`. | Avoids mistaking the intentional pacing wait (`time_next_packet - enqueue_time`) for congestion, measuring purely "how late the packet is relative to its scheduled departure time" as true congestion delay (`48872c11b772`). |
 
@@ -1643,7 +1643,7 @@ Tracing the commit history of `net/sched/sch_fq.c` and `net/ipv4/tcp_output.c` r
 ### 4. Fastpath, 3-Band WRR, hardware offload, and multi-clock support (2023–2026)
 
 - `54ff8ad69c6e` "net_sched: sch_fq: struct sched_data reorg", `8f6c4ff9e052` "net_sched: sch_fq: always garbage collect", and `076433bd78d7` "net_sched: sch_fq: add fast path for mostly idle qdisc" (Eric Dumazet, 2023-09): Separated cachelines in `fq_sched_data`, halved average flow memory footprint by running `fq_gc()` on every enqueue, and introduced a fastpath via `q->internal` to bypass `fq_flow` allocations on lightly loaded qdiscs (+5% throughput on `tcp_rr`, +13% on UDP `netperf`, and +30% on `pktgen`).
-- `29f834aa326e` "net_sched: sch_fq: add 3 bands and WRR scheduling" and `49e7265fd098` "net_sched: sch_fq: add TCA_FQ_WEIGHTS attribute" (Eric Dumazet, 2023-10): Added 3-band WRR scheduling (default weights $9:3:1$), 2-bit crumb compression (`prio2band`), and per-band packet limits (`band_pkt_count`).
+- `29f834aa326e` "net_sched: sch_fq: add 3 bands and WRR scheduling" and `49e7265fd098` "net_sched: sch_fq: add TCA_FQ_WEIGHTS attribute" (Eric Dumazet, 2023-10): Added 3-band WRR scheduling (default weights $$9:3:1$$), 2-bit crumb compression (`prio2band`), and per-band packet limits (`band_pkt_count`).
 - `24bcc3076790` "net_sched: sch_fq: implement lockless fq_dump()" (Eric Dumazet, 2024-04): Converted configuration dumps (`tc qdisc show`) to use `READ_ONCE()` / `WRITE_ONCE()`, avoiding acquiring the root Qdisc lock.
 - `f26080d47007` "net_sched: sch_fq: add the ability to offload pacing" (Jeffrey Ji, 2024-10) and `8036cbf026b5` / `e628a85c69ab` (Willem de Bruijn, 2026-09): Added pacing offload capabilities for NICs equipped with hardware timing wheels, handing packets within `offload_horizon` directly to the NIC without host-level throttling.
 - `fabcf8cad67b` "net: sch_fq: update flow delivery time on earlier EDT packet" and `c4f796c4f16b` "net_sched: sch_fq: convert skb->tstamp if not monotonic" (Willem de Bruijn, 2026-05–06): Added `fq_flow_adjust_timer()` when an earlier EDT packet arrives for an already throttled flow, alongside transparent conversion of `CLOCK_REALTIME` and `CLOCK_TAI` timestamps to `CLOCK_MONOTONIC`.
@@ -1679,7 +1679,7 @@ Tracing the commit history of `net/sched/sch_fq.c` and `net/ipv4/tcp_output.c` r
   - `prefetch(next)` in `fq_erase_head()` preloads the first cacheline of the next `struct sk_buff` in anticipation of dequeuing the subsequent packet from the same flow.
   - `prefetch(&skb->end)` in `fq_dequeue()` preloads `skb_shared_info` (which resides immediately past `skb->end` and holds GSO metadata and fragment arrays), which the NIC driver will inspect immediately upon transmission.
 
-### 3. Reducing timer interrupts and maintaining $O(1)$
+### 3. Reducing timer interrupts and maintaining $$O(1)$$
 
 - **Single hrtimer + `timer_slack`**: Even when tens of thousands of flows are being paced simultaneously, the kernel maintains **exactly one** hrtimer per `sch_fq` instance (`q->watchdog`). Furthermore, `q->timer_slack` (default 10 µs) and the check `softexpires - expires <= delta_ns` in `qdisc_watchdog_schedule_range_ns()` coalesce awakenings of multiple flows scheduled within 10 µs into a single timer interrupt.
 - **`q->time_next_delayed_flow` caching**: Even when the `q->delayed` red-black tree is populated, the earliest departure time `q->time_next_delayed_flow` is cached in a scalar variable. Functions like `fq_check_throttled()` and `fq_fastpath_check()` avoid traversing red-black tree pointers entirely until `now` reaches that timestamp.
@@ -1703,7 +1703,7 @@ The table below lists the principal parameters configurable via `tc qdisc add de
 | `pacing` / `nopacing` | `TCA_FQ_RATE_ENABLE` | `pacing` (1) | Enables or disables packet pacing |
 | `maxrate RATE` | `TCA_FQ_FLOW_MAX_RATE` | Unlimited (`~0UL`) | Maximum rate enforced per flow by the Qdisc |
 | `low_rate_threshold RATE` | `TCA_FQ_LOW_RATE_THRESHOLD` | `550Kbit` | Threshold below which non-EDT packets are paced packet-by-packet rather than quantum-by-quantum |
-| `buckets NUMBER` | `TCA_FQ_BUCKETS_LOG` | `1024` ($2^{10}$) | Number of buckets in the `fq_root` hash table (maximum $256\text{ K} = 2^{18}$) |
+| `buckets NUMBER` | `TCA_FQ_BUCKETS_LOG` | `1024` ($$2^{10}$$) | Number of buckets in the `fq_root` hash table (maximum $$256\text{ K} = 2^{18}$$) |
 | `orphan_mask MASK` | `TCA_FQ_ORPHAN_MASK` | `1023` | Bitmask applied to hashes for orphaned, SYN-ACK, and unconnected UDP packets |
 | `timer_slack TIME` | `TCA_FQ_TIMER_SLACK` | `10us` | Batching slack permitted for the `qdisc_watchdog` hrtimer |
 | `horizon TIME` | `TCA_FQ_HORIZON` | `10s` | Maximum acceptable EDT into the future (`now + horizon`) |
@@ -1837,7 +1837,7 @@ In `struct sk_buff`, the list pointers (`next`, `prev`, `dev`) and the red-black
 <details><summary>Answer</summary>
 
 During initialisation (`bbr_init()`), BBR executes `cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE, SK_PACING_NEEDED)`.
-- **Under `pfifo_fast` / `fq_codel`**: Because `sk->sk_pacing_status` remains `SK_PACING_NEEDED`, `tcp_needs_internal_pacing(sk)` returns `true`. Consequently, after transmitting a packet such that `tp->tcp_wstamp_ns > tp->tcp_clock_cache`, `tcp_pacing_check(sk)` evaluates to `true`, interrupting `tcp_write_xmit()` and arming **each socket's individual `tp->pacing_timer` ($N$ hrtimers for $N$ connections)** to enforce pacing.
+- **Under `pfifo_fast` / `fq_codel`**: Because `sk->sk_pacing_status` remains `SK_PACING_NEEDED`, `tcp_needs_internal_pacing(sk)` returns `true`. Consequently, after transmitting a packet such that `tp->tcp_wstamp_ns > tp->tcp_clock_cache`, `tcp_pacing_check(sk)` evaluates to `true`, interrupting `tcp_write_xmit()` and arming **each socket's individual `tp->pacing_timer` ($$N$$ hrtimers for $$N$$ connections)** to enforce pacing.
 - **Under `sch_fq`**: As soon as the first packet traverses `fq_classify()`, `smp_store_release(&sk->sk_pacing_status, SK_PACING_FQ)` is executed. This causes `tcp_needs_internal_pacing(sk)` to return `false`, so `tcp_pacing_check(sk)` always returns `false`. `tcp_write_xmit()` bypasses `tp->pacing_timer` entirely and enqueues batches of EDT-stamped packets into `sch_fq` up to the limit allowed by TSQ (`tcp_small_queue_check()`, approximately 1 ms worth of data). All pacing wait and wakeup operations are consolidated into **a single `q->watchdog` hrtimer** per TX queue (`sch_fq` instance).
 
 </details>
@@ -1848,9 +1848,9 @@ During initialisation (`bbr_init()`), BBR executes `cmpxchg(&sk->sk_pacing_statu
 
 - A single FIFO queue causes Head-of-Line (HoL) blocking between bulk and interactive flows, while traditional token buckets and per-socket timers fail to scale to millions of concurrent flows.
 - `sch_fq` and **EDT (Earliest Departure Time)** unify fair queuing and scalable pacing by adopting **per-packet earliest departure times (`skb->tstamp`)** as the primary scheduling abstraction rather than bitrates.
-- `sch_fq` employs a two-tier scheduling hierarchy: the upper tier applies **3-band WRR** (`band_flows[0..2]`, default weights $9:3:1$) to eliminate inter-priority starvation, while the lower tier performs **Deficit Round Robin (DRR)** using `new_flows` and `old_flows` within each band. Sparse flows (SSH, DNS, pure ACKs) enter `new_flows` and receive rapid service via `initial_quantum` ($10 \times \text{MTU}$), whereas continuous bulk flows cycle through `old_flows` receiving their fair share via `quantum` ($2 \times \text{MTU}$).
-- Packets from local sockets are classified with $O(\log N)$ complexity into per-flow red-black trees within hash buckets keyed on the `skb->sk` pointer. Forwarded packets, SYN-ACKs, and unconnected UDP flows are safely isolated using `skb_get_hash(skb) & orphan_mask` alongside tagged pseudo-pointers with bit 0 set to `1`.
-- Each `struct fq_flow` (128 bytes = 2 cachelines) maintains a hybrid queue consisting of an $O(1)$ linear list (`head`/`tail`) for monotonically increasing EDT packets and a red-black tree (`t_root`) for out-of-order EDT packets.
+- `sch_fq` employs a two-tier scheduling hierarchy: the upper tier applies **3-band WRR** (`band_flows[0..2]`, default weights $$9:3:1$$) to eliminate inter-priority starvation, while the lower tier performs **Deficit Round Robin (DRR)** using `new_flows` and `old_flows` within each band. Sparse flows (SSH, DNS, pure ACKs) enter `new_flows` and receive rapid service via `initial_quantum` ($$10 \times \text{MTU}$$), whereas continuous bulk flows cycle through `old_flows` receiving their fair share via `quantum` ($$2 \times \text{MTU}$$).
+- Packets from local sockets are classified with $$O(\log N)$$ complexity into per-flow red-black trees within hash buckets keyed on the `skb->sk` pointer. Forwarded packets, SYN-ACKs, and unconnected UDP flows are safely isolated using `skb_get_hash(skb) & orphan_mask` alongside tagged pseudo-pointers with bit 0 set to `1`.
+- Each `struct fq_flow` (128 bytes = 2 cachelines) maintains a hybrid queue consisting of an $$O(1)$$ linear list (`head`/`tail`) for monotonically increasing EDT packets and a red-black tree (`t_root`) for out-of-order EDT packets.
 - At dequeue, if `now + offload_horizon < time_next_packet`, the flow is moved to the `q->delayed` red-black tree, and the single instance-wide `qdisc_watchdog` hrtimer (`timer_slack` default 10 µs) is programmed for the earliest deadline. Additionally, if dequeue delay `now - time_next_packet` exceeds `ce_threshold`, the packet is marked with ECN CE.
 - TCP stamps `tp->tcp_wstamp_ns` onto `skb->tstamp` inside `__tcp_transmit_skb()`, and advances `tp->tcp_wstamp_ns` in `tcp_update_skb_after_send()` based on `sk->sk_pacing_rate` and OS scheduling jitter credits. Non-TCP applications (e.g. UDP/QUIC) can directly dictate EDT via `SO_TXTIME` and `SCM_TXTIME` (unprivileged when using `CLOCK_MONOTONIC`).
 

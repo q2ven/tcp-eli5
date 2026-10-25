@@ -59,10 +59,10 @@ Let's trace the exact scenario tested by `test.pkt` (`BYTE_LIMIT = 3500` bytes, 
 1. **Normal Flow A (`fd = 4`) bursts 5000 bytes (5 segments)**:
    - Each segment has `pkt_len` ~ 1066 bytes (MSS 1000 + 66 bytes headers).
    - **Seg 1** (`1:1001`): Queue empty at arrival -> Transmitted immediately (`t = 0 ms`), `next_tx_ns = 4 ms`.
-   - **Seg 2** (`1001:2001`): Queued in `q_normal`, `backlog = 1066` ($\le 3500$).
-   - **Seg 3** (`2001:3001`): Queued in `q_normal`, `backlog = 2132` ($\le 3500$).
-   - **Seg 4** (`3001:4001`): Queued in `q_normal`, `backlog = 3198` ($\le 3500$).
-   - **Seg 5** (`4001:5001`): $3198 + 1066 = 4264 > 3500$ -> **Tail-dropped due to `BYTE_LIMIT`!**
+   - **Seg 2** (`1001:2001`): Queued in `q_normal`, `backlog = 1066` ($$\le 3500$$).
+   - **Seg 3** (`2001:3001`): Queued in `q_normal`, `backlog = 2132` ($$\le 3500$$).
+   - **Seg 4** (`3001:4001`): Queued in `q_normal`, `backlog = 3198` ($$\le 3500$$).
+   - **Seg 5** (`4001:5001`): $$3198 + 1066 = 4264 > 3500$$ -> **Tail-dropped due to `BYTE_LIMIT`!**
 2. **Immediately (`t = 0 ms`), Priority Flow B (`fd = 6`, `SO_PRIORITY = 7`) sends 500 bytes (1 segment)**:
    - `is_prio` is true -> Bypasses `BYTE_LIMIT` and enters `q_prio`.
 3. **Preemption in Departure Order**:

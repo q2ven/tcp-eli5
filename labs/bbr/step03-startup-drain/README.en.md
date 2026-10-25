@@ -14,16 +14,16 @@ When a TCP connection starts, the sender has no idea whether the bottleneck link
 
 Traditional **loss-based** congestion control algorithms (such as Reno and CUBIC) double `cwnd` every RTT during Slow Start and **only stop accelerating when the bottleneck router's buffer overflows and drops packets**. This behaviour inevitably fills router queues to capacity on every new connection, causing burst losses and severe queueing delay (bufferbloat).
 
-In contrast, BBR begins in **`BBR_STARTUP`** mode with both `pacing_gain` and `cwnd_gain` set to $2 / \ln(2) \approx 2.885\text{x}$ (`bbr_high_gain`), doubling its sending rate each round whilst monitoring whether the **measured delivery rate (`max_bw`) has plateaued (stopped growing)**:
+In contrast, BBR begins in **`BBR_STARTUP`** mode with both `pacing_gain` and `cwnd_gain` set to $$2 / \ln(2) \approx 2.885\text{x}$$ (`bbr_high_gain`), doubling its sending rate each round whilst monitoring whether the **measured delivery rate (`max_bw`) has plateaued (stopped growing)**:
 
-- **Whilst the pipe is not yet full (sending rate $< \text{BtlBw}$)**: Doubling the sending rate every round causes the rate at which packets arrive at the receiver (the delivery rate `max_bw` measured from ACKs) to also grow rapidly (roughly doubling every round).
-- **Once the pipe is full (sending rate $\ge \text{BtlBw}$)**: The bottleneck link is already 100% utilised. Sending even faster cannot make packets arrive any faster than `BtlBw` — the measured delivery rate `max_bw` **plateaus at `BtlBw`**, and any excess packets simply pile up in the bottleneck router's queue (increasing RTT without increasing delivery rate).
+- **Whilst the pipe is not yet full (sending rate $$< \text{BtlBw}$$)**: Doubling the sending rate every round causes the rate at which packets arrive at the receiver (the delivery rate `max_bw` measured from ACKs) to also grow rapidly (roughly doubling every round).
+- **Once the pipe is full (sending rate $$\ge \text{BtlBw}$$)**: The bottleneck link is already 100% utilised. Sending even faster cannot make packets arrive any faster than `BtlBw` — the measured delivery rate `max_bw` **plateaus at `BtlBw`**, and any excess packets simply pile up in the bottleneck router's queue (increasing RTT without increasing delivery rate).
 
 Using this physical property, BBR detects that the pipe is full (`full_bw_reached = 1`) with the following rule:
 
 > **Full Pipe Detection Rule**:
 > At the end of each non-application-limited (`rs->is_app_limited == 0`) packet-timed round trip (`round_start == 1`), compare the current maximum delivery rate `max_bw` against the baseline `full_bw`:
-> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($\text{max}_{\text{bw}} \ge 1.25 \times \text{full}_{\text{bw}}$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
+> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($$\text{max}_{\text{bw}} \ge 1.25 \times \text{full}_{\text{bw}}$$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
 > - If `max_bw` grew by **less than 25%**, increment `full_bw_cnt`. Once this happens for **3 consecutive non-app-limited rounds (`full_bw_cnt >= 3`)**, BBR concludes that the pipe is full and sets `full_bw_reached = 1`.
 
 In fixed-point arithmetic (`BBR_SCALE = 8`, where `BBR_UNIT = 256` represents `1.0x`), the `1.25x` growth factor is `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320`, and the threshold is computed as:
@@ -61,9 +61,9 @@ The table below summarises the three modes, their fixed-point gains (`BBR_SCALE 
 
 | Mode | `pacing_gain` | `cwnd_gain` | Role and Transition Rule |
 | :--- | :--- | :--- | :--- |
-| **`BBR_STARTUP`** | `bbr_high_gain = 739` ($\approx 2.89\text{x}$) | `bbr_high_gain = 739` ($\approx 2.89\text{x}$) | Doubles sending rate each round to discover `BtlBw`. When `full_bw_reached == 1`, transition to `BBR_DRAIN` and record `tp->snd_ssthresh = BDP`. |
-| **`BBR_DRAIN`** | `bbr_drain_gain = 88` ($\approx 0.35\text{x}$) | `bbr_high_gain = 739` ($\approx 2.89\text{x}$) | Paces at the reciprocal of `bbr_high_gain` ($1 / 2.885 \approx 0.35\text{x}$) to drain the queue built during STARTUP, whilst keeping `cwnd_gain` at `2.89x` so pacing — not an abrupt `cwnd` clamp — smoothly slows transmission. When `tcp_packets_in_flight(tp) <= 1.0x BDP`, transition to `BBR_PROBE_BW` (which can happen on the very same ACK if in-flight packets are already $\le \text{BDP}$). |
-| **`BBR_PROBE_BW`** | `BBR_UNIT = 256` ($1.0\text{x}$) | `bbr_cwnd_gain = 512` ($2.0\text{x}$) | Cruises at `1.0x` the estimated bottleneck bandwidth whilst maintaining a `2.0x BDP` congestion window to accommodate delayed or stretched ACKs. |
+| **`BBR_STARTUP`** | `bbr_high_gain = 739` ($$\approx 2.89\text{x}$$) | `bbr_high_gain = 739` ($$\approx 2.89\text{x}$$) | Doubles sending rate each round to discover `BtlBw`. When `full_bw_reached == 1`, transition to `BBR_DRAIN` and record `tp->snd_ssthresh = BDP`. |
+| **`BBR_DRAIN`** | `bbr_drain_gain = 88` ($$\approx 0.35\text{x}$$) | `bbr_high_gain = 739` ($$\approx 2.89\text{x}$$) | Paces at the reciprocal of `bbr_high_gain` ($$1 / 2.885 \approx 0.35\text{x}$$) to drain the queue built during STARTUP, whilst keeping `cwnd_gain` at `2.89x` so pacing — not an abrupt `cwnd` clamp — smoothly slows transmission. When `tcp_packets_in_flight(tp) <= 1.0x BDP`, transition to `BBR_PROBE_BW` (which can happen on the very same ACK if in-flight packets are already $$\le \text{BDP}$$). |
+| **`BBR_PROBE_BW`** | `BBR_UNIT = 256` ($$1.0\text{x}$$) | `bbr_cwnd_gain = 512` ($$2.0\text{x}$$) | Cruises at `1.0x` the estimated bottleneck bandwidth whilst maintaining a `2.0x BDP` congestion window to accommodate delayed or stretched ACKs. |
 
 Setting `full_bw_reached = 1` also changes how `bbr_set_pacing_rate()` and `bbr_set_cwnd()` behave:
 - **`bbr_set_pacing_rate()`**: Before the pipe is full (`!ca->full_bw_reached`), `sk->sk_pacing_rate` is only allowed to increase (`rate > sk->sk_pacing_rate`) so noisy or low early rate samples do not stall STARTUP's ramp-up. Once `ca->full_bw_reached == 1`, `bbr_set_pacing_rate()` unconditionally updates `sk->sk_pacing_rate = rate` so BBR can reduce its pacing rate down to `0.35x BtlBw` in `BBR_DRAIN` and `1.0x BtlBw` in `BBR_PROBE_BW`.
@@ -79,7 +79,7 @@ Consider a connection over a constant `100 KB/s` bottleneck (`MSS = 1000` bytes,
    - The flow remains in `BBR_STARTUP` with a pacing rate of roughly `2.89x * 0.99 * 100 KB/s ≈ 286 KB/s`.
 2. **Round 2**:
    - `bw_thresh = (1677 * 320) >> 8 = 2096` (`1.25x` of `1677`).
-   - Because the bottleneck is capped at `100 KB/s`, `ca->max_bw` stays at `1677 < 2096` (0% growth $< 25\%$).
+   - Because the bottleneck is capped at `100 KB/s`, `ca->max_bw` stays at `1677 < 2096` (0% growth $$< 25\%$$).
    - `ca->full_bw_cnt` increments to `1` (still `< 3`, so the flow remains in `BBR_STARTUP`).
 3. **Round 3**:
    - Again `ca->max_bw (1677) < bw_thresh (2096)`, so `ca->full_bw_cnt` increments to `2` (still in `BBR_STARTUP`).
@@ -100,25 +100,25 @@ Before writing the BPF code, review what the kernel already provides on each soc
    - `tp->snd_ssthresh`: slow-start threshold in segments (initialised to `TCP_INFINITE_SSTHRESH`; BBR stores `1.0x BDP` here upon leaving `BBR_STARTUP` for observability).
    - `tp->snd_cwnd_clamp`: upper bound on `snd_cwnd`.
    - `tp->mss_cache`: current Maximum Segment Size (MSS) in bytes.
-   - `tp->srtt_us`: smoothed RTT in $\mu\text{s}$ shifted left by 3 (`tp->srtt_us >> 3` gives $\mu\text{s}$).
+   - `tp->srtt_us`: smoothed RTT in $$\mu\text{s}$$ shifted left by 3 (`tp->srtt_us >> 3` gives $$\mu\text{s}$$).
    - `tp->delivered`: cumulative count of data packets delivered over the connection's lifetime.
    - `tcp_packets_in_flight(tp)`: kernel helper returning the number of packets currently in flight on the network.
 3. **`struct rate_sample *rs` (passed by the kernel to `.cong_control()`)**:
-   - `rs->rtt_us`: RTT measured by this ACK in $\mu\text{s}$ (`<= 0` if unavailable).
+   - `rs->rtt_us`: RTT measured by this ACK in $$\mu\text{s}$$ (`<= 0` if unavailable).
    - `rs->delivered`: number of packets delivered during the measurement interval.
-   - `rs->interval_us`: elapsed time in $\mu\text{s}$ for that delivery interval.
+   - `rs->interval_us`: elapsed time in $$\mu\text{s}$$ for that delivery interval.
    - `rs->prior_delivered`: snapshot of `tp->delivered` taken when the newly ACKed packet was originally transmitted.
    - `rs->acked_sacked`: number of packets newly ACKed or SACKed on this ACK.
    - `rs->is_app_limited`: `1` if the measurement was application-limited (write queue emptied or receiver window limited), or `0` if network-limited.
 4. **`icsk_ca_priv` and `struct bpf_bbr3_ca` (retrieved via `inet_csk_ca(sk)`)**:
    - Every `struct inet_connection_sock` includes an inline scratchpad `icsk_ca_priv` dedicated to the active congestion control algorithm.
    - Calling `inet_csk_ca(sk)` returns a pointer to `icsk_ca_priv` cast to `struct bpf_bbr3_ca *`, which holds our per-connection BBR state:
-     - `min_rtt_us`: minimum RTT observed ($\mu\text{s}$)
+     - `min_rtt_us`: minimum RTT observed ($$\mu\text{s}$$)
      - `max_bw`: maximum delivery rate observed (fixed-point `packets / us << 24`)
      - `round_cnt`: packet-timed round-trip counter
      - `next_rtt_delivered`: `tp->delivered` threshold marking the end of the current round trip
      - `full_bw`: baseline `max_bw` used for the 25% growth check
-     - `full_bw_cnt`: count of consecutive non-app-limited rounds without $\ge 25\%$ growth (`0` to `3`)
+     - `full_bw_cnt`: count of consecutive non-app-limited rounds without $$\ge 25\%$$ growth (`0` to `3`)
      - `mode`: current BBR state (`BBR_STARTUP`, `BBR_DRAIN`, or `BBR_PROBE_BW`)
      - `pacing_gain`, `cwnd_gain`: active gains for the current mode (`BBR_SCALE = 8`, `256 = 1.0x`)
      - `round_start`: `1` if the current ACK crossed a packet-timed round boundary, `0` otherwise
@@ -156,10 +156,10 @@ Using the concepts from Section 2, think through the following three design ques
 <details>
 <summary>Hint and Answer</summary>
 
-- With `else if`, the transition into `BBR_DRAIN` would prevent the second check from running on the same ACK. Even if `tcp_packets_in_flight(tp)` is already $\le 1.0\text{x BDP}$ (i.e. there is no excess queue left to drain), the socket would remain stuck in `BBR_DRAIN` with `pacing_gain = 0.35x` until a subsequent ACK arrives.
+- With `else if`, the transition into `BBR_DRAIN` would prevent the second check from running on the same ACK. Even if `tcp_packets_in_flight(tp)` is already $$\le 1.0\text{x BDP}$$ (i.e. there is no excess queue left to drain), the socket would remain stuck in `BBR_DRAIN` with `pacing_gain = 0.35x` until a subsequent ACK arrives.
 - Writing two independent `if` statements allows execution to **fall through**:
   1. The first `if (ca->mode == BBR_STARTUP && ca->full_bw_reached)` sets `ca->mode = BBR_DRAIN` and records `tp->snd_ssthresh = bbr_bdp(sk, ca->max_bw, BBR_UNIT)`.
-  2. The second `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` immediately evaluates to true if in-flight packets are already $\le \text{BDP}$, advancing `ca->mode = BBR_PROBE_BW` on the very same ACK (which is exactly what happens in Round 4 of [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt)).
+  2. The second `if (ca->mode == BBR_DRAIN && tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT))` immediately evaluates to true if in-flight packets are already $$\le \text{BDP}$$, advancing `ca->mode = BBR_PROBE_BW` on the very same ACK (which is exactly what happens in Round 4 of [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt)).
 
 </details>
 
@@ -171,14 +171,14 @@ Using the constants defined at the top of [starter.bpf.c](file:///usr/local/goog
 <summary>Hint and Answer</summary>
 
 - **`BBR_STARTUP`**:
-  - `ca->pacing_gain = bbr_high_gain;` (`739` $\approx 2.89\text{x}$)
-  - `ca->cwnd_gain = bbr_high_gain;` (`739` $\approx 2.89\text{x}$)
+  - `ca->pacing_gain = bbr_high_gain;` (`739` $$\approx 2.89\text{x}$$)
+  - `ca->cwnd_gain = bbr_high_gain;` (`739` $$\approx 2.89\text{x}$$)
 - **`BBR_DRAIN`**:
-  - `ca->pacing_gain = bbr_drain_gain;` (`88` $\approx 0.35\text{x}$, pacing slower than `BtlBw` to drain the queue)
-  - `ca->cwnd_gain = bbr_high_gain;` (`739` $\approx 2.89\text{x}$, keeping `cwnd` high so pacing smoothly controls the drain)
+  - `ca->pacing_gain = bbr_drain_gain;` (`88` $$\approx 0.35\text{x}$$, pacing slower than `BtlBw` to drain the queue)
+  - `ca->cwnd_gain = bbr_high_gain;` (`739` $$\approx 2.89\text{x}$$, keeping `cwnd` high so pacing smoothly controls the drain)
 - **`BBR_PROBE_BW` (and `default`)**:
-  - `ca->pacing_gain = BBR_UNIT;` (`256` $= 1.0\text{x}$, cruising at the estimated bottleneck rate)
-  - `ca->cwnd_gain = bbr_cwnd_gain;` (`512` $= 2.0\text{x}$, providing `2.0x BDP` headroom for delayed ACKs)
+  - `ca->pacing_gain = BBR_UNIT;` (`256` $$= 1.0\text{x}$$, cruising at the estimated bottleneck rate)
+  - `ca->cwnd_gain = bbr_cwnd_gain;` (`512` $$= 2.0\text{x}$$, providing `2.0x BDP` headroom for delayed ACKs)
 
 </details>
 
@@ -192,10 +192,10 @@ Let's walk through each helper and fixed-point calculation in [solution.bpf.c](f
 
 - `BW_SCALE = 24` (`BW_UNIT = 1 << 24`): fixed-point scale for delivery rates `bw` in packets per microsecond.
 - `BBR_SCALE = 8` (`BBR_UNIT = 1 << 8 = 256`): fixed-point scale for gains and growth factors where `256` equals `1.0x`:
-  - `bbr_high_gain = BBR_UNIT * 2885 / 1000 + 1 = 739` ($\approx 2.89\text{x}$)
-  - `bbr_drain_gain = BBR_UNIT * 1000 / 2885 = 88` ($\approx 0.35\text{x}$)
-  - `bbr_cwnd_gain = BBR_UNIT * 2 = 512` ($2.0\text{x}$)
-  - `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320` ($1.25\text{x}$)
+  - `bbr_high_gain = BBR_UNIT * 2885 / 1000 + 1 = 739` ($$\approx 2.89\text{x}$$)
+  - `bbr_drain_gain = BBR_UNIT * 1000 / 2885 = 88` ($$\approx 0.35\text{x}$$)
+  - `bbr_cwnd_gain = BBR_UNIT * 2 = 512` ($$2.0\text{x}$$)
+  - `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320` ($$1.25\text{x}$$)
   - `bbr_full_bw_cnt = 3U`
 
 ### 2. Packet-Timed Rounds and Peak Bandwidth Tracking: `bbr_update_bw()`
@@ -271,7 +271,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
    - In Round 1 (`1001:2001`, ACKed after 10 ms), `ca->max_bw` (`100 KB/s`) is recorded as the baseline `ca->full_bw` with `ca->full_bw_cnt = 0`.
    - Because the flow is in `BBR_STARTUP` (`pacing_gain = 739 / 256 ≈ 2.89x`), `tcpi_pacing_rate` is `~286 KB/s` (`250000 < tcpi_pacing_rate < 320000`) and `tcpi_snd_ssthresh` is `0x7fffffff` (`TCP_INFINITE_SSTHRESH`).
 3. **Rounds 2 (`2001:3001`) and 3 (`3001:4001`)**:
-   - Each 1,000-byte segment is ACKed 10 ms later, so the measured bandwidth stays flat at `100 KB/s` (0% growth $< 25\%$).
+   - Each 1,000-byte segment is ACKed 10 ms later, so the measured bandwidth stays flat at `100 KB/s` (0% growth $$< 25\%$$).
    - `ca->full_bw_cnt` increments to `1` in Round 2 and `2` in Round 3. Since `full_bw_cnt < 3`, the flow remains in `BBR_STARTUP` at `~286 KB/s`.
 4. **Round 4 (`4001:5001`) Transition and Assertions**:
    - On the 3rd consecutive round without 25% bandwidth growth, `ca->full_bw_cnt` reaches `3` and sets `ca->full_bw_reached = 1`.

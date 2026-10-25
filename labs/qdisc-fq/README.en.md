@@ -116,7 +116,7 @@ This track utilizes modern **BPF Graph Data Structures** introduced in Linux 6.x
 | :--- | :--- |
 | `struct_ops` (`struct Qdisc_ops`) | Implements and registers a kernel Qdisc dynamically and safely via BPF |
 | `bpf_list_head` / `bpf_list_node` | Implements the DRR `fq_new_flows` and `fq_old_flows` scheduling queues |
-| `bpf_rb_root` / `bpf_rb_node` | Manages timestamp-ordered packet queues and throttled flows (`fq_delayed`) in $O(\log N)$ time |
+| `bpf_rb_root` / `bpf_rb_node` | Manages timestamp-ordered packet queues and throttled flows (`fq_delayed`) in $$O(\log N)$$ time |
 | `bpf_refcount` | Provides safe shared ownership of flow nodes across the hash map (flow table) and active scheduling lists |
 | `bpf_kptr_xchg()` | Atomically transfers and exchanges kernel object ownership |
 | `bpf_qdisc_watchdog_schedule()` | Kernel kfunc to schedule high-resolution wakeups for paced packet departure |

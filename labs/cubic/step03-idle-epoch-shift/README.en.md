@@ -16,17 +16,17 @@ In this step, you will learn from first principles why wall-clock-driven CUBIC i
 
 Classical TCP Reno (AIMD) advances `snd_cwnd` purely by counting arriving ACKs. When an application stops writing data and the connection goes idle (zero unacknowledged packets in the network, `in_flight == 0`), no ACKs arrive and Reno's congestion control clock naturally pauses.
 
-CUBIC, by contrast, computes its target window `bic_target` ($W_{\text{cubic}}(t)$) in Congestion Avoidance as a cubic function of the **wall-clock time $t$ elapsed since the current epoch began**:
+CUBIC, by contrast, computes its target window `bic_target` ($$W_{\text{cubic}}(t)$$) in Congestion Avoidance as a cubic function of the **wall-clock time $$t$$ elapsed since the current epoch began**:
 
 $$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 What happens if a flow in Congestion Avoidance sits idle for 2 seconds and then resumes sending?
 
-If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
+If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $$t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$$ **jumps forward by the entire 2-second idle gap at once**. As a result, $$(t - K)^3$$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $$1.5\times$$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $$t$$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
 
 ### 2.2 The Solution: Horizontal Time Shift (`+= delta`), Not Epoch Reset (`= 0`)
 
-To exclude the idle duration $\Delta_{\text{idle}}$ from the elapsed time $t$, we shift `ca->epoch_start` forward by $\Delta_{\text{idle}}$ at the exact moment transmission resumes:
+To exclude the idle duration $$\Delta_{\text{idle}}$$ from the elapsed time $$t$$, we shift `ca->epoch_start` forward by $$\Delta_{\text{idle}}$$ at the exact moment transmission resumes:
 
 $$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
@@ -46,7 +46,7 @@ $$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}})
 ```
 
 Notice why we **shift `ca->epoch_start += delta` instead of resetting `ca->epoch_start = 0`**:
-CUBIC's concave region ($t < K$) is steepest right at the start of an epoch and flattens out as `cwnd` approaches the $W_{\max}$ plateau. If we reset `ca->epoch_start = 0` on every idle pause, `bictcp_update()` would recompute `ca->bic_K` from the current `cwnd` on the next ACK and start a brand-new epoch from scratch. A flow that had already reached the flat plateau near $W_{\max}$ would repeatedly restart the steep initial climb as if it had just exited recovery. Shifting `ca->epoch_start += delta` translates the cubic curve horizontally in time, **preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's exact position on the curve** while pausing the clock during the idle gap.
+CUBIC's concave region ($$t < K$$) is steepest right at the start of an epoch and flattens out as `cwnd` approaches the $$W_{\max}$$ plateau. If we reset `ca->epoch_start = 0` on every idle pause, `bictcp_update()` would recompute `ca->bic_K` from the current `cwnd` on the next ACK and start a brand-new epoch from scratch. A flow that had already reached the flat plateau near $$W_{\max}$$ would repeatedly restart the steep initial climb as if it had just exited recovery. Shifting `ca->epoch_start += delta` translates the cubic curve horizontally in time, **preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's exact position on the curve** while pausing the clock during the idle gap.
 
 ### 2.3 Edge Case 1: When No Epoch Has Started Yet (`ca->epoch_start == 0`)
 
@@ -62,34 +62,34 @@ At first glance, since `delta = now - tp->lsndtime`, it might seem impossible fo
 
 Consider the following sequence of events:
 
-1. At time $T_0$, the sender transmits its last data segment before Fast Recovery finishes (`tp->lsndtime` $= T_0$).
-2. At time $T_1$ ($T_1 > T_0$, e.g. one RTT later), a cumulative ACK arrives that completes recovery, and `bictcp_update()` runs on that ACK (or a subsequent ACK), initialising `ca->epoch_start` $= T_1$. Because the application has no new data to send at $T_1$, no packet is transmitted and `tp->lsndtime` remains $T_0$.
-3. The connection sits idle until time $T_2$ (`now` $= T_2$), when the application writes new data.
+1. At time $$T_0$$, the sender transmits its last data segment before Fast Recovery finishes (`tp->lsndtime` $$= T_0$$).
+2. At time $$T_1$$ ($$T_1 > T_0$$, e.g. one RTT later), a cumulative ACK arrives that completes recovery, and `bictcp_update()` runs on that ACK (or a subsequent ACK), initialising `ca->epoch_start` $$= T_1$$. Because the application has no new data to send at $$T_1$$, no packet is transmitted and `tp->lsndtime` remains $$T_0$$.
+3. The connection sits idle until time $$T_2$$ (`now` $$= T_2$$), when the application writes new data.
 
-At $T_2$, the idle duration since the last send is $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$. Adding $\Delta_{\text{idle}}$ to `ca->epoch_start` gives:
+At $$T_2$$, the idle duration since the last send is $$\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$$. Adding $$\Delta_{\text{idle}}$$ to `ca->epoch_start` gives:
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
-`ca->epoch_start` has moved into the **future** by $T_1 - T_0$ beyond `now` ($T_2$)!
+`ca->epoch_start` has moved into the **future** by $$T_1 - T_0$$ beyond `now` ($$T_2$$)!
 
-If an ACK arrives in the same jiffy ($T_2$) while `ca->epoch_start > tcp_jiffies32`, line 174 of `bictcp_update()` suffers a catastrophic underflow:
+If an ACK arrives in the same jiffy ($$T_2$$) while `ca->epoch_start > tcp_jiffies32`, line 174 of `bictcp_update()` suffers a catastrophic underflow:
 
 ```c
 t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;
 ```
 
-Because `tcp_jiffies32 < ca->epoch_start`, `(__s32)(tcp_jiffies32 - ca->epoch_start)` evaluates to a **negative signed integer**. Multiplying by `USEC_PER_JIFFY` and assigning to `__u64 t` sign-extends and wraps that negative value into a massive unsigned number near $2^{64}$, blowing up `offs^3` and `bic_target`.
+Because `tcp_jiffies32 < ca->epoch_start`, `(__s32)(tcp_jiffies32 - ca->epoch_start)` evaluates to a **negative signed integer**. Multiplying by `USEC_PER_JIFFY` and assigning to `__u64 t` sign-extends and wraps that negative value into a massive unsigned number near $$2^{64}$$, blowing up `offs^3` and `bic_target`.
 
 To prevent `ca->epoch_start` from ever moving into the future, we must clamp it right after adding `delta`: if `after(ca->epoch_start, now)` is true, set `ca->epoch_start = now`.
 
 ### 2.5 Concrete Numerical Example (Matching `test.pkt`)
 
-Suppose a flow with RTT $= 20\text{ ms}$ ($d_{\min} = 20{,}000\ \mu\text{s}$) experiences loss at `cwnd = 20`, setting `last_max_cwnd` ($W_{\max}$) $= 20$ and `ssthresh` $= 14$ ($K \approx 2.46\text{ s}$):
+Suppose a flow with RTT $$= 20\text{ ms}$$ ($$d_{\min} = 20{,}000\ \mu\text{s}$$) experiences loss at `cwnd = 20`, setting `last_max_cwnd` ($$W_{\max}$$) $$= 20$$ and `ssthresh` $$= 14$$ ($$K \approx 2.46\text{ s}$$):
 
-- Upon exiting recovery into Congestion Avoidance, `cwnd` grows from $14 \to 15$, and after sending and ACKing one RTT ($20\text{ ms}$) of data, the elapsed time is $\approx 40\text{ ms}$ and `cwnd = 15`.
-- The connection now sits **idle for $2.0\text{ s}$**, then sends 15 segments and receives an ACK $20\text{ ms}$ later:
-  - **With idle epoch shift (correct)**: `ca->epoch_start` is shifted forward by $2.0\text{ s}$ when transmission resumes. When the ACK arrives $20\text{ ms}$ later, the effective elapsed time $t$ is only $\approx 60\text{ ms} + d_{\min}$. Because $t \ll K$, `bic_target` stays at $15$ and `cwnd` **remains $15$**.
-  - **Without idle epoch shift (bug)**: `ca->epoch_start` is not shifted, so $t$ jumps by $2.0\text{ s}$ to $\approx 2.06\text{ s}$ on the first ACK after idle. Because $2.06\text{ s}$ is close to $K = 2.46\text{ s}$, `bic_target` leaps to $W_{\max} = 20$, `ca->cnt` drops to $15 / (20 - 15) = 3$, and `cwnd` **spikes from $15$ to $20$** in a single ACK!
+- Upon exiting recovery into Congestion Avoidance, `cwnd` grows from $$14 \to 15$$, and after sending and ACKing one RTT ($$20\text{ ms}$$) of data, the elapsed time is $$\approx 40\text{ ms}$$ and `cwnd = 15`.
+- The connection now sits **idle for $$2.0\text{ s}$$**, then sends 15 segments and receives an ACK $$20\text{ ms}$$ later:
+  - **With idle epoch shift (correct)**: `ca->epoch_start` is shifted forward by $$2.0\text{ s}$$ when transmission resumes. When the ACK arrives $$20\text{ ms}$$ later, the effective elapsed time $$t$$ is only $$\approx 60\text{ ms} + d_{\min}$$. Because $$t \ll K$$, `bic_target` stays at $$15$$ and `cwnd` **remains $$15$$**.
+  - **Without idle epoch shift (bug)**: `ca->epoch_start` is not shifted, so $$t$$ jumps by $$2.0\text{ s}$$ to $$\approx 2.06\text{ s}$$ on the first ACK after idle. Because $$2.06\text{ s}$$ is close to $$K = 2.46\text{ s}$$, `bic_target` leaps to $$W_{\max} = 20$$, `ca->cnt` drops to $$15 / (20 - 15) = 3$$, and `cwnd` **spikes from $$15$$ to $$20$$** in a single ACK!
 
 ### 2.6 What the Kernel and `bpf_cc_helpers.h` Provide for This Step
 
@@ -156,7 +156,7 @@ When updating `ca->epoch_start` with `delta`: (1) why do we shift `ca->epoch_sta
 <summary>Hint and Answer</summary>
 
 1. **Why we shift instead of resetting (Section 2.2)**:
-   Resetting `ca->epoch_start = 0` would force `bictcp_update()` on the next ACK to recompute `ca->bic_K` and start a brand-new epoch from scratch. Because CUBIC's concave curve is steepest right at the start of an epoch and flattens near $W_{\max}$, resetting `epoch_start = 0` on every idle pause would cause a flow near the $W_{\max}$ plateau to repeatedly restart the aggressive initial climb. Shifting `ca->epoch_start += delta` translates the curve horizontally in time, preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's position on the curve.
+   Resetting `ca->epoch_start = 0` would force `bictcp_update()` on the next ACK to recompute `ca->bic_K` and start a brand-new epoch from scratch. Because CUBIC's concave curve is steepest right at the start of an epoch and flattens near $$W_{\max}$$, resetting `epoch_start = 0` on every idle pause would cause a flow near the $$W_{\max}$$ plateau to repeatedly restart the aggressive initial climb. Shifting `ca->epoch_start += delta` translates the curve horizontally in time, preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's position on the curve.
 2. **Why we check `if (ca->epoch_start && delta > 0)` (Section 2.3)**:
    `ca->epoch_start == 0` is the sentinel indicating that no Congestion Avoidance epoch is active yet (e.g. during Slow Start or right after packet loss). Adding `delta` when `ca->epoch_start == 0` would corrupt the `0` sentinel into a non-zero timestamp and skip epoch initialisation in `bictcp_update()`. Checking `delta > 0` ensures at least 1 jiffy of idle time has elapsed.
 
@@ -169,12 +169,12 @@ Right after `ca->epoch_start += delta;`, why do we need `if (after(ca->epoch_sta
 <details>
 <summary>Hint and Answer</summary>
 
-As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($T_0$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($T_1 > T_0$). If the last packet before recovery completes was sent at $T_0$, the epoch started on an ACK at $T_1 > T_0$ without sending new data, and the flow then sat idle until $T_2$ (`now`), then:
+As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($$T_0$$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($$T_1 > T_0$$). If the last packet before recovery completes was sent at $$T_0$$, the epoch started on an ACK at $$T_1 > T_0$$ without sending new data, and the flow then sat idle until $$T_2$$ (`now`), then:
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 placing `ca->epoch_start` in the future relative to `now`!
-If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $2^{64}$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.
+If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $$2^{64}$$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.
 
 </details>
 
@@ -226,7 +226,7 @@ Because `bpf_cubic5_cwnd_event_tx_start()` advances `ca->epoch_start` by the idl
 	t /= USEC_PER_SEC;
 ```
 
-- `tcp_jiffies32 - ca->epoch_start` now measures only the active (non-idle) time elapsed in the epoch, keeping `t` (in units of $1/1024\text{ s}$) aligned with the cubic curve prior to the idle pause.
+- `tcp_jiffies32 - ca->epoch_start` now measures only the active (non-idle) time elapsed in the epoch, keeping `t` (in units of $$1/1024\text{ s}$$) aligned with the cubic curve prior to the idle pause.
 
 ### 4.3 Registering `.cwnd_event_tx_start` in `struct tcp_congestion_ops bpf_cubic5`
 
@@ -251,7 +251,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 
 ### 5.1 Walkthrough of `test.pkt`
 
-`test.pkt` tests the idle epoch shift across five stages on a connection with a $20\text{ ms}$ RTT:
+`test.pkt` tests the idle epoch shift across five stages on a connection with a $$20\text{ ms}$$ RTT:
 
 1. **Connection establishment and sysctl setup (lines 8–20)**:
    - Sets `net.ipv4.tcp_congestion_control=bpf_cubic5`.
@@ -261,13 +261,13 @@ struct tcp_congestion_ops bpf_cubic5 = {
 3. **Packet loss and Fast Recovery into Congestion Avoidance (lines 30–46)**:
    - Sends 20 segments (20,000 bytes); loses the first segment and receives 3 SACKs to enter Fast Recovery.
    - `bpf_cubic5_recalc_ssthresh()` sets `ca->last_max_cwnd = 20`, `snd_ssthresh = (20 * 717) / 1024 = 14`, and `ca->epoch_start = 0`.
-   - A cumulative ACK (`ack 30001`) completes recovery: `tcp_complete_cwr()` sets `snd_cwnd = ssthresh = 14` and transitions to `TCP_CA_Open`, and `bpf_cubic5_cong_avoid()` runs on the same ACK. `bictcp_update()` initialises `ca->epoch_start = tcp_jiffies32` and `ca->bic_K = 2524` ($\approx 2.46\text{ s}$), and with `bic_target = 15` (`ca->cnt = 14`), `tcpi_snd_cwnd` grows from `14` to `15`.
+   - A cumulative ACK (`ack 30001`) completes recovery: `tcp_complete_cwr()` sets `snd_cwnd = ssthresh = 14` and transitions to `TCP_CA_Open`, and `bpf_cubic5_cong_avoid()` runs on the same ACK. `bictcp_update()` initialises `ca->epoch_start = tcp_jiffies32` and `ca->bic_K = 2524` ($$\approx 2.46\text{ s}$$), and with `bic_target = 15` (`ca->cnt = 14`), `tcpi_snd_cwnd` grows from `14` to `15`.
 4. **One RTT (15 segments) in Congestion Avoidance before going idle (lines 48–54)**:
-   - Sends 15 segments (15,000 bytes) and receives an ACK $20\text{ ms}$ later, verifying `tcpi_snd_cwnd == 15`. At this point, `in_flight` drops to `0`.
+   - Sends 15 segments (15,000 bytes) and receives an ACK $$20\text{ ms}$$ later, verifying `tcpi_snd_cwnd == 15`. At this point, `in_flight` drops to `0`.
 5. **2.0-second idle period followed by 15 segments and ACK (lines 56–67)**:
-   - Sits idle for `+2.000` seconds with `in_flight == 0`, then writes 15 segments (`15,000` bytes), receives the ACK $20\text{ ms}$ later, and asserts `tcpi_snd_cwnd <= 15`.
-   - **Why `starter.bpf.c` fails**: `bpf_cubic5_cwnd_event_tx_start()` is a no-op, leaving `ca->epoch_start` 2 seconds in the past. When the ACK arrives after the idle period, `t` jumps to $\approx 2.06\text{ s}$, `bic_target` leaps to `W_max = 20`, `ca->cnt` drops to `15 / (20 - 15) = 3`, and `tcpi_snd_cwnd` spikes from `15` to **`>= 20`** in a single ACK, failing `assert tcpi_snd_cwnd <= 15`.
-   - **Why `solution.bpf.c` passes**: sending the first segment after the pause triggers `bpf_cubic5_cwnd_event_tx_start()`, which shifts `ca->epoch_start` forward by the 2-second idle delta. When the ACK arrives $20\text{ ms}$ later, `t` is only $\approx 60\text{ ms}$, `bic_target = 15 <= cwnd (15)` (`ca->cnt = 100 * 15 = 1500`), and `tcpi_snd_cwnd` stays **`15`** (`<= 15`), passing the assertion.
+   - Sits idle for `+2.000` seconds with `in_flight == 0`, then writes 15 segments (`15,000` bytes), receives the ACK $$20\text{ ms}$$ later, and asserts `tcpi_snd_cwnd <= 15`.
+   - **Why `starter.bpf.c` fails**: `bpf_cubic5_cwnd_event_tx_start()` is a no-op, leaving `ca->epoch_start` 2 seconds in the past. When the ACK arrives after the idle period, `t` jumps to $$\approx 2.06\text{ s}$$, `bic_target` leaps to `W_max = 20`, `ca->cnt` drops to `15 / (20 - 15) = 3`, and `tcpi_snd_cwnd` spikes from `15` to **`>= 20`** in a single ACK, failing `assert tcpi_snd_cwnd <= 15`.
+   - **Why `solution.bpf.c` passes**: sending the first segment after the pause triggers `bpf_cubic5_cwnd_event_tx_start()`, which shifts `ca->epoch_start` forward by the 2-second idle delta. When the ACK arrives $$20\text{ ms}$$ later, `t` is only $$\approx 60\text{ ms}$$, `bic_target = 15 <= cwnd (15)` (`ca->cnt = 100 * 15 = 1500`), and `tcpi_snd_cwnd` stays **`15`** (`<= 15`), passing the assertion.
 
 ### 5.2 How to Run
 

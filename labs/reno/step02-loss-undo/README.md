@@ -57,7 +57,7 @@ Reno の `.undo_cwnd(sk)` は、現在の `snd_cwnd` とロス前に退避して
 
 $$\text{cwnd}_{\text{undo}} = \max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$
 
-なぜ単純に `loss_cwnd` を返すのではなく $\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$ を取るのでしょうか？誤検出された Recovery や Loss の最中にも ACK が到着してウィンドウが成長し、Undo が発動した時点の `tp->snd_cwnd` がすでにロス開始時の `loss_cwnd` を上回っているケースがあるからです。$\max$ を取ることで、Undo によってかえってウィンドウが縮んでしまう逆転現象を防ぎます（なお、`snd_ssthresh` 自体は TCP コア側が `tp->prior_ssthresh` から自動的に復元します）。
+なぜ単純に `loss_cwnd` を返すのではなく $$\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$ を取るのでしょうか？誤検出された Recovery や Loss の最中にも ACK が到着してウィンドウが成長し、Undo が発動した時点の `tp->snd_cwnd` がすでにロス開始時の `loss_cwnd` を上回っているケースがあるからです。$$\max$$ を取ることで、Undo によってかえってウィンドウが縮んでしまう逆転現象を防ぎます（なお、`snd_ssthresh` 自体は TCP コア側が `tp->prior_ssthresh` から自動的に復元します）。
 
 ### 具体例とシーケンス図（`snd_cwnd = 10` からの Reordering と Undo）
 
@@ -251,7 +251,7 @@ u32 BPF_PROG(bpf_reno2_ssthresh, struct sock *sk)
 }
 ```
 
-- ビット右シフト `tp->snd_cwnd >> 1U` で整数の 2 除算（$\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$）を計算し、`max(..., 2U)` で RFC 5681 §3.1 の下限 `2` を保証します。
+- ビット右シフト `tp->snd_cwnd >> 1U` で整数の 2 除算（$$\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$$）を計算し、`max(..., 2U)` で RFC 5681 §3.1 の下限 `2` を保証します。
 - 同時に、あとで DSACK Undo が起きたときに戻せるよう、縮小前の `tp->snd_cwnd` を `ca->loss_cwnd` に退避します。
 
 ### 3. `TCP_CA_Loss` 状態への遷移処理: `bpf_reno2_set_state()`

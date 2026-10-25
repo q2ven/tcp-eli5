@@ -35,7 +35,7 @@ This phenomenon is known as **Bufferbloat**. Whenever a background file download
 At the opposite extreme — on high-speed links behind **shallow-buffered** data-centre switches, or across wireless, cellular, and long-haul optical links subject to occasional **random non-congestive packet drops** — loss-based algorithms suffer the inverse failure:
 
 - Even when the pipe is mostly empty and ample bandwidth is available, **a single packet drop** caused by a transient microburst or wireless noise causes Reno to slash `cwnd` by **50% (`0.5x`)** and CUBIC to cut `cwnd` by **30% (`0.7x`)**.
-- For example, sustaining 10 Gbps across a 100 ms path (a BDP of ~86,000 packets) with CUBIC requires a packet loss rate below roughly $10^{-8}$. Even a tiny fraction of random loss repeatedly chops `cwnd` down, causing throughput to collapse even though the link is nowhere near congested.
+- For example, sustaining 10 Gbps across a 100 ms path (a BDP of ~86,000 packets) with CUBIC requires a packet loss rate below roughly $$10^{-8}$$. Even a tiny fraction of random loss repeatedly chops `cwnd` down, causing throughput to collapse even though the link is nowhere near congested.
 
 ### The Root Cause
 
@@ -58,11 +58,11 @@ A physical pipe is characterised by just two parameters:
 
 1. **The "Width" of the Pipe = Bottleneck Bandwidth (`BtlBw`)**
    - The maximum rate at which data can flow through the narrowest link (the bottleneck) along the path.
-   - No matter how fast the sender injects packets, the rate at which data arrives at the receiver — the **Delivery Rate** ($\Delta \text{delivered} / \Delta t$) — can never exceed the physical capacity of the bottleneck. Conversely, when the application has little data to send (`is_app_limited`), the observed delivery rate will be much lower than capacity.
+   - No matter how fast the sender injects packets, the rate at which data arrives at the receiver — the **Delivery Rate** ($$\Delta \text{delivered} / \Delta t$$) — can never exceed the physical capacity of the bottleneck. Conversely, when the application has little data to send (`is_app_limited`), the observed delivery rate will be much lower than capacity.
    - Therefore, BBR estimates the pipe's width `BtlBw` by tracking the **windowed maximum (max-filter)** of the delivery rate measured across ACKs.
 2. **The "Length" of the Pipe = Round-trip propagation time (`RTprop`)**
    - The pure physical two-way travel time of the path when router queues along the path are **completely empty (zero packets queued)**.
-   - Whenever a queue builds up at a router, the measured RTT increases to $\text{RTT} = \text{RTprop} + \text{queueing}_{\text{delay}}$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
+   - Whenever a queue builds up at a router, the measured RTT increases to $$\text{RTT} = \text{RTprop} + \text{queueing}_{\text{delay}}$$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
    - Therefore, BBR estimates the pipe's length `RTprop` by tracking the **windowed minimum (min-filter)** of RTT samples measured across ACKs.
 
 ### Kleinrock's Optimal Operating Point
@@ -96,8 +96,8 @@ Even if `cwnd` (the total number of packets allowed in flight) is set to exactly
 
 Instead of relying solely on `cwnd`, BBR configures the socket's pacing rate (`sk->sk_pacing_rate`) to **space outgoing packets evenly over time at the exact bottleneck rate `BtlBw`**:
 
-- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($\text{pacing}_{\text{gain}} \times \text{BtlBw}$).
-- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($\text{cwnd}_{\text{gain}} \times \text{BDP}$).
+- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($$\text{pacing}_{\text{gain}} \times \text{BtlBw}$$).
+- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($$\text{cwnd}_{\text{gain}} \times \text{BDP}$$).
 
 Working together, pacing and BDP-based `cwnd` keep the pipe 100% full without building queues at the bottleneck.
 
@@ -143,37 +143,37 @@ Let us walk through each of the four modes in order:
 ### 1. `BBR_STARTUP` (Implemented in Step 3)
 
 - **Purpose**: Rapidly discover the unknown bottleneck bandwidth `BtlBw` when a connection starts.
-- **Behaviour**: Sets both `pacing_gain` and `cwnd_gain` to $\frac{2}{\ln 2} \approx 2.89\times$, doubling the sending rate every round trip.
-- **Exit condition**: Instead of waiting for packet loss, BBR watches the delivery rate (`max_bw`). Once **3 consecutive non-application-limited round trips pass without `max_bw` growing by at least 25% ($\times 1.25$)**, BBR concludes that the pipe has reached full capacity (`full_bw_reached = 1`) and transitions to `BBR_DRAIN`.
+- **Behaviour**: Sets both `pacing_gain` and `cwnd_gain` to $$\frac{2}{\ln 2} \approx 2.89\times$$, doubling the sending rate every round trip.
+- **Exit condition**: Instead of waiting for packet loss, BBR watches the delivery rate (`max_bw`). Once **3 consecutive non-application-limited round trips pass without `max_bw` growing by at least 25% ($$\times 1.25$$)**, BBR concludes that the pipe has reached full capacity (`full_bw_reached = 1`) and transitions to `BBR_DRAIN`.
 
 ### 2. `BBR_DRAIN` (Implemented in Step 3)
 
-- **Purpose**: Drain the excess queue (~$1.89 \times \text{BDP}$) that accumulated at the bottleneck router during the 3 plateau rounds of `BBR_STARTUP`.
-- **Behaviour**: Cuts `pacing_gain` to the multiplicative inverse of the startup gain, $\frac{\ln 2}{2} \approx 0.35\times$. Because packets are now injected at only 35% of `BtlBw`, the bottleneck queue drains at 65% of line rate.
-- **Exit condition**: As soon as the number of packets in flight (`tcp_packets_in_flight()`) drops to or below **$1.0 \times \text{BDP}$**, the excess queue has been cleared and BBR enters steady state (`BBR_PROBE_BW`).
+- **Purpose**: Drain the excess queue (~$$1.89 \times \text{BDP}$$) that accumulated at the bottleneck router during the 3 plateau rounds of `BBR_STARTUP`.
+- **Behaviour**: Cuts `pacing_gain` to the multiplicative inverse of the startup gain, $$\frac{\ln 2}{2} \approx 0.35\times$$. Because packets are now injected at only 35% of `BtlBw`, the bottleneck queue drains at 65% of line rate.
+- **Exit condition**: As soon as the number of packets in flight (`tcp_packets_in_flight()`) drops to or below **$$1.0 \times \text{BDP}$$**, the excess queue has been cleared and BBR enters steady state (`BBR_PROBE_BW`).
 
 ### 3. `BBR_PROBE_BW` (Implemented in Step 4)
 
 - **Purpose**: The steady-state mode where a long-lived BBR flow spends roughly **98% of its time**, cruising at full bandwidth with minimal queue whilst periodically checking whether additional bandwidth has become available.
 - **Behaviour**: Rotates through an 8-phase `pacing_gain` cycle **`[5/4, 3/4, 1, 1, 1, 1, 1, 1]`**, advancing one phase roughly every `RTprop` (`min_rtt_us`):
   - **Phase 0 (`5/4 = 1.25x` — Probe for Bandwidth)**: Sends 25% faster than the current `BtlBw` for one `RTprop`. If spare capacity has opened up on the link, the returning ACKs will show a higher delivery rate and raise `max_bw`.
-  - **Phase 1 (`3/4 = 0.75x` — Drain Excess Queue)**: If no extra bandwidth was available, Phase 0 built a small queue of $0.25 \times \text{BDP}$ at the router. Phase 1 paces at 25% below `BtlBw` for one `RTprop` (or exits early as soon as in-flight falls back to $\le 1.0 \times \text{BDP}$) to drain that self-inflicted queue.
-  - **Phases 2–7 (`1.0x` $\times$ 6 — Cruise)**: Sends at exactly `1.0x BtlBw` for 6 `RTprop` intervals, achieving high throughput and low queueing delay. Throughout `BBR_PROBE_BW`, `cwnd_gain` is held at $2.0\times$ to provide enough headroom for delayed ACKs and receiver offload bursts.
+  - **Phase 1 (`3/4 = 0.75x` — Drain Excess Queue)**: If no extra bandwidth was available, Phase 0 built a small queue of $$0.25 \times \text{BDP}$$ at the router. Phase 1 paces at 25% below `BtlBw` for one `RTprop` (or exits early as soon as in-flight falls back to $$\le 1.0 \times \text{BDP}$$) to drain that self-inflicted queue.
+  - **Phases 2–7 (`1.0x` $$\times$$ 6 — Cruise)**: Sends at exactly `1.0x BtlBw` for 6 `RTprop` intervals, achieving high throughput and low queueing delay. Throughout `BBR_PROBE_BW`, `cwnd_gain` is held at $$2.0\times$$ to provide enough headroom for delayed ACKs and receiver offload bursts.
 
 ### 4. `BBR_PROBE_RTT` (Implemented in Step 5)
 
 - **Purpose**: Re-measure the true unloaded propagation delay `RTprop` (`min_rtt_us`) if a route change occurred or if competing flows created a persistent standing queue that hid the true minimum RTT.
 - **Behaviour**: If `min_rtt_us` has not been updated by a strictly smaller RTT sample for **10 seconds** (shortened to **2 seconds** in this lab so `packetdrill` tests run quickly), BBR enters `BBR_PROBE_RTT`:
   - Saves the current congestion window in `ca->prior_cwnd` and **clamps `snd_cwnd` down to `4` packets (`BBR_MIN_PIPE_CWND`)**.
-  - Holds `snd_cwnd = 4` for **at least 200 ms and at least 1 packet-timed round trip** after packets in flight drop to $\le 4$, ensuring the bottleneck queue drains completely so the true minimum RTT can be observed.
-  - Restores `snd_cwnd` back to `prior_cwnd` and returns to `BBR_PROBE_BW` (spending 200 ms every 10 seconds costs at most $200\text{ ms} / 10\text{ s} = 2\%$ of bandwidth).
+  - Holds `snd_cwnd = 4` for **at least 200 ms and at least 1 packet-timed round trip** after packets in flight drop to $$\le 4$$, ensuring the bottleneck queue drains completely so the true minimum RTT can be observed.
+  - Restores `snd_cwnd` back to `prior_cwnd` and returns to `BBR_PROBE_BW` (spending 200 ms every 10 seconds costs at most $$200\text{ ms} / 10\text{ s} = 2\%$$ of bandwidth).
 
 | Mode | `pacing_gain` | `cwnd_gain` | Primary Purpose | Transition Condition | Lab Step |
 | --- | --- | --- | --- | --- | --- |
-| `BBR_STARTUP` | $2/\ln 2 \approx 2.89\times$ | $2/\ln 2 \approx 2.89\times$ | Exponentially double sending rate to discover `BtlBw` | `< 25%` bandwidth growth for 3 consecutive non-app-limited rounds | Step 3 |
-| `BBR_DRAIN` | $\ln 2 / 2 \approx 0.35\times$ | $2/\ln 2 \approx 2.89\times$ | Drain the excess queue created during `STARTUP` | `tcp_packets_in_flight(tp) <= 1.0x BDP` | Step 3 |
-| `BBR_PROBE_BW` | `[5/4, 3/4, 1, 1, 1, 1, 1, 1]` | $2.0\times$ | Steady state (probe at 1.25x, drain at 0.75x, cruise at 1.0x for 6 phases) | Advance phase every `RTprop` (or enter `PROBE_RTT` if `min_rtt_us` expires) | Step 4 |
-| `BBR_PROBE_RTT` | $1.0\times$ | Clamped to `cwnd = 4` | Drain bottleneck queue to re-measure true `RTprop` | Hold `in-flight <= 4` for $\max(200\text{ ms}, 1\text{ RTT})$, then restore `prior_cwnd` | Step 5 |
+| `BBR_STARTUP` | $$2/\ln 2 \approx 2.89\times$$ | $$2/\ln 2 \approx 2.89\times$$ | Exponentially double sending rate to discover `BtlBw` | `< 25%` bandwidth growth for 3 consecutive non-app-limited rounds | Step 3 |
+| `BBR_DRAIN` | $$\ln 2 / 2 \approx 0.35\times$$ | $$2/\ln 2 \approx 2.89\times$$ | Drain the excess queue created during `STARTUP` | `tcp_packets_in_flight(tp) <= 1.0x BDP` | Step 3 |
+| `BBR_PROBE_BW` | `[5/4, 3/4, 1, 1, 1, 1, 1, 1]` | $$2.0\times$$ | Steady state (probe at 1.25x, drain at 0.75x, cruise at 1.0x for 6 phases) | Advance phase every `RTprop` (or enter `PROBE_RTT` if `min_rtt_us` expires) | Step 4 |
+| `BBR_PROBE_RTT` | $$1.0\times$$ | Clamped to `cwnd = 4` | Drain bottleneck queue to re-measure true `RTprop` | Hold `in-flight <= 4` for $$\max(200\text{ ms}, 1\text{ RTT})$$, then restore `prior_cwnd` | Step 5 |
 
 ---
 
@@ -183,7 +183,7 @@ When implementing BBR with BPF `struct_ops` (`struct tcp_congestion_ops`), we us
 
 ### Why `.cong_avoid` Is Insufficient for BBR
 
-Reno and CUBIC implement `.cong_avoid(sk, ack, acked)` and `.ssthresh(sk)`. Inside the kernel's ACK processing path (`tcp_ack()` $\rightarrow$ `tcp_cong_control()`), `.cong_avoid` has two fatal limitations for a model-based algorithm like BBR:
+Reno and CUBIC implement `.cong_avoid(sk, ack, acked)` and `.ssthresh(sk)`. Inside the kernel's ACK processing path (`tcp_ack()` $$\rightarrow$$ `tcp_cong_control()`), `.cong_avoid` has two fatal limitations for a model-based algorithm like BBR:
 
 1. **It is not called during Recovery or CWR**:
    - The kernel only invokes `.cong_avoid` when the congestion state (`icsk_ca_state`) is `TCP_CA_Open` or `TCP_CA_Disorder`. Whenever packet loss triggers `TCP_CA_Recovery` or `TCP_CA_CWR`, the kernel runs its own built-in `tcp_cwnd_reduction()` (Proportional Rate Reduction) and skips `.cong_avoid` entirely.
@@ -247,10 +247,10 @@ This track is organised into six incremental steps (`step01` through `step06`). 
 | Step | Directory | Topic | Key Concepts Covered |
 | --- | --- | --- | --- |
 | **Step 1** | [step01-pacing-rate](step01-pacing-rate/) | The `.cong_control` Hook & Pacing Rate Calculation | Enabling internal pacing (`SK_PACING_NEEDED`) in `.init`, computing instantaneous delivery rate from `rs->delivered` / `rs->interval_us`, and driving `sk->sk_pacing_rate` |
-| **Step 2** | [step02-btlbw-rtprop](step02-btlbw-rtprop/) | BDP Calculation from `BtlBw` (Max-Filter) & `RTprop` (Min-Filter) | Tracking `min_rtt_us` with a min-filter, tracking `max_bw` with an app-limited-aware max-filter, and computing $\text{BDP} = \lceil \text{BtlBw} \times \text{RTprop} \rceil$ in `bbr_bdp()` |
+| **Step 2** | [step02-btlbw-rtprop](step02-btlbw-rtprop/) | BDP Calculation from `BtlBw` (Max-Filter) & `RTprop` (Min-Filter) | Tracking `min_rtt_us` with a min-filter, tracking `max_bw` with an app-limited-aware max-filter, and computing $$\text{BDP} = \lceil \text{BtlBw} \times \text{RTprop} \rceil$$ in `bbr_bdp()` |
 | **Step 3** | [step03-startup-drain](step03-startup-drain/) | Transitioning from `STARTUP` to `DRAIN` (Full Pipe Detection) | Packet-timed round counting, detecting the 3-round bandwidth plateau (`< 25%` growth) in `bbr_check_full_bw_reached()`, and draining excess queue in `bbr_check_drain()` |
 | **Step 4** | [step04-probe-bw](step04-probe-bw/) | The 8-Phase Gain Cycle in `PROBE_BW` | Cycling `bbr_pacing_gain[] = {5/4, 3/4, 1, 1, 1, 1, 1, 1}` and implementing phase exit conditions for probing (`1.25x`), draining (`0.75x`), and cruising (`1.0x`) in `bbr_is_next_cycle_phase()` |
-| **Step 5** | [step05-probe-rtt](step05-probe-rtt/) | Entering `PROBE_RTT` and Draining the Queue (`cwnd = 4`) | Expiring `min_rtt_us` via `min_rtt_stamp`, saving `prior_cwnd`, clamping `snd_cwnd = 4` for $\max(200\text{ ms}, 1\text{ RTT})$, and restoring `prior_cwnd` |
+| **Step 5** | [step05-probe-rtt](step05-probe-rtt/) | Entering `PROBE_RTT` and Draining the Queue (`cwnd = 4`) | Expiring `min_rtt_us` via `min_rtt_stamp`, saving `prior_cwnd`, clamping `snd_cwnd = 4` for $$\max(200\text{ ms}, 1\text{ RTT})$$, and restoring `prior_cwnd` |
 | **Step 6** | [step06-loss-ack-aggregation](step06-loss-ack-aggregation/) | Saving/Restoring `cwnd` Across Loss & ACK Aggregation (`extra_acked`) | First-round packet conservation in `TCP_CA_Recovery`, restoring `prior_cwnd` upon recovery exit, and compensating for Wi-Fi / GRO burst ACKs via `extra_acked` |
 
 ### Files in Each Step Directory

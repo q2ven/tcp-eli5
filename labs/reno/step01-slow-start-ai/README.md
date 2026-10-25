@@ -42,13 +42,13 @@ cwnd (segments)
    - **直感**: 通信開始直後は経路の容量がまったく分からないため、小さな初期ウィンドウ（Linux のデフォルトは `10` セグメント）からスタートし、ACK が返ってくるたびに素早く（指数関数的に）探索幅を広げます。
    - **数式とルール**: 新しいデータを確認する ACK が届き、`acked` セグメント分の到達が確認されるたびに、その分だけ `cwnd` をそのまま増やします。
      $$\text{cwnd} \leftarrow \text{cwnd} + \text{acked}$$
-   - `cwnd` 個のセグメントを送ってそれらすべてに ACK が返ってくると（＝1 RTT 経過すると）、`cwnd` は $\text{cwnd} + \text{cwnd} = 2 \times \text{cwnd}$ となり、**1 RTT ごとに 2 倍** に成長します。
+   - `cwnd` 個のセグメントを送ってそれらすべてに ACK が返ってくると（＝1 RTT 経過すると）、`cwnd` は $$\text{cwnd} + \text{cwnd} = 2 \times \text{cwnd}$$ となり、**1 RTT ごとに 2 倍** に成長します。
    - **境界クランプ**: Slow Start で増やせる上限は `ssthresh` までです。もし 1 つの ACK（複数セグメントをまとめて確認する Stretch ACK など）によって `cwnd + acked` が `ssthresh` を超える場合は、まず `cwnd` を `ssthresh` まで引き上げ、**使い切らなかった残りの `acked` セグメント分はそのまま次の Congestion Avoidance フェーズへ引き継ぎます**。
 
 2. **Congestion Avoidance（輻輳回避 / Reno Additive Increase：`cwnd >= ssthresh` のとき）**
    - **直感**: `ssthresh`（過去にロスが起きた付近、または安全な目標値）に達した後は、2 倍ずつ増やすとすぐにバッファがあふれてしまいます。そこで「1 RTT かけて現在の `cwnd` 個のセグメントすべてが無事に ACK されたら、ようやく `cwnd` を `+1` セグメントだけ増やす」という慎重な線形増加（**Additive Increase: 加算的増加**）に切り替えます。
-   - **数式と整数演算による表現**: 理想的には、1 セグメントが ACK されるごとに `cwnd` を $\frac{1}{\text{cwnd}}$ ずつ増やしたい（`acked` セグメントなら $\text{cwnd} \leftarrow \text{cwnd} + \frac{\text{acked}}{\text{cwnd}}$）のですが、Linux カーネルや BPF プログラム内では浮動小数点演算（`float` / `double`）は使えません。
-   - そこで、分数 $\frac{\text{cnt}}{\text{cwnd}}$ の分子にあたる **整数カウンタ `snd_cwnd_cnt`** を用意し、以下の整数ルールで計算します。
+   - **数式と整数演算による表現**: 理想的には、1 セグメントが ACK されるごとに `cwnd` を $$\frac{1}{\text{cwnd}}$$ ずつ増やしたい（`acked` セグメントなら $$\text{cwnd} \leftarrow \text{cwnd} + \frac{\text{acked}}{\text{cwnd}}$$）のですが、Linux カーネルや BPF プログラム内では浮動小数点演算（`float` / `double`）は使えません。
+   - そこで、分数 $$\frac{\text{cnt}}{\text{cwnd}}$$ の分子にあたる **整数カウンタ `snd_cwnd_cnt`** を用意し、以下の整数ルールで計算します。
      1. ACK が届くたびに分子を貯める：`snd_cwnd_cnt += acked`
      2. 分子が分母（`snd_cwnd`）以上に達したら（`snd_cwnd_cnt >= snd_cwnd`）、`snd_cwnd_cnt -= snd_cwnd` として分母を引き、`snd_cwnd` を `+1` する。
 
@@ -74,9 +74,9 @@ cwnd (segments)
 
 TCP Reno では、パケットロスを検知したとき、およびそのロス検知が誤り（パケットの順序逆転などによる Spurious Loss）だったと判明したときに以下のルールを適用します。
 
-- **Multiplicative Decrease（乗算的減少：`.ssthresh()`）**: パケットロスが起きたということは、現在の `cwnd` は経路容量を超えていたことを意味します。Reno は新しい `ssthresh` を現在の `cwnd` の半分（$\lfloor \text{cwnd} / 2 \rfloor$、ビットシフトで `snd_cwnd >> 1U`）に引き下げます。ただし RFC 5681 の規定により、ウィンドウが完全に詰まらないよう最小値 `2U` を下回らないようにします：
+- **Multiplicative Decrease（乗算的減少：`.ssthresh()`）**: パケットロスが起きたということは、現在の `cwnd` は経路容量を超えていたことを意味します。Reno は新しい `ssthresh` を現在の `cwnd` の半分（$$\lfloor \text{cwnd} / 2 \rfloor$$、ビットシフトで `snd_cwnd >> 1U`）に引き下げます。ただし RFC 5681 の規定により、ウィンドウが完全に詰まらないよう最小値 `2U` を下回らないようにします：
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（$\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$）へウィンドウを復元します。
+- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（$$\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$$）へウィンドウを復元します。
 
 ### 2.6 カーネルがすでに提供している構造体・フィールド・ヘルパー一覧
 
@@ -97,7 +97,7 @@ Linux のすべての TCP ソケット（`struct tcp_sock`）には、**Reno 用
 
 - `tp->snd_cwnd` (`__u32`): 現在の輻輳ウィンドウ（セグメント単位）。
 - `tp->snd_ssthresh` (`__u32`): 現在のスロースタート閾値（セグメント単位）。
-- `tp->snd_cwnd_cnt` (`__u32`): Congestion Avoidance（Additive Increase）で ACK されたセグメント数を蓄積する線形カウンタ（分数 $\frac{\text{cnt}}{\text{cwnd}}$ の分子）。
+- `tp->snd_cwnd_cnt` (`__u32`): Congestion Avoidance（Additive Increase）で ACK されたセグメント数を蓄積する線形カウンタ（分数 $$\frac{\text{cnt}}{\text{cwnd}}$$ の分子）。
 - `tp->snd_cwnd_clamp` (`__u32`): `tp->snd_cwnd` の許容上限値（`snd_cwnd` を増やす際は常に `min(new_cwnd, tp->snd_cwnd_clamp)` でクランプする）。
 - `tp->prior_cwnd` (`__u32`): ロス回復に入る直前にカーネルが自動で退避してくれた `snd_cwnd` の値。
 
@@ -233,7 +233,7 @@ __u32 BPF_PROG(bpf_reno1_ssthresh, struct sock *sk)
 ```
 
 - パケットロス検知時に新しい `snd_ssthresh` を返します。
-- 整数右シフト `tp->snd_cwnd >> 1U` で $\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$ を計算し、RFC 5681 の下限値 `2U` と `max()` をとります。
+- 整数右シフト `tp->snd_cwnd >> 1U` で $$\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$$ を計算し、RFC 5681 の下限値 `2U` と `max()` をとります。
 
 ### 4.3 `bpf_reno1_cong_avoid()` — Slow Start と Reno Additive Increase（TODO 2〜4）
 

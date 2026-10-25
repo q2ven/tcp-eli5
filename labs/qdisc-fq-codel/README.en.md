@@ -71,7 +71,7 @@ flowchart LR
     end
 ```
 
-- When the head packet is dropped and the next packet ($P_2$) is sent immediately, the receiver immediately generates a SACK / duplicate ACK and sends it back to the sender.
+- When the head packet is dropped and the next packet ($$P_2$$) is sent immediately, the receiver immediately generates a SACK / duplicate ACK and sends it back to the sender.
 - The sender discovers packet loss in the **shortest possible time (within 1 RTT)** and reduces its transmission rate promptly.
 - Stale packets are discarded, allowing fresher packets to reach the wire faster.
 

@@ -2,7 +2,7 @@
 
 This hands-on curriculum (`labs/` directory) walks you through implementing and testing **three TCP congestion control algorithms (`reno`, `cubic`, `bbr`)** and **three packet schedulers / Qdiscs (`qdisc-fifo`, `qdisc-fq`, `qdisc-fq-codel`)** — 6 tracks and 18 steps in total — from scratch, step by step, using Linux kernel BPF `struct_ops` (`struct tcp_congestion_ops` and `struct Qdisc_ops`) and `packetdrill`.
 
-No prior familiarity with these algorithms is assumed. Every track ([Chapter 18: Reno](18-lab-reno.md) through [Chapter 23: FQ-CoDel](23-lab-qdisc-fq-codel.md)) and every step begins with a first-principles explanation of **why the algorithm exists, how its state machine and formulas work, and what kernel structs and BPF kfuncs are already provided**, followed by **Socratic design checkpoints (VibeWise style)** $\to$ **BPF implementation** $\to$ **deterministic `packetdrill` verification**.
+No prior familiarity with these algorithms is assumed. Every track ([Chapter 18: Reno](18-lab-reno.md) through [Chapter 23: FQ-CoDel](23-lab-qdisc-fq-codel.md)) and every step begins with a first-principles explanation of **why the algorithm exists, how its state machine and formulas work, and what kernel structs and BPF kfuncs are already provided**, followed by **Socratic design checkpoints (VibeWise style)** $$\to$$ **BPF implementation** $$\to$$ **deterministic `packetdrill` verification**.
 
 ---
 
@@ -51,7 +51,7 @@ labs/
 | Chapter / Track | Algorithm | Steps | What You Will Learn |
 | :--- | :--- | :--- | :--- |
 | **[18. TCP Reno](18-lab-reno.md)** | RFC 5681 Reno | 2 steps | Flow control (`snd_wnd`) vs congestion control (`snd_cwnd`), why AIMD converges to fairness, Slow Start / Congestion Avoidance integer arithmetic (`snd_cwnd_cnt`), `icsk_ca_priv`, and DSACK Undo |
-| **[19. TCP CUBIC](19-lab-cubic.md)** | RFC 9438 CUBIC | 4 steps | Why Reno underutilizes high-BDP pipes, the 3rd-order polynomial $W_{\text{cubic}}(t)$ and fixed-point cube root `cubic_root()`, the Reno-friendly region ($W_{\text{est}}$) and Fast Convergence, post-idle Epoch shifting, and HyStart (ACK Train & Delay Increase) |
+| **[19. TCP CUBIC](19-lab-cubic.md)** | RFC 9438 CUBIC | 4 steps | Why Reno underutilizes high-BDP pipes, the 3rd-order polynomial $$W_{\text{cubic}}(t)$$ and fixed-point cube root `cubic_root()`, the Reno-friendly region ($$W_{\text{est}}$$) and Fast Convergence, post-idle Epoch shifting, and HyStart (ACK Train & Delay Increase) |
 | **[20. TCP BBR](20-lab-bbr.md)** | BBRv1 | 6 steps | Bufferbloat and shallow-buffer collapse under loss-based CC, the BtlBw × RTprop pipe model, `.cong_control` hook and `sk_pacing_rate`, the STARTUP / DRAIN / PROBE_BW (8-phase) / PROBE_RTT state machine, Loss Undo, and `extra_acked` aggregation compensation |
 | **[21. BPF Qdisc: FIFO & Priority](21-lab-qdisc-fifo.md)** | `pfifo` / `bfifo` / Priority | 2 steps | `struct Qdisc_ops` (`.enqueue` / `.dequeue` / `.init` / `.reset` / `.destroy`), BPF Arena linked-list `bpf_sk_buff_ptr`, `bpf_qdisc_skb_drop()` / `bpf_qdisc_bstats_update()`, `sch->qstats.backlog`, and priority bands |
 | **[22. BPF Qdisc: FQ & EDT Pacing](22-lab-qdisc-fq.md)** | `sch_fq` (DRR + EDT) | 2 steps | Flow classification with `bpf_skb_get_hash()`, `new_flows` / `old_flows` DRR (Deficit Round Robin) and sparse-flow promotion, `skb->tstamp` (EDT) and timer-driven pacing with `bpf_qdisc_watchdog_schedule()` |

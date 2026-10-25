@@ -924,7 +924,7 @@ static void tcp_count_delivered(struct tcp_sock *tp, u32 delivered,
 }
 ```
 
-- Under classic ECN, every newly delivered packet acknowledged by an ACK carrying ECE is credited to `delivered_ce` as if it were marked CE. Because ECE is latched, this is an **overestimate** of the actual CE count (as noted in the commit message of `e21db6f69a95` itself). Conversely, DCTCP receivers do not latch ECE, yielding an almost exact count. This is why DCTCP's $\alpha$ calculation relies on this `delivered_ce` (Step 12).
+- Under classic ECN, every newly delivered packet acknowledged by an ACK carrying ECE is credited to `delivered_ce` as if it were marked CE. Because ECE is latched, this is an **overestimate** of the actual CE count (as noted in the commit message of `e21db6f69a95` itself). Conversely, DCTCP receivers do not latch ECE, yielding an almost exact count. This is why DCTCP's $$\alpha$$ calculation relies on this `delivered_ce` (Step 12).
 - `WRITE_ONCE()` accommodates lockless readers such as `tcp_get_info()` (`faa886ad3ce5`, 2026).
 - Called with `ece_ack` from three sites: cumulative ACKs in `tcp_clean_rtx_queue()`, SACK updates (excerpt above), and Reno dupacks (`tcp_add_reno_sack()`).
 

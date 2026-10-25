@@ -438,14 +438,14 @@ Because SWS can be triggered by either the receiver or the sender, TCP prevents 
 
 1. **Receiver-Side SWS Avoidance (Clark's algorithm, [RFC 9293 §3.8.6.2.2](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.2))**:
    - **Rule**: Never advertise a tiny increment in available receive window when the application reads a small amount of data (keep the right window edge fixed).
-   - **When to open**: Wait until free buffer space reaches at least **one full `MSS`** or **half of the total receive buffer ($\frac{1}{2} \times \text{RCV.BUFF}$)** before advancing the advertised window.
+   - **When to open**: Wait until free buffer space reaches at least **one full `MSS`** or **half of the total receive buffer ($$\frac{1}{2} \times \text{RCV.BUFF}$$)** before advancing the advertised window.
    - **Linux implementation** (Chapters 6 & 10): Handled by `__tcp_select_window()` and `tcp_cleanup_rbuf()`. Even as the application calls `recvmsg()`, Linux suppresses Window Update ACKs until the new window would at least double the remaining window or advance the right edge by an MSS multiple.
 
 2. **Sender-Side SWS Avoidance ([RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1)) and Nagle ([RFC 896](https://www.rfc-editor.org/rfc/rfc896))**:
    - **Rule**: Even if a receiver advertises a tiny window (e.g., `WIN = 10`), the sender must refrain from carving data into tiny sub-MSS packets unless one of the following holds:
      1. A **full-sized segment (`1 MSS`)** can be sent.
      2. There is no unacknowledged data in flight and **all queued data** can be sent (Nagle's condition).
-     3. The segment is at least **half ($F_s = \frac{1}{2}$) of the maximum window (`tp->max_window`)** ever advertised by the peer.
+     3. The segment is at least **half ($$F_s = \frac{1}{2}$$) of the maximum window (`tp->max_window`)** ever advertised by the peer.
      4. PSH is set and the override timeout has expired.
 
 ### How Does Nagle Differ from SWS Avoidance?
@@ -455,7 +455,7 @@ Because SWS can be triggered by either the receiver or the sender, TCP prevents 
 
 ### Why SWS Appears in Chapter 3
 
-In Chapter 3 (`03-sendmsg.md`), the sender-side SWS constant **"half of the maximum window (`tp->max_window >> 1`, $F_s = \frac{1}{2}$)"** appears in two helpers:
+In Chapter 3 (`03-sendmsg.md`), the sender-side SWS constant **"half of the maximum window (`tp->max_window >> 1`, $$F_s = \frac{1}{2}$$)"** appears in two helpers:
 
 - `tcp_bound_to_half_wnd()`: Caps the per-`sk_buff` target size (`size_goal`) at `tp->max_window >> 1` so a single `sk_buff` never consumes the entire receive window, ensuring at least two packets stay in the pipe.
 - `forced_push()`: Forces a PSH flag and immediate transmission (`__tcp_push_pending_frames()`) mid-`sendmsg()` whenever more than `tp->max_window >> 1` bytes have been queued since the last PSH.

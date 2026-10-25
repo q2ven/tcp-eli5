@@ -1,6 +1,6 @@
 # 19. Hands-on (2): Building TCP CUBIC with BPF CC and packetdrill
 
-In Track 1 (TCP Reno), you built the foundations of congestion control from scratch in BPF: **Slow Start (exponential growth)**, **AIMD (Additive Increase / Multiplicative Decrease: $+1$ segment per RTT, halving on loss)**, and **Loss Undo** to recover from spurious congestion events.
+In Track 1 (TCP Reno), you built the foundations of congestion control from scratch in BPF: **Slow Start (exponential growth)**, **AIMD (Additive Increase / Multiplicative Decrease: $$+1$$ segment per RTT, halving on loss)**, and **Loss Undo** to recover from spurious congestion events.
 
 However, the default congestion control algorithm running in the Linux kernel across modern data centres and the Internet is not Reno — it is **CUBIC** ([RFC 9438](https://www.rfc-editor.org/rfc/rfc9438), `net/ipv4/tcp_cubic.c`).
 In this track, you will first see with concrete numbers why Reno collapses on high-speed, long-distance networks. Then, step by step, you will build CUBIC's **cubic window growth curve** and the **four mechanisms (Steps 1–4)** that make it production-ready using BPF `struct_ops` and `packetdrill`.
@@ -9,31 +9,31 @@ In this track, you will first see with concrete numbers why Reno collapses on hi
 
 ## 1. Why Reno Fails on Long Fat Networks (LFNs)
 
-TCP Reno's AIMD rule — increasing `cwnd` by $+1$ packet per RTT and cutting it by $0.5\times$ on a loss — worked admirably on the low-speed links of the 1980s and 1990s. Once link capacities scaled to gigabits per second, however, Reno hit two fatal walls.
+TCP Reno's AIMD rule — increasing `cwnd` by $$+1$$ packet per RTT and cutting it by $$0.5\times$$ on a loss — worked admirably on the low-speed links of the 1980s and 1990s. Once link capacities scaled to gigabits per second, however, Reno hit two fatal walls.
 
 ### Wall 1: Recovering from a Single Packet Loss Takes 69 Minutes
 
 Let's work through a concrete example on a **Long Fat Network (LFN)** — a path with both high bandwidth and long round-trip delay:
 
-- **Link bandwidth**: $10\text{ Gbps}$ ($= 10 \times 10^9\text{ bits/s}$)
-- **Round-Trip Time (RTT)**: $100\text{ ms}$ ($= 0.1\text{ s}$, e.g. a transoceanic or transcontinental optical fibre link)
-- **Packet size**: $1,500\text{ Bytes} = 12,000\text{ bits}$
+- **Link bandwidth**: $$10\text{ Gbps}$$ ($$= 10 \times 10^9\text{ bits/s}$$)
+- **Round-Trip Time (RTT)**: $$100\text{ ms}$$ ($$= 0.1\text{ s}$$, e.g. a transoceanic or transcontinental optical fibre link)
+- **Packet size**: $$1,500\text{ Bytes} = 12,000\text{ bits}$$
 
 The number of in-flight packets required to keep this pipe completely full — its **Bandwidth-Delay Product (BDP)** — is:
 
 $$\text{BDP} = \frac{10 \times 10^9\text{ bits/s} \times 0.1\text{ s}}{12,000\text{ bits/packet}} \approx 83,333\text{ packets (approx. }83,000\text{ packets)}$$
 
-In other words, the sender must sustain `cwnd = 83,000` packets just to utilise 100% of the $10\text{ Gbps}$ pipe.
+In other words, the sender must sustain `cwnd = 83,000` packets just to utilise 100% of the $$10\text{ Gbps}$$ pipe.
 
 Now suppose Reno is cruising at `cwnd = 83,000` and suffers **a single packet loss**. What happens next?
 
-1. **Multiplicative Decrease (halving)**: Reno cuts `cwnd` in half on a loss, dropping `cwnd` immediately from $83,000$ to $41,500$ packets.
-2. **Additive Increase ($+1$ packet per RTT)**: Once Fast Recovery finishes and Congestion Avoidance begins, Reno can only grow `cwnd` by **1 packet per RTT ($0.1\text{ s}$)** — just $10$ packets per second.
-3. **Time required to recover**: To climb back up by the $41,500$ packets it lost and return to $83,000$ packets, Reno needs:
+1. **Multiplicative Decrease (halving)**: Reno cuts `cwnd` in half on a loss, dropping `cwnd` immediately from $$83,000$$ to $$41,500$$ packets.
+2. **Additive Increase ($$+1$$ packet per RTT)**: Once Fast Recovery finishes and Congestion Avoidance begins, Reno can only grow `cwnd` by **1 packet per RTT ($$0.1\text{ s}$$)** — just $$10$$ packets per second.
+3. **Time required to recover**: To climb back up by the $$41,500$$ packets it lost and return to $$83,000$$ packets, Reno needs:
 
 $$41,500\text{ RTTs} \times 0.1\text{ s/RTT} = 4,150\text{ seconds} \approx \mathbf{69\text{ minutes }10\text{ seconds!}}$$
 
-Dropping **just one packet** forces Reno to spend **over an hour (approx. 69 minutes)** crawling back to full link speed. Worse still, if even a single random bit error or transient micro-burst drops another packet during those 69 minutes, `cwnd` is slashed in half all over again. As a result, a $10\text{ Gbps}$ link running Reno often achieves only a few megabits per second in practice.
+Dropping **just one packet** forces Reno to spend **over an hour (approx. 69 minutes)** crawling back to full link speed. Worse still, if even a single random bit error or transient micro-burst drops another packet during those 69 minutes, `cwnd` is slashed in half all over again. As a result, a $$10\text{ Gbps}$$ link running Reno often achieves only a few megabits per second in practice.
 
 ### Wall 2: Severe RTT Unfairness (Short-RTT Flows Starve Long-RTT Flows)
 
@@ -41,8 +41,8 @@ Reno's second flaw is that its Congestion Avoidance growth rate is clocked by **
 
 Imagine two flows sharing the exact same bottleneck router:
 
-- **Flow A (short-distance)**: $\text{RTT} = 10\text{ ms}$ ($100\text{ RTTs}$ per second) $\rightarrow$ grows `cwnd` by **`+100` packets per second**.
-- **Flow B (long-distance)**: $\text{RTT} = 100\text{ ms}$ ($10\text{ RTTs}$ per second) $\rightarrow$ grows `cwnd` by only **`+10` packets per second**.
+- **Flow A (short-distance)**: $$\text{RTT} = 10\text{ ms}$$ ($$100\text{ RTTs}$$ per second) $$\rightarrow$$ grows `cwnd` by **`+100` packets per second**.
+- **Flow B (long-distance)**: $$\text{RTT} = 100\text{ ms}$$ ($$10\text{ RTTs}$$ per second) $$\rightarrow$$ grows `cwnd` by only **`+10` packets per second**.
 
 After both flows experience a packet loss at the bottleneck, short-distance Flow A expands its window **10 times faster** than long-distance Flow B and hogs the bottleneck bandwidth. This structural bias against long-distance connections is known as **RTT unfairness**.
 
@@ -52,45 +52,45 @@ After both flows experience a packet loss at the bottleneck, short-distance Flow
 
 **CUBIC** was designed to shatter both walls at once — recovering rapidly on high-BDP paths while treating flows of different RTTs fairly. Its design rests on two core ideas.
 
-### Idea 1: Reduce `cwnd` to $\beta = 0.7\times$ Instead of $0.5\times$ on Loss
+### Idea 1: Reduce `cwnd` to $$\beta = 0.7\times$$ Instead of $$0.5\times$$ on Loss
 
 Emptying half the pipe on every loss event is far too drastic on a high-BDP link.
-CUBIC raises the multiplicative decrease factor $\beta$ from $0.5$ to **$0.7$ (a 30% reduction, retaining 70% of the window)**:
+CUBIC raises the multiplicative decrease factor $$\beta$$ from $$0.5$$ to **$$0.7$$ (a 30% reduction, retaining 70% of the window)**:
 
-- Because floating-point arithmetic cannot be used inside the Linux kernel (`net/ipv4/tcp_cubic.c`) or BPF programs, Linux expresses $\beta$ in fixed-point with a denominator of $2^{10} = 1024$ (`BICTCP_BETA_SCALE = 1024`) and numerator `beta = 717`:
+- Because floating-point arithmetic cannot be used inside the Linux kernel (`net/ipv4/tcp_cubic.c`) or BPF programs, Linux expresses $$\beta$$ in fixed-point with a denominator of $$2^{10} = 1024$$ (`BICTCP_BETA_SCALE = 1024`) and numerator `beta = 717`:
   $$\beta = \frac{717}{1024} \approx 0.7002$$
 - Retaining 70% of `cwnd` immediately keeps the pipe much fuller after a loss event.
 
-### Idea 2: Make the Window a Cubic Function of Elapsed Time $t$ Since the Last Loss
+### Idea 2: Make the Window a Cubic Function of Elapsed Time $$t$$ Since the Last Loss
 
-CUBIC's defining invention is to replace ACK-counted linear growth with a **cubic function of the wall-clock time $t$ elapsed since the start of the current Congestion Avoidance epoch**:
+CUBIC's defining invention is to replace ACK-counted linear growth with a **cubic function of the wall-clock time $$t$$ elapsed since the start of the current Congestion Avoidance epoch**:
 
 $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$$
 
 Let's examine every symbol in this formula from first principles:
 
-- **$W_{\max}$ (`ca->last_max_cwnd` in code)**: **The `cwnd` right when the previous packet loss occurred.**
-  - A packet loss tells us something crucial: *"`cwnd` reached $W_{\max}$, and that was the ceiling where the bottleneck pipe overflowed."* Reno throws this information away after halving `cwnd`. CUBIC **remembers $W_{\max}$ as its target ceiling** and centres the inflection point of its cubic curve right at $W_{\max}$.
-- **$t$**: **Elapsed wall-clock time** since exiting loss recovery and entering the current Congestion Avoidance epoch (measured in seconds in the RFC, and in `BICTCP_HZ` units where $1\text{ s} = 2^{10} = 1024$ inside the kernel).
-- **$C$**: The scaling constant controlling how aggressively the cubic curve bends, set to **$C = 0.4\text{ packets/s}^3$** (`410 / 1024 ≈ 0.4004` in fixed-point).
-- **$K$ (`ca->bic_K` in code)**: **The time it takes for $W_{\text{cubic}}(t)$ starting from $\beta W_{\max}$ ($= 0.7 W_{\max}$) at $t = 0$ to climb back to $W_{\max}$.**
-  - Setting $W_{\text{cubic}}(0) = \beta W_{\max}$ at $t = 0$ and solving for $K$ yields the cube root formula:
+- **$$W_{\max}$$ (`ca->last_max_cwnd` in code)**: **The `cwnd` right when the previous packet loss occurred.**
+  - A packet loss tells us something crucial: *"`cwnd` reached $$W_{\max}$$, and that was the ceiling where the bottleneck pipe overflowed."* Reno throws this information away after halving `cwnd`. CUBIC **remembers $$W_{\max}$$ as its target ceiling** and centres the inflection point of its cubic curve right at $$W_{\max}$$.
+- **$$t$$**: **Elapsed wall-clock time** since exiting loss recovery and entering the current Congestion Avoidance epoch (measured in seconds in the RFC, and in `BICTCP_HZ` units where $$1\text{ s} = 2^{10} = 1024$$ inside the kernel).
+- **$$C$$**: The scaling constant controlling how aggressively the cubic curve bends, set to **$$C = 0.4\text{ packets/s}^3$$** (`410 / 1024 ≈ 0.4004` in fixed-point).
+- **$$K$$ (`ca->bic_K` in code)**: **The time it takes for $$W_{\text{cubic}}(t)$$ starting from $$\beta W_{\max}$$ ($$= 0.7 W_{\max}$$) at $$t = 0$$ to climb back to $$W_{\max}$$.**
+  - Setting $$W_{\text{cubic}}(0) = \beta W_{\max}$$ at $$t = 0$$ and solving for $$K$$ yields the cube root formula:
     $$C(0 - K)^3 + W_{\max} = \beta W_{\max} \implies K = \sqrt[3]{\frac{W_{\max}(1 - \beta)}{C}}$$
-  - (More generally, if the epoch starts at window $\text{cwnd}_{\text{epoch}}$, then $K = \sqrt[3]{\frac{W_{\max} - \text{cwnd}_{\text{epoch}}}{C}}$.)
+  - (More generally, if the epoch starts at window $$\text{cwnd}_{\text{epoch}}$$, then $$K = \sqrt[3]{\frac{W_{\max} - \text{cwnd}_{\text{epoch}}}{C}}$$.)
 
-Let's plug our earlier $10\text{ Gbps}$, $100\text{ ms}$ RTT example ($W_{\max} = 83,000$) into this formula:
+Let's plug our earlier $$10\text{ Gbps}$$, $$100\text{ ms}$$ RTT example ($$W_{\max} = 83,000$$) into this formula:
 
 $$K = \sqrt[3]{\frac{83,000 \times (1 - 0.7)}{0.4}} = \sqrt[3]{62,250} \approx \mathbf{39.6\text{ seconds}}$$
 
-Where Reno needed **69 minutes (4,150 seconds)** to recover from a single loss, CUBIC climbs back to $83,000$ packets in **under 40 seconds — over 100 times faster!**
-Better yet, because $t$ is real wall-clock time rather than an ACK counter, a flow with a $10\text{ ms}$ RTT and a flow with a $100\text{ ms}$ RTT sharing the same $W_{\max}$ trace the exact same $W_{\text{cubic}}(t)$ curve over time, dramatically improving **RTT fairness**.
+Where Reno needed **69 minutes (4,150 seconds)** to recover from a single loss, CUBIC climbs back to $$83,000$$ packets in **under 40 seconds — over 100 times faster!**
+Better yet, because $$t$$ is real wall-clock time rather than an ACK counter, a flow with a $$10\text{ ms}$$ RTT and a flow with a $$100\text{ ms}$$ RTT sharing the same $$W_{\max}$$ trace the exact same $$W_{\text{cubic}}(t)$$ curve over time, dramatically improving **RTT fairness**.
 
 ---
 
 ## 3. The Three Regions of the Cubic Curve and Converting to `ca->cnt`
 
-Why choose a **cubic function $(t - K)^3$** instead of a quadratic or exponential curve?
-Because a cubic polynomial naturally creates **three distinct behavioural regions** around its inflection point $(t = K,\ W = W_{\max})$ using a single formula: **rapid recovery $\rightarrow$ cautious plateau $\rightarrow$ accelerated probing**.
+Why choose a **cubic function $$(t - K)^3$$** instead of a quadratic or exponential curve?
+Because a cubic polynomial naturally creates **three distinct behavioural regions** around its inflection point $$(t = K,\ W = W_{\max})$$ using a single formula: **rapid recovery $$\rightarrow$$ cautious plateau $$\rightarrow$$ accelerated probing**.
 
 ```text
   cwnd (W_cubic(t))
@@ -129,44 +129,44 @@ flowchart LR
     S1 -->|"t reaches K"| S2 -->|"No loss, t > K"| S3
 ```
 
-### ① Concave Region ($t < K$)
-- Covers the recovery climb from $0.7 W_{\max}$ back towards the previous high-water mark $W_{\max}$.
-- When $t$ is small (far from $K$), $|t - K|^3$ has a steep slope, so CUBIC takes large steps to reclaim unused bandwidth quickly.
-- As `cwnd` approaches the known danger zone $W_{\max}$, the slope of $(t - K)^3$ flattens out automatically, applying the brakes for a smooth, cautious landing at $W_{\max}$.
+### ① Concave Region ($$t < K$$)
+- Covers the recovery climb from $$0.7 W_{\max}$$ back towards the previous high-water mark $$W_{\max}$$.
+- When $$t$$ is small (far from $$K$$), $$|t - K|^3$$ has a steep slope, so CUBIC takes large steps to reclaim unused bandwidth quickly.
+- As `cwnd` approaches the known danger zone $$W_{\max}$$, the slope of $$(t - K)^3$$ flattens out automatically, applying the brakes for a smooth, cautious landing at $$W_{\max}$$.
 
-### ② Plateau ($t \approx K$)
-- Right around $t = K$, $(t - K)^3 \approx 0$ and the derivative of the cubic curve vanishes, forming a flat plateau at $W_{\max}$.
-- CUBIC holds `cwnd` nearly constant at the exact ceiling where the pipe overflowed last time, quietly observing whether the network can sustain $W_{\max}$ without dropping packets. If available capacity has not changed, the flow maximises throughput while avoiding unnecessary self-induced losses.
+### ② Plateau ($$t \approx K$$)
+- Right around $$t = K$$, $$(t - K)^3 \approx 0$$ and the derivative of the cubic curve vanishes, forming a flat plateau at $$W_{\max}$$.
+- CUBIC holds `cwnd` nearly constant at the exact ceiling where the pipe overflowed last time, quietly observing whether the network can sustain $$W_{\max}$$ without dropping packets. If available capacity has not changed, the flow maximises throughput while avoiding unnecessary self-induced losses.
 
-### ③ Convex / Max Probing Region ($t > K$)
-- If the flow cruises through the plateau at $W_{\max}$ without losing a packet, network conditions must have improved (for instance, a competing flow finished).
-- Once $t > K$, $(t - K)^3$ turns positive. CUBIC starts probing upward in tiny, careful increments near $t \approx K$, and if still no loss occurs, accelerates rapidly as $(t - K)^3$ grows to discover the new ceiling (**Max Probing**).
+### ③ Convex / Max Probing Region ($$t > K$$)
+- If the flow cruises through the plateau at $$W_{\max}$$ without losing a packet, network conditions must have improved (for instance, a competing flow finished).
+- Once $$t > K$$, $$(t - K)^3$$ turns positive. CUBIC starts probing upward in tiny, careful increments near $$t \approx K$$, and if still no loss occurs, accelerates rapidly as $$(t - K)^3$$ grows to discover the new ceiling (**Max Probing**).
 
-### Converting $W_{\text{cubic}}(t)$ into `ca->cnt` in Fixed-Point Arithmetic
+### Converting $$W_{\text{cubic}}(t)$$ into `ca->cnt` in Fixed-Point Arithmetic
 
-While the mathematical equation computes a target window size $W_{\text{cubic}}(t)$, the Linux kernel's congestion control framework (`tcp_cong_avoid_ai(tp, w, acked)`) does not overwrite `tp->snd_cwnd` directly with $W_{\text{cubic}}(t)$. Instead, it paces window increments smoothly using **`ca->cnt` — the number of ACKed segments required before `tp->snd_cwnd` is incremented by $+1$**.
+While the mathematical equation computes a target window size $$W_{\text{cubic}}(t)$$, the Linux kernel's congestion control framework (`tcp_cong_avoid_ai(tp, w, acked)`) does not overwrite `tp->snd_cwnd` directly with $$W_{\text{cubic}}(t)$$. Instead, it paces window increments smoothly using **`ca->cnt` — the number of ACKed segments required before `tp->snd_cwnd` is incremented by $$+1$$**.
 
 On each incoming ACK in Congestion Avoidance, `bictcp_update()` translates the cubic curve into `ca->cnt` in three steps:
 
 1. **Look ahead 1 RTT to compute `bic_target`**:
-   Add the connection's minimum RTT (`ca->delay_min`) to the elapsed time since `ca->epoch_start` ($t = \text{now} - \text{epoch}_{\text{start}} + \text{delay}_{\min}$) and evaluate $W_{\text{cubic}}(t)$. This gives **`bic_target`**, the window size CUBIC wants to reach **one RTT from now**.
+   Add the connection's minimum RTT (`ca->delay_min`) to the elapsed time since `ca->epoch_start` ($$t = \text{now} - \text{epoch}_{\text{start}} + \text{delay}_{\min}$$) and evaluate $$W_{\text{cubic}}(t)$$. This gives **`bic_target`**, the window size CUBIC wants to reach **one RTT from now**.
 2. **Convert the desired 1-RTT window gain into an ACK interval `ca->cnt`**:
-   Over the next RTT, roughly `cwnd` segments will be acknowledged. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs, we need `bic_target - cwnd` increments of $+1$:
+   Over the next RTT, roughly `cwnd` segments will be acknowledged. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs, we need `bic_target - cwnd` increments of $$+1$$:
    - **When `bic_target > cwnd`**:
      $$\text{ca}\to\text{cnt} = \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}}$$
-     For example, if `cwnd = 100` and `bic_target = 110` ($+10$ segments wanted over the next RTT), then `ca->cnt = 100 / (110 - 100) = 10`. Incrementing `snd_cwnd` by $+1$ every $10$ ACKed segments yields $+10$ segments after $100$ ACKs (1 RTT).
+     For example, if `cwnd = 100` and `bic_target = 110` ($$+10$$ segments wanted over the next RTT), then `ca->cnt = 100 / (110 - 100) = 10`. Incrementing `snd_cwnd` by $$+1$$ every $$10$$ ACKed segments yields $$+10$$ segments after $$100$$ ACKs (1 RTT).
    - **When `bic_target <= cwnd` (at the plateau)**:
-     No immediate growth is needed, so CUBIC sets `ca->cnt = 100 * cwnd` (requiring 100 full RTTs just to gain $+1$ segment), effectively freezing window growth.
+     No immediate growth is needed, so CUBIC sets `ca->cnt = 100 * cwnd` (requiring 100 full RTTs just to gain $$+1$$ segment), effectively freezing window growth.
    - **Safety lower bound**:
-     Finally, `ca->cnt = max(ca->cnt, 2U)` clamps the interval so `cwnd` never grows faster than $+1$ per $2$ ACKs ($+0.5 \times \text{cwnd}$ per RTT) during Congestion Avoidance.
+     Finally, `ca->cnt = max(ca->cnt, 2U)` clamps the interval so `cwnd` never grows faster than $$+1$$ per $$2$$ ACKs ($$+0.5 \times \text{cwnd}$$ per RTT) during Congestion Avoidance.
 3. **Pass `ca->cnt` to `tcp_cong_avoid_ai(tp, ca->cnt, acked)`**:
-   Just as in Reno, `tp->snd_cwnd_cnt` accumulates `acked` credits, and whenever `tp->snd_cwnd_cnt >= ca->cnt`, the kernel subtracts `ca->cnt` and increments `tp->snd_cwnd` by $+1$.
+   Just as in Reno, `tp->snd_cwnd_cnt` accumulates `acked` credits, and whenever `tp->snd_cwnd_cnt >= ca->cnt`, the kernel subtracts `ca->cnt` and increments `tp->snd_cwnd` by $$+1$$.
 
 ---
 
 ## 4. The Four Pillars that Make CUBIC Production-Ready (Overview of Steps 1–4)
 
-The pure cubic curve $W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$ is elegant, but deploying it across the real Internet — from sub-millisecond LANs to heavily contested bottlenecks, bursty web applications, and fresh connections — requires **three essential safeguards plus HyStart**.
+The pure cubic curve $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$$ is elegant, but deploying it across the real Internet — from sub-millisecond LANs to heavily contested bottlenecks, bursty web applications, and fresh connections — requires **three essential safeguards plus HyStart**.
 
 Across the four steps of this track, you will implement each mechanism in turn until you have a complete BPF implementation matching Linux's `net/ipv4/tcp_cubic.c`.
 
@@ -182,37 +182,37 @@ flowchart TD
 
 | Step | Directory | Problem Solved | Core Mechanism Implemented |
 | --- | --- | --- | --- |
-| **Step 1** | `step01-cubic-curve` | Hour-long recovery on LFNs and RTT unfairness | $\beta = 0.7$ (`717/1024`), integer cube root `cubic_root()`, and `ca->cnt` from $W_{\text{cubic}}(t)$ |
-| **Step 2** | `step02-reno-friendly-fast-conv` | Underperforming Reno on short-RTT paths, and slow convergence when new flows join | Parallel linear estimate $W_{\text{est}}$ (`ca->tcp_cwnd`) and Fast Convergence ($\approx 0.85\times$ when `cwnd < last_max_cwnd`) |
-| **Step 3** | `step03-idle-epoch-shift` | `cwnd` exploding after an idle pause because elapsed time $t$ kept ticking | Shifting `ca->epoch_start += delta` in `.cwnd_event_tx_start` (`CA_EVENT_TX_START`) |
-| **Step 4** | `step04-hystart` | Initial Slow Start overshooting BDP by up to $2\times$ and causing massive burst losses | **HyStart** in `.pkts_acked` (ACK Train + Delay Increase detectors setting `ssthresh = cwnd` early) |
+| **Step 1** | `step01-cubic-curve` | Hour-long recovery on LFNs and RTT unfairness | $$\beta = 0.7$$ (`717/1024`), integer cube root `cubic_root()`, and `ca->cnt` from $$W_{\text{cubic}}(t)$$ |
+| **Step 2** | `step02-reno-friendly-fast-conv` | Underperforming Reno on short-RTT paths, and slow convergence when new flows join | Parallel linear estimate $$W_{\text{est}}$$ (`ca->tcp_cwnd`) and Fast Convergence ($$\approx 0.85\times$$ when `cwnd < last_max_cwnd`) |
+| **Step 3** | `step03-idle-epoch-shift` | `cwnd` exploding after an idle pause because elapsed time $$t$$ kept ticking | Shifting `ca->epoch_start += delta` in `.cwnd_event_tx_start` (`CA_EVENT_TX_START`) |
+| **Step 4** | `step04-hystart` | Initial Slow Start overshooting BDP by up to $$2\times$$ and causing massive burst losses | **HyStart** in `.pkts_acked` (ACK Train + Delay Increase detectors setting `ssthresh = cwnd` early) |
 
 ### Step 1 (`step01-cubic-curve`): The Cubic Curve and Fixed-Point Cube Root
 - **What you will build**:
-  - In `.ssthresh`, save the pre-loss window in `ca->last_max_cwnd` ($W_{\max}$) and return a multiplicative decrease threshold of $\beta = 717 / 1024 \approx 0.7\times$.
+  - In `.ssthresh`, save the pre-loss window in `ca->last_max_cwnd` ($$W_{\max}$$) and return a multiplicative decrease threshold of $$\beta = 717 / 1024 \approx 0.7\times$$.
   - Implement the integer cube root helper `cubic_root()` without floating-point hardware by combining `fls64()` (find last set bit), a 64-entry lookup table `v[]`, a verifier-friendly bounds guard, and one Newton-Raphson iteration.
-  - Evaluate $W_{\text{cubic}}(t)$ across the concave ($t < K$), plateau ($t \approx K$), and convex ($t > K$) regions to compute `bic_target` and `ca->cnt`, verifying all three regions with `packetdrill`.
+  - Evaluate $$W_{\text{cubic}}(t)$$ across the concave ($$t < K$$), plateau ($$t \approx K$$), and convex ($$t > K$$) regions to compute `bic_target` and `ca->cnt`, verifying all three regions with `packetdrill`.
 
 ### Step 2 (`step02-reno-friendly-fast-conv`): Reno-Friendly Region and Fast Convergence
-- **Part 1 — Reno-Friendly Region ($W_{\text{est}}$ / `ca->tcp_cwnd`)**:
-  - When RTT is short and $W_{\max}$ is small, real time $t$ advances very little per RTT, so the cubic curve near its plateau can grow more slowly than standard TCP Reno.
-  - To ensure CUBIC never loses out to Reno on low-BDP paths, CUBIC computes a parallel linear window $W_{\text{est}}$ (`ca->tcp_cwnd`) that achieves the **exact same average window as TCP Reno** ($\beta_{\text{reno}} = 0.5,\ \alpha_{\text{reno}} = 1$) while using CUBIC's $\beta = 0.7$. That linear slope is $\alpha = \frac{3(1 - \beta)}{1 + \beta} \approx 0.529$ segments per RTT — i.e. $+1$ segment every $\frac{1 + \beta}{3(1 - \beta)} \approx 1.875\text{ RTTs}$ (`beta_scale = 15`).
-  - Whenever $W_{\text{est}} > W_{\text{cubic}}(t)$, CUBIC uses $W_{\text{est}}$ to clamp `ca->cnt` downward so its window grows at least as fast as Reno.
+- **Part 1 — Reno-Friendly Region ($$W_{\text{est}}$$ / `ca->tcp_cwnd`)**:
+  - When RTT is short and $$W_{\max}$$ is small, real time $$t$$ advances very little per RTT, so the cubic curve near its plateau can grow more slowly than standard TCP Reno.
+  - To ensure CUBIC never loses out to Reno on low-BDP paths, CUBIC computes a parallel linear window $$W_{\text{est}}$$ (`ca->tcp_cwnd`) that achieves the **exact same average window as TCP Reno** ($$\beta_{\text{reno}} = 0.5,\ \alpha_{\text{reno}} = 1$$) while using CUBIC's $$\beta = 0.7$$. That linear slope is $$\alpha = \frac{3(1 - \beta)}{1 + \beta} \approx 0.529$$ segments per RTT — i.e. $$+1$$ segment every $$\frac{1 + \beta}{3(1 - \beta)} \approx 1.875\text{ RTTs}$$ (`beta_scale = 15`).
+  - Whenever $$W_{\text{est}} > W_{\text{cubic}}(t)$$, CUBIC uses $$W_{\text{est}}$$ to clamp `ca->cnt` downward so its window grows at least as fast as Reno.
 - **Part 2 — Fast Convergence**:
-  - When an existing CUBIC flow is cruising at a large $W_{\max}$ and a new flow enters the bottleneck, the existing flow's fair share shrinks. If it stubbornly keeps aiming for its old $W_{\max}$, it will repeatedly overflow the queue.
-  - CUBIC detects new competition whenever a packet loss occurs **before `cwnd` has climbed back to the previous $W_{\max}$ (`cwnd < ca->last_max_cwnd`)**. When that happens, Fast Convergence lowers $W_{\max}$ further to $\text{cwnd} \times \frac{1 + \beta}{2} \approx 0.85 \times \text{cwnd}$ (`(cwnd * 1741) / 2048`), dropping the next plateau lower so bandwidth is yielded quickly.
+  - When an existing CUBIC flow is cruising at a large $$W_{\max}$$ and a new flow enters the bottleneck, the existing flow's fair share shrinks. If it stubbornly keeps aiming for its old $$W_{\max}$$, it will repeatedly overflow the queue.
+  - CUBIC detects new competition whenever a packet loss occurs **before `cwnd` has climbed back to the previous $$W_{\max}$$ (`cwnd < ca->last_max_cwnd`)**. When that happens, Fast Convergence lowers $$W_{\max}$$ further to $$\text{cwnd} \times \frac{1 + \beta}{2} \approx 0.85 \times \text{cwnd}$$ (`(cwnd * 1741) / 2048`), dropping the next plateau lower so bandwidth is yielded quickly.
 
 ### Step 3 (`step03-idle-epoch-shift`): Shifting `epoch_start` After an Idle Period
 - **What you will build**:
-  - Because Reno only advances its window when ACKs arrive, its clock naturally pauses whenever the application stops sending data. CUBIC, however, computes $W_{\text{cubic}}(t)$ from wall-clock elapsed time $t = \text{now} - \text{ca}\to\text{epoch}_{\text{start}}$.
-  - If an application goes idle (`in_flight == 0`) for several seconds during Congestion Avoidance and then resumes sending, `ca->epoch_start` would remain stuck in the past. On the very first ACK after resuming, $t$ would leap several seconds forward into the steep convex region ($t \gg K$), causing `bic_target` to explode and `cwnd` to jump by $1.5\times$ in a single RTT (a bug explicitly forbidden by [RFC 9438 §5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8)).
+  - Because Reno only advances its window when ACKs arrive, its clock naturally pauses whenever the application stops sending data. CUBIC, however, computes $$W_{\text{cubic}}(t)$$ from wall-clock elapsed time $$t = \text{now} - \text{ca}\to\text{epoch}_{\text{start}}$$.
+  - If an application goes idle (`in_flight == 0`) for several seconds during Congestion Avoidance and then resumes sending, `ca->epoch_start` would remain stuck in the past. On the very first ACK after resuming, $$t$$ would leap several seconds forward into the steep convex region ($$t \gg K$$), causing `bic_target` to explode and `cwnd` to jump by $$1.5\times$$ in a single RTT (a bug explicitly forbidden by [RFC 9438 §5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8)).
   - You will implement the `.cwnd_event_tx_start` hook (`CA_EVENT_TX_START`) to measure the idle duration `delta = now - tp->lsndtime` and shift `ca->epoch_start += delta` forward (clamped at `now`), cleanly excluding idle periods from the cubic clock.
 
 ### Step 4 (`step04-hystart`): HyStart (Hybrid Slow Start) for a Safe Soft Landing
 - **What you will build**:
-  - On a newly established connection, $W_{\max}$ is still $0$ and `snd_ssthresh` starts at infinity (`0x7fffffff`). Standard Slow Start doubles `cwnd` every RTT until the bottleneck buffer overflows — injecting up to $2 \times \text{BDP}$ of packets into the pipe and triggering catastrophic tail-drop burst losses.
+  - On a newly established connection, $$W_{\max}$$ is still $$0$$ and `snd_ssthresh` starts at infinity (`0x7fffffff`). Standard Slow Start doubles `cwnd` every RTT until the bottleneck buffer overflows — injecting up to $$2 \times \text{BDP}$$ of packets into the pipe and triggering catastrophic tail-drop burst losses.
   - **HyStart (Hybrid Slow Start)** watches incoming ACKs inside `.pkts_acked` during Slow Start using **two complementary sensors** to detect that the pipe is nearly full *before* a single packet is dropped, setting `tp->snd_ssthresh = tp->snd_cwnd` to transition smoothly into Congestion Avoidance:
-    1. **ACK Train Detector (bandwidth saturation sensor)**: When packets fill the bottleneck pipe, the bottleneck router spaces them out at the line rate, and their ACKs return back-to-back ($\le 2\text{ ms}$ apart). Once this closely spaced ACK train spans at least half of the connection's minimum RTT (`delay_min / 2`) within a round, the flight has reached BDP.
+    1. **ACK Train Detector (bandwidth saturation sensor)**: When packets fill the bottleneck pipe, the bottleneck router spaces them out at the line rate, and their ACKs return back-to-back ($$\le 2\text{ ms}$$ apart). Once this closely spaced ACK train spans at least half of the connection's minimum RTT (`delay_min / 2`) within a round, the flight has reached BDP.
     2. **Delay Increase Detector (queueing sensor)**: Once at least 8 RTT samples (`HYSTART_MIN_SAMPLES = 8`) have been collected in the current round, if the round's minimum RTT (`curr_rtt`) exceeds the connection's baseline minimum RTT (`delay_min`) by at least `clamp(delay_min >> 3, 4ms, 16ms)`, packets have begun queueing in the bottleneck buffer.
 
 ---
@@ -246,7 +246,7 @@ From the `labs/` directory, use `run_test.sh` to start with Step 1 (`step01-cubi
 
 ## 1. Goal
 
-In this step, you will implement the core building blocks of Linux's default congestion control algorithm, **TCP CUBIC** ([net/ipv4/tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c)), from scratch using BPF `struct_ops` (`bpf_cubic3`): **multiplicative decrease ($\beta \approx 0.7$)**, the **fixed-point cubic root `cubic_root()`**, and the **3rd-degree polynomial window growth curve $W_{\text{cubic}}(t)$**. For the full track structure and background, see the [CUBIC Track Overview (`../README.md`)](#).
+In this step, you will implement the core building blocks of Linux's default congestion control algorithm, **TCP CUBIC** ([net/ipv4/tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c)), from scratch using BPF `struct_ops` (`bpf_cubic3`): **multiplicative decrease ($$\beta \approx 0.7$$)**, the **fixed-point cubic root `cubic_root()`**, and the **3rd-degree polynomial window growth curve $$W_{\text{cubic}}(t)$$**. For the full track structure and background, see the [CUBIC Track Overview (`../README.md`)](#).
 
 ---
 
@@ -256,25 +256,25 @@ Before looking at the design questions or C code, let's build a complete picture
 
 ### 2.1 Why TCP Reno Struggles on Long Fat Networks (LFNs)
 
-TCP Reno (AIMD) halves `snd_cwnd` ($\beta = 0.5$) whenever a packet is lost, and then recovers linearly by adding **only $+1$ segment per RTT** during Congestion Avoidance.
+TCP Reno (AIMD) halves `snd_cwnd` ($$\beta = 0.5$$) whenever a packet is lost, and then recovers linearly by adding **only $$+1$$ segment per RTT** during Congestion Avoidance.
 
-On paths with both high bandwidth and long round-trip delay (**Long Fat Networks, LFNs**), growing by $+1$ per RTT is far too slow:
-- For example, on a **10 Gbps link with RTT = 100 ms**, the Bandwidth-Delay Product (BDP) is roughly $83,333$ segments.
-- If a single packet loss halves `snd_cwnd` from $83,333$ down to $41,666$, climbing back to $83,333$ at $+1$ segment per $100\text{ ms}$ takes **41,666 RTTs $\approx$ 69 minutes**!
-- Moreover, because Reno's growth rate depends directly on the RTT clock ($+1$ per RTT), flows with short RTTs grab bandwidth much faster than flows with long RTTs (**RTT unfairness**).
+On paths with both high bandwidth and long round-trip delay (**Long Fat Networks, LFNs**), growing by $$+1$$ per RTT is far too slow:
+- For example, on a **10 Gbps link with RTT = 100 ms**, the Bandwidth-Delay Product (BDP) is roughly $$83,333$$ segments.
+- If a single packet loss halves `snd_cwnd` from $$83,333$$ down to $$41,666$$, climbing back to $$83,333$$ at $$+1$$ segment per $$100\text{ ms}$$ takes **41,666 RTTs $$\approx$$ 69 minutes**!
+- Moreover, because Reno's growth rate depends directly on the RTT clock ($$+1$$ per RTT), flows with short RTTs grab bandwidth much faster than flows with long RTTs (**RTT unfairness**).
 
-### 2.2 The Core Idea of CUBIC: A Real-Time Cubic Polynomial Centred at $W_{\max}$
+### 2.2 The Core Idea of CUBIC: A Real-Time Cubic Polynomial Centred at $$W_{\max}$$
 
 CUBIC solves both problems with two key ideas:
 
-1. **Gentler Multiplicative Decrease ($\beta \approx 0.7$) and Remembering $W_{\max}$**:
-   When packet loss occurs, CUBIC saves the pre-loss `snd_cwnd` as **$W_{\max}$ (`last_max_cwnd`)** — the window size where the link saturated — and reduces `snd_cwnd` to roughly **$0.7\times$** (`beta = 717 / 1024 ~= 0.7002`) instead of Reno's $0.5\times$.
-2. **A 3rd-Degree Polynomial $W_{\text{cubic}}(t)$ Driven by Wall-Clock Time $t$**:
-   Instead of incrementing the window by a fixed amount per RTT, CUBIC defines its target window as a cubic function of the elapsed wall-clock time $t$ since the current Congestion Avoidance epoch began, placing its inflection point (where the slope flattens to zero) right at $(t = K, W = W_{\max})$:
+1. **Gentler Multiplicative Decrease ($$\beta \approx 0.7$$) and Remembering $$W_{\max}$$**:
+   When packet loss occurs, CUBIC saves the pre-loss `snd_cwnd` as **$$W_{\max}$$ (`last_max_cwnd`)** — the window size where the link saturated — and reduces `snd_cwnd` to roughly **$$0.7\times$$** (`beta = 717 / 1024 ~= 0.7002`) instead of Reno's $$0.5\times$$.
+2. **A 3rd-Degree Polynomial $$W_{\text{cubic}}(t)$$ Driven by Wall-Clock Time $$t$$**:
+   Instead of incrementing the window by a fixed amount per RTT, CUBIC defines its target window as a cubic function of the elapsed wall-clock time $$t$$ since the current Congestion Avoidance epoch began, placing its inflection point (where the slope flattens to zero) right at $$(t = K, W = W_{\max})$$:
 
 $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$$
 
-Here $C = 0.4$ is a scaling constant, and $K$ is the time it takes for $W_{\text{cubic}}(t)$ to climb from the initial post-recovery window $\text{cwnd}_{\text{epoch}}$ (at $t = 0$) back up to $W_{\max}$. Substituting $W_{\text{cubic}}(0) = \text{cwnd}_{\text{epoch}}$ gives $K$ as a cubic root:
+Here $$C = 0.4$$ is a scaling constant, and $$K$$ is the time it takes for $$W_{\text{cubic}}(t)$$ to climb from the initial post-recovery window $$\text{cwnd}_{\text{epoch}}$$ (at $$t = 0$$) back up to $$W_{\max}$$. Substituting $$W_{\text{cubic}}(0) = \text{cwnd}_{\text{epoch}}$$ gives $$K$$ as a cubic root:
 
 $$K = \sqrt[3]{\frac{W_{\max} - \text{cwnd}_{\text{epoch}}}{C}}$$
 
@@ -297,61 +297,61 @@ cwnd_epoch (14) +     *       Climbs rapidly at first, slowing down as it nears 
 ```
 
 A single cubic equation naturally produces three distinct phases:
-- **(1) Concave region ($t < K$)**: Since $t - K < 0$, $W_{\text{cubic}}(t) = W_{\max} - C(K - t)^3$. Right after loss recovery, $|t - K|$ is large, so `cwnd` climbs aggressively back towards $W_{\max}$ and decelerates smoothly as $t \to K$.
-- **(2) Plateau ($t \approx K$)**: Around the previous saturation point $W_{\max}$, $|t - K| \approx 0$ and the derivative of $(t - K)^3$ vanishes. CUBIC holds `cwnd` nearly constant, dwelling safely at full capacity without immediately causing another packet loss.
-- **(3) Convex / Max-Probing region ($t > K$)**: If no loss occurs at $W_{\max}$, extra bandwidth may have become available. For $t > K$, $W_{\text{cubic}}(t) = W_{\max} + C(t - K)^3$ probes upward very slowly at first and then accelerates over time.
+- **(1) Concave region ($$t < K$$)**: Since $$t - K < 0$$, $$W_{\text{cubic}}(t) = W_{\max} - C(K - t)^3$$. Right after loss recovery, $$|t - K|$$ is large, so `cwnd` climbs aggressively back towards $$W_{\max}$$ and decelerates smoothly as $$t \to K$$.
+- **(2) Plateau ($$t \approx K$$)**: Around the previous saturation point $$W_{\max}$$, $$|t - K| \approx 0$$ and the derivative of $$(t - K)^3$$ vanishes. CUBIC holds `cwnd` nearly constant, dwelling safely at full capacity without immediately causing another packet loss.
+- **(3) Convex / Max-Probing region ($$t > K$$)**: If no loss occurs at $$W_{\max}$$, extra bandwidth may have become available. For $$t > K$$, $$W_{\text{cubic}}(t) = W_{\max} + C(t - K)^3$$ probes upward very slowly at first and then accelerates over time.
 
 ### 2.3 Pacing the Curve Over One RTT (`t + delay_min` and `ca->cnt`)
 
-The kernel's generalised linear counter `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` increases `snd_cwnd` by $+1$ for every `ca->cnt` acknowledged segments. How does CUBIC translate a continuous target curve $W_{\text{cubic}}(t)$ into the discrete interval `ca->cnt`?
+The kernel's generalised linear counter `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` increases `snd_cwnd` by $$+1$$ for every `ca->cnt` acknowledged segments. How does CUBIC translate a continuous target curve $$W_{\text{cubic}}(t)$$ into the discrete interval `ca->cnt`?
 
-1. **Looking one RTT ahead via $t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$**:
-   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $W_{\text{cubic}}(t)$ at $t = \text{now} - \text{epoch}_{\text{start}} = 0$, we would get $W_{\text{cubic}}(0) = \text{cwnd}$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
+1. **Looking one RTT ahead via $$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$$**:
+   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $$W_{\text{cubic}}(t)$$ at $$t = \text{now} - \text{epoch}_{\text{start}} = 0$$, we would get $$W_{\text{cubic}}(0) = \text{cwnd}$$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
    Instead, CUBIC adds the connection's minimum RTT (`delay_min`) to look one RTT ahead:
    $$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$$
-   Evaluating `bic_target` $= W_{\text{cubic}}(t)$ tells us **what window size we want to reach one RTT from now**.
+   Evaluating `bic_target` $$= W_{\text{cubic}}(t)$$ tells us **what window size we want to reach one RTT from now**.
 2. **Converting `bic_target` into `ca->cnt`**:
-   Over the next RTT, roughly `cwnd` segments will be ACKed. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs (an increase of `bic_target - cwnd` segments), we must increment `snd_cwnd` by $+1$ every:
+   Over the next RTT, roughly `cwnd` segments will be ACKed. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs (an increase of `bic_target - cwnd` segments), we must increment `snd_cwnd` by $$+1$$ every:
    - **When `bic_target > cwnd`**:
      $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}} \right\rfloor$$
-   - **When `bic_target <= cwnd` (at the $W_{\max}$ plateau)**:
-     To prevent division by zero or negative values and keep the window virtually flat, CUBIC sets `ca->cnt = 100 * cwnd` (only $+1$ segment per 100 RTTs).
+   - **When `bic_target <= cwnd` (at the $$W_{\max}$$ plateau)**:
+     To prevent division by zero or negative values and keep the window virtually flat, CUBIC sets `ca->cnt = 100 * cwnd` (only $$+1$$ segment per 100 RTTs).
    - **Initial epoch with no prior loss (`last_max_cwnd == 0` and `ca->cnt > 20`)**:
      Caps `ca->cnt = 20`, and finally enforces a lower bound `ca->cnt = max(ca->cnt, 2U)`.
 
 ### 2.4 Fixed-Point Arithmetic and the Integer Cubic Root `cubic_root()`
 
-Because neither the Linux kernel nor BPF allows floating-point instructions, CUBIC scales all fractional constants by powers of two ($1024 = 2^{10}$):
+Because neither the Linux kernel nor BPF allows floating-point instructions, CUBIC scales all fractional constants by powers of two ($$1024 = 2^{10}$$):
 
 | Constant / Symbol | Value / Formula | Mathematical Meaning |
 | :--- | :--- | :--- |
-| `BICTCP_BETA_SCALE` | `1024` | Denominator for $\beta$ ($2^{10}$) |
-| `beta` | `717` | Multiplicative decrease factor $\beta = 717 / 1024 \approx 0.7002$ |
-| `BICTCP_HZ` | `10` | Time scale for $t$ and $K$: $1\text{ second} = 2^{10} = 1024\text{ units}$ (~$0.976\text{ ms}$ per unit) |
+| `BICTCP_BETA_SCALE` | `1024` | Denominator for $$\beta$$ ($$2^{10}$$) |
+| `beta` | `717` | Multiplicative decrease factor $$\beta = 717 / 1024 \approx 0.7002$$ |
+| `BICTCP_HZ` | `10` | Time scale for $$t$$ and $$K$$: $$1\text{ second} = 2^{10} = 1024\text{ units}$$ (~$$0.976\text{ ms}$$ per unit) |
 | `bic_scale` | `41` | Base scale factor (`cube_rtt_scale = bic_scale * 10 = 410`) |
-| `cube_rtt_scale` | `410` | $C \times 1024 = 0.4 \times 1024 \approx 410$ (so $C = 410 / 2^{10}$) |
-| `cube_factor` | `(1ULL << 40) / 410` ($= 2,681,735,677$) | Pre-scaled multiplier for $K$ in `BICTCP_HZ` units: $\frac{(2^{10})^3}{C} = \frac{2^{30}}{410 / 2^{10}} = \frac{2^{40}}{410}$ |
+| `cube_rtt_scale` | `410` | $$C \times 1024 = 0.4 \times 1024 \approx 410$$ (so $$C = 410 / 2^{10}$$) |
+| `cube_factor` | `(1ULL << 40) / 410` ($$= 2,681,735,677$$) | Pre-scaled multiplier for $$K$$ in `BICTCP_HZ` units: $$\frac{(2^{10})^3}{C} = \frac{2^{30}}{410 / 2^{10}} = \frac{2^{40}}{410}$$ |
 
 With these fixed-point constants, every formula reduces to integer shifts, multiplications, and divisions:
 - **Time to origin `bic_K` (in `BICTCP_HZ` units)**:
   $$K_{\text{hz}} = \sqrt[3]{\text{cube}_{\text{factor}} \times (W_{\max} - \text{cwnd})}$$
-- **Elapsed time `t` (microseconds $\to$ `BICTCP_HZ` units)**:
+- **Elapsed time `t` (microseconds $$\to$$ `BICTCP_HZ` units)**:
   $$\text{t} = \frac{((\text{now}_{\text{us}} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}) \ll 10}{1,000,000}$$
-- **Cubic distance from origin `delta` $= C |t - K|^3$**:
-  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $\text{offs} = |t - \text{bic}_{K}|$, and then shift right by $10 + 3 \times 10 = 40$ bits to undo the scaling of $C$ ($2^{10}$) and $\text{offs}^3$ ($2^{30}$):
+- **Cubic distance from origin `delta` $$= C |t - K|^3$$**:
+  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $$\text{offs} = |t - \text{bic}_{K}|$$, and then shift right by $$10 + 3 \times 10 = 40$$ bits to undo the scaling of $$C$$ ($$2^{10}$$) and $$\text{offs}^3$$ ($$2^{30}$$):
   $$\text{delta} = (\text{cube}_{\text{rtt,scale}} \times \text{offs}^3) \gg (10 + 3 \times \text{BICTCP}_{\text{HZ}})$$
   In the concave region (`t < ca->bic_K`), `bic_target = ca->bic_origin_point - delta`; in the convex region (`t >= ca->bic_K`), `bic_target = ca->bic_origin_point + delta`.
 
-#### How `cubic_root(__u64 a)` Computes $\lfloor \sqrt[3]{a} \rfloor$ in Integer Arithmetic
+#### How `cubic_root(__u64 a)` Computes $$\lfloor \sqrt[3]{a} \rfloor$$ in Integer Arithmetic
 
-To compute the cubic root of a 64-bit integer $a$ without floating-point operations, CUBIC uses a three-step algorithm from [tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c):
+To compute the cubic root of a 64-bit integer $$a$$ without floating-point operations, CUBIC uses a three-step algorithm from [tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c):
 1. **Divide the bit-width by 3 (exponent extraction)**:
-   `fls64(a)` returns the 1-based position of the most significant set bit ($1 \dots 64$). Computing `b = ((fls64(a) * 84) >> 8) - 1` divides that bit position by 3 (since $84 / 256 \approx 1/3$), giving the number of 3-bit octets to shift. (For small inputs $a < 64$, it returns `((__u32)v[(__u32)a] + 35) >> 6` directly.)
+   `fls64(a)` returns the 1-based position of the most significant set bit ($$1 \dots 64$$). Computing `b = ((fls64(a) * 84) >> 8) - 1` divides that bit position by 3 (since $$84 / 256 \approx 1/3$$), giving the number of 3-bit octets to shift. (For small inputs $$a < 64$$, it returns `((__u32)v[(__u32)a] + 35) >> 6` directly.)
 2. **64-entry lookup table `v[]` for the initial estimate**:
-   `shift = a >> (b * 3)` extracts the top 6 bits of $a$ into `[0, 63]`. Indexing the precomputed table `v[shift]` and scaling back by `<< b` gives a close initial estimate `x = (((__u32)v[shift] + 10) << b) >> 6`.
+   `shift = a >> (b * 3)` extracts the top 6 bits of $$a$$ into `[0, 63]`. Indexing the precomputed table `v[shift]` and scaling back by `<< b` gives a close initial estimate `x = (((__u32)v[shift] + 10) << b) >> 6`.
    (*Important BPF Verifier rule*: Even though `shift` is mathematically always in `[0, 63]`, the BPF verifier cannot prove the upper bound of a variable shift `a >> (b * 3)`. We must place an explicit `if (shift >= 64) return 0;` guard right before `v[shift]` so the verifier can prove the array access is in bounds.)
 3. **One Newton-Raphson iteration**:
-   Solving $f(x) = x^3 - a = 0$ via one step of $x_1 = \frac{1}{3}\left(2x_0 + \frac{a}{x_0^2}\right)$ refines the estimate to ~$0.195\%$ average error, using `x * (x - 1)` for the denominator and $341 / 1024 \approx 1/3$:
+   Solving $$f(x) = x^3 - a = 0$$ via one step of $$x_1 = \frac{1}{3}\left(2x_0 + \frac{a}{x_0^2}\right)$$ refines the estimate to ~$$0.195\%$$ average error, using `x * (x - 1)` for the denominator and $$341 / 1024 \approx 1/3$$:
    ```c
    x = (2 * x + (__u32)div64_u64(a, (__u64)x * (__u64)(x - 1)));
    x = ((x * 341) >> 10);
@@ -359,23 +359,23 @@ To compute the cubic root of a 64-bit integer $a$ without floating-point operati
 
 ### 2.5 Concrete Numerical Walkthrough (Matching `test.pkt`)
 
-Let's trace the exact numbers on a connection with RTT = $100\text{ ms}$ (`delay_min = 100,000` usec) that experiences packet loss at `cwnd = 20`:
+Let's trace the exact numbers on a connection with RTT = $$100\text{ ms}$$ (`delay_min = 100,000` usec) that experiences packet loss at `cwnd = 20`:
 
 1. **On packet loss (`bpf_cubic3_ssthresh()`)**:
-   - Saves $W_{\max}$ as `last_max_cwnd = 20` and resets `epoch_start = 0`.
-   - Returns the new `ssthresh` (and post-recovery `cwnd`): $\lfloor 20 \times 717 / 1024 \rfloor = 14$.
-2. **At epoch start (Flight 1 right after recovery, $\text{cwnd} = 14$)**:
+   - Saves $$W_{\max}$$ as `last_max_cwnd = 20` and resets `epoch_start = 0`.
+   - Returns the new `ssthresh` (and post-recovery `cwnd`): $$\lfloor 20 \times 717 / 1024 \rfloor = 14$$.
+2. **At epoch start (Flight 1 right after recovery, $$\text{cwnd} = 14$$)**:
    - `bic_origin_point = 20`
-   - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523` ($2523 / 1024 \approx 2.46\text{ s}$)
+   - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523` ($$2523 / 1024 \approx 2.46\text{ s}$$)
 3. **Evolution of `bic_target` and `ca->cnt` across all five flights**:
 
-| Flight | Elapsed $\text{now} - \text{epoch}_{\text{start}}$ | Lookahead $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
+| Flight | Elapsed $$\text{now} - \text{epoch}_{\text{start}}$$ | Lookahead $$t$$ (`BICTCP_HZ`) | $$\text{offs} = \|t - 2523\|$$ | $$\text{delta} = C \cdot \text{offs}^3$$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Flight 1** | $0.0\text{ s}$ | $102$ ($0.1\text{ s}$) | $2421$ | $5$ | Concave: $20 - 5 = 15$ | $14 / (15 - 14) = 14$ | $14 \to 15$ |
-| **Flight 2** | $0.6\text{ s}$ | $716$ ($0.7\text{ s}$) | $1807$ | $2$ | Concave: $20 - 2 = 18$ | $15 / (18 - 15) = 5$ | $15 \to 18$ ($+3$ jump) |
-| **Flight 3** | $1.8\text{ s}$ | $1945$ ($1.9\text{ s}$) | $578$ | $0$ | Origin reached: $20 - 0 = 20$ | $18 / (20 - 18) = 9$ | $18 \to 20$ ($W_{\max}$) |
-| **Flight 4** | $2.1\text{ s}$ | $2252$ ($2.2\text{ s}$) | $271$ | $0$ | Plateau: $20 \le \text{cwnd}$ | $100 \times 20 = 2000$ | $20 \to 20$ (flat plateau) |
-| **Flight 5** | $4.0\text{ s}$ | $4198$ ($4.1\text{ s}$) | $1675$ | $1$ | Convex: $20 + 1 = 21$ | $20 / (21 - 20) = 20$ | $20 \to 21$ (probing) |
+| **Flight 1** | $$0.0\text{ s}$$ | $$102$$ ($$0.1\text{ s}$$) | $$2421$$ | $$5$$ | Concave: $$20 - 5 = 15$$ | $$14 / (15 - 14) = 14$$ | $$14 \to 15$$ |
+| **Flight 2** | $$0.6\text{ s}$$ | $$716$$ ($$0.7\text{ s}$$) | $$1807$$ | $$2$$ | Concave: $$20 - 2 = 18$$ | $$15 / (18 - 15) = 5$$ | $$15 \to 18$$ ($$+3$$ jump) |
+| **Flight 3** | $$1.8\text{ s}$$ | $$1945$$ ($$1.9\text{ s}$$) | $$578$$ | $$0$$ | Origin reached: $$20 - 0 = 20$$ | $$18 / (20 - 18) = 9$$ | $$18 \to 20$$ ($$W_{\max}$$) |
+| **Flight 4** | $$2.1\text{ s}$$ | $$2252$$ ($$2.2\text{ s}$$) | $$271$$ | $$0$$ | Plateau: $$20 \le \text{cwnd}$$ | $$100 \times 20 = 2000$$ | $$20 \to 20$$ (flat plateau) |
+| **Flight 5** | $$4.0\text{ s}$$ | $$4198$$ ($$4.1\text{ s}$$) | $$1675$$ | $$1$$ | Convex: $$20 + 1 = 21$$ | $$20 / (21 - 20) = 20$$ | $$20 \to 21$$ (probing) |
 
 ### 2.6 What the Kernel Provides vs. Our Private Struct (`icsk_ca_priv`)
 
@@ -394,9 +394,9 @@ Here is the complete list of fields provided by the kernel and the per-socket CU
    - `struct inet_connection_sock` reserves an inline byte array `icsk_ca_priv` for congestion control modules, accessed via `inet_csk_ca(sk)`.
    - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) already defines `struct bpf_cubic3_ca` with:
      - `cnt`: Number of ACKed segments required to increment `snd_cwnd` by 1.
-     - `last_max_cwnd`: $W_{\max}$ saved at the most recent packet loss.
-     - `last_cwnd`, `last_time`: Cache used to skip redundant `bictcp_update()` calls within $1/32\text{ s}$ when `cwnd` has not changed.
-     - `bic_origin_point`: Origin window of the cubic curve in the current epoch ($W_{\max}$).
+     - `last_max_cwnd`: $$W_{\max}$$ saved at the most recent packet loss.
+     - `last_cwnd`, `last_time`: Cache used to skip redundant `bictcp_update()` calls within $$1/32\text{ s}$$ when `cwnd` has not changed.
+     - `bic_origin_point`: Origin window of the cubic curve in the current epoch ($$W_{\max}$$).
      - `bic_K`: Time from `epoch_start` to reach `bic_origin_point` (in `BICTCP_HZ` units).
      - `delay_min`: Minimum RTT observed in `.pkts_acked` (in microseconds).
      - `epoch_start`: Timestamp when the current Congestion Avoidance epoch started (in microseconds; `0` means no active epoch).
@@ -414,9 +414,9 @@ Using what you just learned in Section 2, think through these four design questi
 <details>
 <summary>Hint and Answer</summary>
 
-- **Hint**: Look at the formula $K = \sqrt[3]{(W_{\max} - \text{cwnd}_{\text{epoch}}) / C}$ in Section 2.2. Do any of its inputs change while the socket stays in the same Congestion Avoidance epoch?
+- **Hint**: Look at the formula $$K = \sqrt[3]{(W_{\max} - \text{cwnd}_{\text{epoch}}) / C}$$ in Section 2.2. Do any of its inputs change while the socket stays in the same Congestion Avoidance epoch?
 - **Answer**:
-  - $K$ is the fixed time distance from the start of the epoch ($t = 0$, where the window was $\text{cwnd}_{\text{epoch}}$) to the inflection point $W_{\max}$. Because the cubic curve itself stays fixed throughout the epoch, computing `ca->bic_K` and `ca->bic_origin_point` once when `ca->epoch_start == 0` lets every subsequent ACK evaluate $W_{\text{cubic}}(t)$ with simple subtraction and cubing, avoiding repeated `cubic_root()` calls.
+  - $$K$$ is the fixed time distance from the start of the epoch ($$t = 0$$, where the window was $$\text{cwnd}_{\text{epoch}}$$) to the inflection point $$W_{\max}$$. Because the cubic curve itself stays fixed throughout the epoch, computing `ca->bic_K` and `ca->bic_origin_point` once when `ca->epoch_start == 0` lets every subsequent ACK evaluate $$W_{\text{cubic}}(t)$$ with simple subtraction and cubing, avoiding repeated `cubic_root()` calls.
   - `ca->epoch_start` is reset to `0` on packet loss in `bpf_cubic3_ssthresh()` (and on RTO timeout in `bpf_cubic3_set_state()` via `bictcp_reset(ca)`). If `ca->last_max_cwnd <= cwnd` at the start of an epoch, we are already at or above the historical maximum, so we set `ca->bic_K = 0` and `ca->bic_origin_point = cwnd` to start immediately in the convex region.
 
 </details>
@@ -428,22 +428,22 @@ In `bictcp_update()`, elapsed time is computed as `(now_us - ca->epoch_start) + 
 <details>
 <summary>Hint and Answer</summary>
 
-- **Hint**: Check Section 2.3 and the Flight 1 row in Section 2.5's table: what is $W_{\text{cubic}}(0)$?
+- **Hint**: Check Section 2.3 and the Flight 1 row in Section 2.5's table: what is $$W_{\text{cubic}}(0)$$?
 - **Answer**:
-  - On the first ACK of a new epoch, `ca->epoch_start` is set to `now_us`, so `now_us - ca->epoch_start == 0`. Without `ca->delay_min`, $t = 0$ and $W_{\text{cubic}}(0) = \text{cwnd}_{\text{epoch}} = \text{cwnd}$.
+  - On the first ACK of a new epoch, `ca->epoch_start` is set to `now_us`, so `now_us - ca->epoch_start == 0`. Without `ca->delay_min`, $$t = 0$$ and $$W_{\text{cubic}}(0) = \text{cwnd}_{\text{epoch}} = \text{cwnd}$$.
   - That would make `bic_target == cwnd`, sending execution into the plateau branch (`ca->cnt = 100 * cwnd`) and freezing window growth for the first RTT.
   - Adding `ca->delay_min` evaluates the curve one RTT into the future, giving the target window `bic_target` at the end of the current RTT so `ca->cnt = cwnd / (bic_target - cwnd)` paces growth properly across the incoming flight of ACKs.
 
 </details>
 
-### Q3. How do we evaluate both the concave ($t < K$) and convex ($t \ge K$) regions using only unsigned integers (`__u64`)?
+### Q3. How do we evaluate both the concave ($$t < K$$) and convex ($$t \ge K$$) regions using only unsigned integers (`__u64`)?
 
-In $W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$, the term $(t - K)^3$ is negative when $t < K$ and positive when $t > K$. How should we structure the C code with unsigned variables `t`, `offs`, and `delta` to avoid unsigned underflow?
+In $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$$, the term $$(t - K)^3$$ is negative when $$t < K$$ and positive when $$t > K$$. How should we structure the C code with unsigned variables `t`, `offs`, and `delta` to avoid unsigned underflow?
 
 <details>
 <summary>Hint and Answer</summary>
 
-- **Hint**: As shown in Section 2.4, separate the magnitude $|t - K|$ from the sign of $(t - K)$.
+- **Hint**: As shown in Section 2.4, separate the magnitude $$|t - K|$$ from the sign of $$(t - K)$$.
 - **Answer**:
   1. Compute the non-negative distance from the inflection point:
      ```c
@@ -509,12 +509,12 @@ static __always_inline __u32 cubic_root(__u64 a)
 }
 ```
 
-- **Fast path for $a < 64$**: Directly indexes `v[a]` with rounding (`+ 35`) and shifts right by 6.
+- **Fast path for $$a < 64$$**: Directly indexes `v[a]` with rounding (`+ 35`) and shifts right by 6.
 - **Exponent `b` and top 6 bits `shift`**: Uses `fls64(a)` and `b = ((b * 84) >> 8) - 1` to find the 3-bit shift count, then normalises `a` via `shift = a >> (b * 3)`.
 - **Verifier bounds check and initial guess**: Guards `if (shift >= 64) return 0;`, then computes `x = (((v[shift] + 10) << b) >> 6)`.
-- **One Newton-Raphson step**: Refines `x` using `div64_u64(a, (__u64)x * (__u64)(x - 1))` and multiplies by `341 >> 10` ($\approx 1/3$).
+- **One Newton-Raphson step**: Refines `x` using `div64_u64(a, (__u64)x * (__u64)(x - 1))` and multiplies by `341 >> 10` ($$\approx 1/3$$).
 
-### 4.2 `bictcp_update()` — Evaluating $W_{\text{cubic}}(t)$ and `ca->cnt` (TODO 2)
+### 4.2 `bictcp_update()` — Evaluating $$W_{\text{cubic}}(t)$$ and `ca->cnt` (TODO 2)
 
 ```c
 static __always_inline void bictcp_update(struct sock *sk, __u32 cwnd, __u32 acked)
@@ -577,12 +577,12 @@ out:
 }
 ```
 
-- **Rate-limiting guard**: Skips recalculation if `cwnd` is unchanged and less than $1/32\text{ s}$ ($31.25\text{ ms}$) has elapsed since `last_time`.
+- **Rate-limiting guard**: Skips recalculation if `cwnd` is unchanged and less than $$1/32\text{ s}$$ ($$31.25\text{ ms}$$) has elapsed since `last_time`.
 - **Epoch initialisation**: When `ca->epoch_start == 0`, records `now_us` and computes `ca->bic_K = cubic_root(cube_factor * (ca->last_max_cwnd - cwnd))` if `ca->last_max_cwnd > cwnd`.
 - **Evaluating the cubic curve**: Converts `(now_us - ca->epoch_start) + ca->delay_min` to `BICTCP_HZ` units, computes `offs = |t - ca->bic_K|` and `delta`, and sets `bic_target` in the concave (`t < ca->bic_K`) or convex (`t >= ca->bic_K`) region.
 - **Computing `ca->cnt`**: Divides `cwnd / (bic_target - cwnd)` when `bic_target > cwnd`, or sets `100 * cwnd` at the plateau, clamped to at least `2U`.
 
-### 4.3 `bpf_cubic3_ssthresh()` — Multiplicative Decrease with $\beta \approx 0.7$ (TODO 3)
+### 4.3 `bpf_cubic3_ssthresh()` — Multiplicative Decrease with $$\beta \approx 0.7$$ (TODO 3)
 
 ```c
 SEC("struct_ops")
@@ -598,7 +598,7 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 }
 ```
 
-- Resets `ca->epoch_start = 0` so the next Congestion Avoidance ACK starts a fresh epoch, and saves `ca->last_max_cwnd = tp->snd_cwnd` ($W_{\max}$; Fast Convergence and Reno-friendly mode will be added in Step 2).
+- Resets `ca->epoch_start = 0` so the next Congestion Avoidance ACK starts a fresh epoch, and saves `ca->last_max_cwnd = tp->snd_cwnd` ($$W_{\max}$$; Fast Convergence and Reno-friendly mode will be added in Step 2).
 - Returns `max((tp->snd_cwnd * 717) / 1024, 2U)`.
 
 ### 4.4 Other Callbacks Provided in the Skeleton
@@ -618,21 +618,21 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/test.pkt) establishes a connection with a 1000-byte effective MSS and RTT = 100 ms (`delay_min = 100,000` usec) and verifies the exact numbers from Section 2.5 across seven stages:
 
 1. **Handshake and Slow Start (`cwnd: 10 -> 20`)**:
-   Sends 10 segments (`10000` bytes). The ACK at $+0.100\text{ s}$ grows `tcpi_snd_cwnd` from 10 to 20 and records `delay_min = 100 ms` in `bpf_cubic3_acked()`.
-2. **Packet Loss at `cwnd = 20` and $\beta = 0.7$ Assertion (`ssthresh == 14`)**:
+   Sends 10 segments (`10000` bytes). The ACK at $$+0.100\text{ s}$$ grows `tcpi_snd_cwnd` from 10 to 20 and records `delay_min = 100 ms` in `bpf_cubic3_acked()`.
+2. **Packet Loss at `cwnd = 20` and $$\beta = 0.7$$ Assertion (`ssthresh == 14`)**:
    Sends 4 segments (`10001:14001`) where the first segment (`10001:11001`) is lost. Three SACKs trigger Fast Recovery (`TCP_CA_Recovery`) and invoke `bpf_cubic3_ssthresh()`.
-   - **Why `starter.bpf.c` fails**: `bpf_cubic3_ssthresh()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) returns Reno's $0.5\times$ reduction (`10`), immediately failing line 42 (`assert tcpi_snd_ssthresh == 14`). Furthermore, its `bictcp_update()` leaves `ca->cnt = cwnd`, which would fail the subsequent concave and plateau assertions.
-   - **Why `solution.bpf.c` passes**: `20 * 717 / 1024 = 14` satisfies `tcpi_snd_ssthresh == 14`, and the recovery ACK at line 46 exits Fast Recovery into `TCP_CA_Open` with `tcpi_snd_cwnd == 14` and $W_{\max} = 20$.
-3. **Flight 1 (Epoch start, Concave region, $t_{\text{elapsed}} = 0.0\text{ s}$)**:
-   Sending 14 segments and receiving the ACK initialises `bic_K = 2523` (~$2.46\text{ s}$), `bic_target = 15`, and `ca->cnt = 14`, advancing `tcpi_snd_cwnd` from `14` to `15`.
-4. **Flight 2 (Steep Concave climb, $t_{\text{elapsed}} = 0.6\text{ s}$)**:
-   At $t_{\text{elapsed}} = 0.6\text{ s}$, `bic_target = 18` and `ca->cnt = 15 / (18 - 15) = 5`. ACKing 15 segments jumps `tcpi_snd_cwnd` by $+3$ in a single RTT to `18`.
-5. **Flight 3 (Reaching the origin $W_{\max} = 20$, $t_{\text{elapsed}} = 1.8\text{ s}$)**:
-   Approaching $K \approx 2.46\text{ s}$, `delta = 0`, `bic_target = 20`, and `ca->cnt = 18 / (20 - 18) = 9`. ACKing 18 segments brings `tcpi_snd_cwnd` to `20` ($W_{\max}$).
-6. **Flight 4 (Plateau at $W_{\max} = 20$ near $t \approx K$, $t_{\text{elapsed}} = 2.1\text{ s}$)**:
+   - **Why `starter.bpf.c` fails**: `bpf_cubic3_ssthresh()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) returns Reno's $$0.5\times$$ reduction (`10`), immediately failing line 42 (`assert tcpi_snd_ssthresh == 14`). Furthermore, its `bictcp_update()` leaves `ca->cnt = cwnd`, which would fail the subsequent concave and plateau assertions.
+   - **Why `solution.bpf.c` passes**: `20 * 717 / 1024 = 14` satisfies `tcpi_snd_ssthresh == 14`, and the recovery ACK at line 46 exits Fast Recovery into `TCP_CA_Open` with `tcpi_snd_cwnd == 14` and $$W_{\max} = 20$$.
+3. **Flight 1 (Epoch start, Concave region, $$t_{\text{elapsed}} = 0.0\text{ s}$$)**:
+   Sending 14 segments and receiving the ACK initialises `bic_K = 2523` (~$$2.46\text{ s}$$), `bic_target = 15`, and `ca->cnt = 14`, advancing `tcpi_snd_cwnd` from `14` to `15`.
+4. **Flight 2 (Steep Concave climb, $$t_{\text{elapsed}} = 0.6\text{ s}$$)**:
+   At $$t_{\text{elapsed}} = 0.6\text{ s}$$, `bic_target = 18` and `ca->cnt = 15 / (18 - 15) = 5`. ACKing 15 segments jumps `tcpi_snd_cwnd` by $$+3$$ in a single RTT to `18`.
+5. **Flight 3 (Reaching the origin $$W_{\max} = 20$$, $$t_{\text{elapsed}} = 1.8\text{ s}$$)**:
+   Approaching $$K \approx 2.46\text{ s}$$, `delta = 0`, `bic_target = 20`, and `ca->cnt = 18 / (20 - 18) = 9`. ACKing 18 segments brings `tcpi_snd_cwnd` to `20` ($$W_{\max}$$).
+6. **Flight 4 (Plateau at $$W_{\max} = 20$$ near $$t \approx K$$, $$t_{\text{elapsed}} = 2.1\text{ s}$$)**:
    With `cwnd == 20` and `bic_target == 20`, `bic_target <= cwnd` sets `ca->cnt = 100 * 20 = 2000`. Even after 20 segments are ACKed, `tcpi_snd_cwnd` stays flat at `20`.
-7. **Flight 5 (Convex bandwidth probing, $t_{\text{elapsed}} = 4.0\text{ s} > K$)**:
-   Past $K \approx 2.46\text{ s}$, `t > bic_K` and `delta = 1` push `bic_target = 20 + 1 = 21 > cwnd` (`ca->cnt = 20`), growing `tcpi_snd_cwnd` beyond `20`.
+7. **Flight 5 (Convex bandwidth probing, $$t_{\text{elapsed}} = 4.0\text{ s} > K$$)**:
+   Past $$K \approx 2.46\text{ s}$$, `t > bic_K` and `delta = 1` push `bic_target = 20 + 1 = 21 > cwnd` (`ca->cnt = 20`), growing `tcpi_snd_cwnd` beyond `20`.
 
 ### 5.2 How to Run
 
@@ -1348,11 +1348,11 @@ struct tcp_congestion_ops bpf_cubic3 = {
 
 ---
 
-## Step 2: Reno-friendly Region ($W_{\text{est}}$) and Fast Convergence
+## Step 2: Reno-friendly Region ($$W_{\text{est}}$$) and Fast Convergence
 
 ## 1. Goal
 
-In this step, you will extend the pure CUBIC curve from Step 1 ($W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$) with two mechanisms essential for real networks: **Fast Convergence** (which helps existing CUBIC flows yield bandwidth quickly when new competing flows join) and the **Reno-friendly region ($W_{\text{est}}$ / `tcp_cwnd`)** (which ensures CUBIC never grows slower than standard TCP Reno on short-RTT or low-BDP paths). For the full curriculum and how this step fits into the track, see the [CUBIC Track Overview (`../README.md`)](#).
+In this step, you will extend the pure CUBIC curve from Step 1 ($$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$$) with two mechanisms essential for real networks: **Fast Convergence** (which helps existing CUBIC flows yield bandwidth quickly when new competing flows join) and the **Reno-friendly region ($$W_{\text{est}}$$ / `tcp_cwnd`)** (which ensures CUBIC never grows slower than standard TCP Reno on short-RTT or low-BDP paths). For the full curriculum and how this step fits into the track, see the [CUBIC Track Overview (`../README.md`)](#).
 
 ---
 
@@ -1362,16 +1362,16 @@ Before looking at the `TODO` items in `starter.bpf.c`, let's build a complete pi
 
 ### 2.1 Two Practical Limitations of the Pure CUBIC Curve
 
-As we saw in Step 1, when packet loss occurs at window $W$, pure CUBIC saves $W_{\max} = W$ (`ca->last_max_cwnd`), reduces `cwnd` multiplicatively to $W_0 = \beta W$ (with $\beta \approx 0.7$), and then grows the window along a cubic function of elapsed time $t$:
+As we saw in Step 1, when packet loss occurs at window $$W$$, pure CUBIC saves $$W_{\max} = W$$ (`ca->last_max_cwnd`), reduces `cwnd` multiplicatively to $$W_0 = \beta W$$ (with $$\beta \approx 0.7$$), and then grows the window along a cubic function of elapsed time $$t$$:
 
 $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max} - W_0}{C}}$$
 
-In the concave region ($t < K$), `cwnd` climbs towards $W_{\max}$; near $t = K$, it flattens into a **plateau** around $W_{\max}$; and in the convex region ($t > K$), it probes upwards for additional bandwidth.
+In the concave region ($$t < K$$), `cwnd` climbs towards $$W_{\max}$$; near $$t = K$$, it flattens into a **plateau** around $$W_{\max}$$; and in the convex region ($$t > K$$), it probes upwards for additional bandwidth.
 
 While this curve excels on long-fat networks (high BDP), running the pure cubic equation by itself on real networks reveals two weaknesses:
 
-- **Problem 1 (Slow convergence when new competing flows join)**: Suppose an existing CUBIC flow is running with a large $W_{\max}$ when a new flow joins the same bottleneck link. Each flow's fair share is now smaller than the old $W_{\max}$. Because the existing flow keeps aiming its concave climb and plateau at that outdated, high $W_{\max}$, it releases bandwidth very slowly, requiring many loss rounds before the flows converge to fairness.
-- **Problem 2 (Underperforming TCP Reno on short-RTT / small-BDP paths)**: Because $W_{\text{cubic}}(t)$ depends on wall-clock time $t$ (in seconds) rather than RTT count—and has a slope near zero around the plateau ($t \approx K$)—on short-RTT paths (where many RTTs elapse within a fraction of a second) or when $W_{\max}$ is small, the cubic curve can grow more slowly than standard TCP Reno (AIMD), which adds 1 segment every RTT.
+- **Problem 1 (Slow convergence when new competing flows join)**: Suppose an existing CUBIC flow is running with a large $$W_{\max}$$ when a new flow joins the same bottleneck link. Each flow's fair share is now smaller than the old $$W_{\max}$$. Because the existing flow keeps aiming its concave climb and plateau at that outdated, high $$W_{\max}$$, it releases bandwidth very slowly, requiring many loss rounds before the flows converge to fairness.
+- **Problem 2 (Underperforming TCP Reno on short-RTT / small-BDP paths)**: Because $$W_{\text{cubic}}(t)$$ depends on wall-clock time $$t$$ (in seconds) rather than RTT count—and has a slope near zero around the plateau ($$t \approx K$$)—on short-RTT paths (where many RTTs elapse within a fraction of a second) or when $$W_{\max}$$ is small, the cubic curve can grow more slowly than standard TCP Reno (AIMD), which adds 1 segment every RTT.
 
 ### 2.2 Algorithm 1: Fast Convergence
 
@@ -1379,16 +1379,16 @@ While this curve excels on long-fat networks (high BDP), running the pure cubic 
 
 How can a sender tell that a new competing flow has joined the bottleneck and reduced its available share?
 
-The clue lies in **comparing the current `cwnd` at the moment of packet loss against `ca->last_max_cwnd` ($W_{\max}$) from the previous loss event**:
+The clue lies in **comparing the current `cwnd` at the moment of packet loss against `ca->last_max_cwnd` ($$W_{\max}$$) from the previous loss event**:
 
-- **When $\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$**: The flow successfully recovered all the way to its previous maximum $W_{\max}$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
-- **When $\text{cwnd} < \text{last}_{\max,\text{cwnd}}$**: The flow suffered another packet loss *before* it could even climb back to its previous $W_{\max}$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
+- **When $$\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$$**: The flow successfully recovered all the way to its previous maximum $$W_{\max}$$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
+- **When $$\text{cwnd} < \text{last}_{\max,\text{cwnd}}$$**: The flow suffered another packet loss *before* it could even climb back to its previous $$W_{\max}$$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
 
-Without Fast Convergence, setting `last_max_cwnd = cwnd` would place the next cubic plateau right at `cwnd`, causing the flow to hold on to bandwidth stubbornly. **Fast Convergence** resolves this: whenever loss occurs with `cwnd < last_max_cwnd`, it proactively lowers $W_{\max}$ further—to the **midpoint (average)** between the pre-loss window $\text{cwnd}$ ($1.0 \times \text{cwnd}$) and the post-loss window $\beta \cdot \text{cwnd}$:
+Without Fast Convergence, setting `last_max_cwnd = cwnd` would place the next cubic plateau right at `cwnd`, causing the flow to hold on to bandwidth stubbornly. **Fast Convergence** resolves this: whenever loss occurs with `cwnd < last_max_cwnd`, it proactively lowers $$W_{\max}$$ further—to the **midpoint (average)** between the pre-loss window $$\text{cwnd}$$ ($$1.0 \times \text{cwnd}$$) and the post-loss window $$\beta \cdot \text{cwnd}$$:
 
 $$W_{\max} = \text{cwnd} \times \frac{1 + \beta}{2}$$
 
-With $\beta \approx 0.7$, $\frac{1 + 0.7}{2} = 0.85$. Lowering $W_{\max}$ to $\approx 0.85 \times \text{cwnd}$ pulls the next epoch's plateau down immediately, allowing the existing flow to stabilise at a lower window and yield bandwidth to the newcomer much faster.
+With $$\beta \approx 0.7$$, $$\frac{1 + 0.7}{2} = 0.85$$. Lowering $$W_{\max}$$ to $$\approx 0.85 \times \text{cwnd}$$ pulls the next epoch's plateau down immediately, allowing the existing flow to stabilise at a lower window and yield bandwidth to the newcomer much faster.
 
 ```text
 cwnd
@@ -1405,11 +1405,11 @@ cwnd
 
 #### Fixed-Point Formula and Concrete Numerical Example
 
-In `starter.bpf.c` and `solution.bpf.c`, $\beta$ is represented in fixed-point arithmetic using `BICTCP_BETA_SCALE = 1024` and `beta = 717` ($717 / 1024 \approx 0.7002$). Multiplying `cwnd` by $\frac{1 + \beta}{2}$ in integer arithmetic therefore becomes:
+In `starter.bpf.c` and `solution.bpf.c`, $$\beta$$ is represented in fixed-point arithmetic using `BICTCP_BETA_SCALE = 1024` and `beta = 717` ($$717 / 1024 \approx 0.7002$$). Multiplying `cwnd` by $$\frac{1 + \beta}{2}$$ in integer arithmetic therefore becomes:
 
 $$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
-Note that the slow-start threshold returned by `.ssthresh` remains the standard multiplicative decrease $\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$.
+Note that the slow-start threshold returned by `.ssthresh` remains the standard multiplicative decrease $$\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$$.
 
 - **Concrete Example (from `test.pkt`)**:
   1. **Loss #1 at `cwnd = 20`** (with initial `last_max_cwnd = 0`):
@@ -1419,44 +1419,44 @@ Note that the slow-start threshold returned by `.ssthresh` remains the standard 
      - `last_max_cwnd = (14 * 1741) / 2048 = 24374 / 2048 = 11` (whereas without Fast Convergence it would be `14`).
      - `ssthresh = (14 * 717) / 1024 = 9`.
 
-### 2.3 Algorithm 2: The Reno-friendly Region ($W_{\text{est}}$ / `tcp_cwnd`)
+### 2.3 Algorithm 2: The Reno-friendly Region ($$W_{\text{est}}$$ / `tcp_cwnd`)
 
 #### Intuition and Key Idea
 
-To guarantee that CUBIC never grows more slowly than TCP Reno on short-RTT or small-window paths, CUBIC maintains a parallel shadow variable $W_{\text{est}}$ (`ca->tcp_cwnd` in the code) that tracks **what the congestion window of an equivalent AIMD flow would be at the current point in the epoch**. On every Congestion Avoidance update, CUBIC ensures its target window is at least $W_{\text{est}}$:
+To guarantee that CUBIC never grows more slowly than TCP Reno on short-RTT or small-window paths, CUBIC maintains a parallel shadow variable $$W_{\text{est}}$$ (`ca->tcp_cwnd` in the code) that tracks **what the congestion window of an equivalent AIMD flow would be at the current point in the epoch**. On every Congestion Avoidance update, CUBIC ensures its target window is at least $$W_{\text{est}}$$:
 
 $$W_{\text{target}} = \max\left(W_{\text{cubic}}(t),\, W_{\text{est}}\right)$$
 
-#### Why Does $W_{\text{est}}$ Grow by $+1$ Every $\sim 1.875$ RTTs Instead of Every $1$ RTT?
+#### Why Does $$W_{\text{est}}$$ Grow by $$+1$$ Every $$\sim 1.875$$ RTTs Instead of Every $$1$$ RTT?
 
-At first glance, one might think: "Standard TCP Reno grows by $+1$ segment per RTT, so shouldn't `ca->tcp_cwnd` also grow by $+1$ every `cwnd` ACKs (1 RTT)?"
+At first glance, one might think: "Standard TCP Reno grows by $$+1$$ segment per RTT, so shouldn't `ca->tcp_cwnd` also grow by $$+1$$ every `cwnd` ACKs (1 RTT)?"
 
-The answer is **No**, because of how much CUBIC backs off on loss! Standard TCP Reno cuts its window in half on loss ($\beta_{\text{reno}} = 0.5$) and grows by $\alpha_{\text{reno}} = 1$ segment per RTT. CUBIC, by contrast, only cuts its window to $\beta \approx 0.7 \times W_{\max}$. If CUBIC started each epoch at $0.7 W_{\max}$ and still increased $W_{\text{est}}$ by $+1$ per RTT, its AIMD sawtooth would sit strictly above TCP Reno's sawtooth and steal bandwidth from coexisting Reno flows.
+The answer is **No**, because of how much CUBIC backs off on loss! Standard TCP Reno cuts its window in half on loss ($$\beta_{\text{reno}} = 0.5$$) and grows by $$\alpha_{\text{reno}} = 1$$ segment per RTT. CUBIC, by contrast, only cuts its window to $$\beta \approx 0.7 \times W_{\max}$$. If CUBIC started each epoch at $$0.7 W_{\max}$$ and still increased $$W_{\text{est}}$$ by $$+1$$ per RTT, its AIMD sawtooth would sit strictly above TCP Reno's sawtooth and steal bandwidth from coexisting Reno flows.
 
-From steady-state AIMD throughput analysis, an $\text{AIMD}(\alpha, \beta)$ flow achieves the **exact same average congestion window** as $\text{TCP Reno}(1, 0.5)$ when its additive increase rate $\alpha$ (segments per RTT) satisfies:
+From steady-state AIMD throughput analysis, an $$\text{AIMD}(\alpha, \beta)$$ flow achieves the **exact same average congestion window** as $$\text{TCP Reno}(1, 0.5)$$ when its additive increase rate $$\alpha$$ (segments per RTT) satisfies:
 
 $$\alpha = \frac{3(1 - \beta)}{1 + \beta}$$
 
-Substituting CUBIC's $\beta = 717 / 1024 \approx 0.7$:
+Substituting CUBIC's $$\beta = 717 / 1024 \approx 0.7$$:
 
 $$\alpha = \frac{3 \times (1024 - 717)}{1024 + 717} = \frac{3 \times 307}{1741} = \frac{921}{1741} \approx 0.529 \text{ segments per RTT}$$
 
-Taking the reciprocal gives the **number of RTTs required to increment $W_{\text{est}}$ (`ca->tcp_cwnd`) by $1$ segment**:
+Taking the reciprocal gives the **number of RTTs required to increment $$W_{\text{est}}$$ (`ca->tcp_cwnd`) by $$1$$ segment**:
 
 $$\frac{1}{\alpha} = \frac{1 + \beta}{3(1 - \beta)} = \frac{1741}{921} \approx 1.890 \text{ RTTs}$$
 
 #### Fixed-Point Constant `beta_scale` and ACK-Counting Rules
 
-Because roughly `cwnd` segments are acknowledged per RTT, advancing `ca->tcp_cwnd` by 1 requires $\Delta = \text{cwnd} \times \frac{1}{\alpha}$ ACKed segments.
+Because roughly `cwnd` segments are acknowledged per RTT, advancing `ca->tcp_cwnd` by 1 requires $$\Delta = \text{cwnd} \times \frac{1}{\alpha}$$ ACKed segments.
 
-To compute this in integer arithmetic, the kernel (and `starter.bpf.c`) precomputes `beta_scale` as $\frac{8}{\alpha}$ (scaled by $2^3 = 8$):
+To compute this in integer arithmetic, the kernel (and `starter.bpf.c`) precomputes `beta_scale` as $$\frac{8}{\alpha}$$ (scaled by $$2^3 = 8$$):
 
 ```c
 static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
 				/ (BICTCP_BETA_SCALE - beta);
 ```
 
-With `BICTCP_BETA_SCALE = 1024` and `beta = 717`, integer division yields `beta_scale = 4642 / 307 = 15` (representing $15 / 8 = 1.875$ RTTs). The number of ACKed segments `delta` needed to increment `ca->tcp_cwnd` by 1 is therefore obtained by shifting right by 3 (`>> 3`, i.e. dividing by 8):
+With `BICTCP_BETA_SCALE = 1024` and `beta = 717`, integer division yields `beta_scale = 4642 / 307 = 15` (representing $$15 / 8 = 1.875$$ RTTs). The number of ACKed segments `delta` needed to increment `ca->tcp_cwnd` by 1 is therefore obtained by shifting right by 3 (`>> 3`, i.e. dividing by 8):
 
 $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}}}{8} \right\rfloor = ((\text{cwnd} \times \text{beta}_{\text{scale}}) \gg 3)$$
 
@@ -1465,9 +1465,9 @@ In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four s
 1. **Accumulate ACKed segments at the very top of `bictcp_update()`**:
    Every call adds the newly acknowledged segments via `ca->ack_cnt += acked;`.
    *(Note: When a new epoch starts with `ca->epoch_start == 0`, the existing initialisation block resets `ca->ack_cnt = acked;` and `ca->tcp_cwnd = cwnd;`. Furthermore, if multiple ACKs arrive within the same timestamp `now_us == ca->last_time`, `bictcp_update()` skips recomputing the cubic curve via `goto tcp_friendliness;` so the newly accumulated `ca->ack_cnt` is still processed.)*
-2. **Advance `ca->tcp_cwnd` in $O(1)$ at the `tcp_friendliness:` label**:
+2. **Advance `ca->tcp_cwnd` in $$O(1)$$ at the `tcp_friendliness:` label**:
    Compute `delta = (cwnd * beta_scale) >> 3;`. For every `delta` segments accumulated in `ca->ack_cnt`, increment `ca->tcp_cwnd` and keep the remainder in `ca->ack_cnt`.
-   - **Important BPF Verifier Constraint**: In the Linux kernel's `net/ipv4/tcp_cubic.c`, this update is written as `while (ca->ack_cnt > delta) { ca->ack_cnt -= delta; ca->tcp_cwnd++; }`. However, in BPF, an unbounded `while` loop whose iteration count depends on runtime variables (`ca->ack_cnt` and `delta`) cannot be proven to terminate by the BPF verifier and will be rejected at load time! Instead, after guarding against division by zero with `if (delta)`, we express the exact same update in $O(1)$ using integer division (`/`) and modulo (`%`):
+   - **Important BPF Verifier Constraint**: In the Linux kernel's `net/ipv4/tcp_cubic.c`, this update is written as `while (ca->ack_cnt > delta) { ca->ack_cnt -= delta; ca->tcp_cwnd++; }`. However, in BPF, an unbounded `while` loop whose iteration count depends on runtime variables (`ca->ack_cnt` and `delta`) cannot be proven to terminate by the BPF verifier and will be rejected at load time! Instead, after guarding against division by zero with `if (delta)`, we express the exact same update in $$O(1)$$ using integer division (`/`) and modulo (`%`):
      ```c
      delta = (cwnd * beta_scale) >> 3;
      if (delta) {
@@ -1493,7 +1493,7 @@ In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four s
 - **Concrete Numerical Example (Breaking Out of the Plateau in `test.pkt`)**:
   - After Loss #2 (`cwnd = 14`), Fast Convergence sets `last_max_cwnd = 11` and `ssthresh = 9`.
   - Congestion Avoidance starts at `cwnd = 9` (`tcp_cwnd = 9`), and across Flight 1 (9 ACKs) and Flight 2 (10 ACKs), `cwnd` grows to `11` (`== last_max_cwnd`), while `tcp_cwnd` reaches `10` with remainder `ack_cnt = 1`.
-  - At `cwnd = 11`, while $t < K \approx 1.71\text{ s}$, pure CUBIC sits on its plateau (`bic_target == 11 == cwnd`) and sets `ca->cnt = 100 * 11 = 1100` (virtually freezing `cwnd` growth).
+  - At `cwnd = 11`, while $$t < K \approx 1.71\text{ s}$$, pure CUBIC sits on its plateau (`bic_target == 11 == cwnd`) and sets `ca->cnt = 100 * 11 = 1100` (virtually freezing `cwnd` growth).
   - Meanwhile, for the Reno-friendly region at `cwnd = 11`, `delta = (11 * 15) >> 3 = 165 >> 3 = 20` ACKs. Across four 11-packet flights (44 ACKs total), `ack_cnt` crosses `20` twice, advancing `ca->tcp_cwnd` from `10 -> 11 -> 12`.
   - As soon as `ca->tcp_cwnd (12) > cwnd (11)`, `max_cnt = 11 / (12 - 11) = 11` clamps `ca->cnt` from `1100` down to `11`, allowing `cwnd` to grow past the plateau to `12`!
 
@@ -1504,13 +1504,13 @@ All data structures, fields, constants, and helper functions required for this s
 - **`icsk_ca_priv` and `struct bpf_cubic4_ca` (accessed via `inet_csk_ca(sk)`)**:
   Every kernel TCP socket (`struct inet_connection_sock`) embeds `icsk_ca_priv`, an inline per-socket byte array reserved for the congestion control algorithm's private state. The helper `inet_csk_ca(sk)` casts `inet_csk(sk)->icsk_ca_priv` to `struct bpf_cubic4_ca *`, which defines:
   - `ca->cnt` (`__u32`): Number of ACKed segments required to increase `snd_cwnd` by 1 in `bpf_cubic4_cong_avoid_ai()` (smaller means faster growth).
-  - `ca->last_max_cwnd` (`__u32`): Maximum window $W_{\max}$ recorded at the previous loss event (adjusted by Fast Convergence).
-  - `ca->last_cwnd`, `ca->last_time` (`__u32`): Window and timestamp ($\mu\text{s}$) of the previous `bictcp_update()` execution, used to rate-limit cubic curve recalculations to at most once every $1/32\text{ s}$ when `cwnd` has not changed.
-  - `ca->bic_origin_point`, `ca->bic_K` (`__u32`): Origin window ($W_{\max}$) and time offset $K$ (in units of $1 / 1024\text{ s}$) of the current cubic curve.
+  - `ca->last_max_cwnd` (`__u32`): Maximum window $$W_{\max}$$ recorded at the previous loss event (adjusted by Fast Convergence).
+  - `ca->last_cwnd`, `ca->last_time` (`__u32`): Window and timestamp ($$\mu\text{s}$$) of the previous `bictcp_update()` execution, used to rate-limit cubic curve recalculations to at most once every $$1/32\text{ s}$$ when `cwnd` has not changed.
+  - `ca->bic_origin_point`, `ca->bic_K` (`__u32`): Origin window ($$W_{\max}$$) and time offset $$K$$ (in units of $$1 / 1024\text{ s}$$) of the current cubic curve.
   - `ca->delay_min` (`__u32`): Minimum observed RTT in microseconds.
-  - `ca->epoch_start` (`__u32`): Timestamp ($\mu\text{s}$) when the current Congestion Avoidance epoch started (`0` indicates that the next Congestion Avoidance ACK should initialise a new epoch).
+  - `ca->epoch_start` (`__u32`): Timestamp ($$\mu\text{s}$$) when the current Congestion Avoidance epoch started (`0` indicates that the next Congestion Avoidance ACK should initialise a new epoch).
   - `ca->ack_cnt` (`__u32`): Cumulative count of ACKed segments for the Reno-friendly calculation.
-  - `ca->tcp_cwnd` (`__u32`): Estimated Reno-equivalent window $W_{\text{est}}$.
+  - `ca->tcp_cwnd` (`__u32`): Estimated Reno-equivalent window $$W_{\text{est}}$$.
 - **`struct tcp_sock` fields (accessed via `tcp_sk(sk)`)**:
   - `tp->snd_cwnd` (`__u32`): Current congestion window in segments.
   - `tp->snd_ssthresh` (`__u32`): Slow-start threshold in segments.
@@ -1519,8 +1519,8 @@ All data structures, fields, constants, and helper functions required for this s
   - `tp->tcp_mstamp` (`__u64` / `__u32`): Packet timestamp in microseconds (returned by `bictcp_clock_us(sk)`).
 - **Pre-defined Constants in `starter.bpf.c`**:
   - `BICTCP_BETA_SCALE` (`1024`)
-  - `beta` (`717` $\approx 0.7 \times 1024$)
-  - `beta_scale` (`8 * (BICTCP_BETA_SCALE + beta) / 3 / (BICTCP_BETA_SCALE - beta)` $= 15$)
+  - `beta` (`717` $$\approx 0.7 \times 1024$$)
+  - `beta_scale` (`8 * (BICTCP_BETA_SCALE + beta) / 3 / (BICTCP_BETA_SCALE - beta)` $$= 15$$)
 
 ---
 
@@ -1528,7 +1528,7 @@ All data structures, fields, constants, and helper functions required for this s
 
 Use the concepts from Section 2 to answer the following four design questions before editing `starter.bpf.c`. Every question can be answered directly from what you just read.
 
-### Q1. In `bpf_cubic4_ssthresh()`, which condition triggers Fast Convergence, and how do we express $W_{\max} = \text{cwnd} \times \frac{1 + \beta}{2}$ in fixed-point integer arithmetic?
+### Q1. In `bpf_cubic4_ssthresh()`, which condition triggers Fast Convergence, and how do we express $$W_{\max} = \text{cwnd} \times \frac{1 + \beta}{2}$$ in fixed-point integer arithmetic?
 
 In `bpf_cubic4_ssthresh()`, `cwnd = tp->snd_cwnd` and `ca = inet_csk_ca(sk)` are already fetched. How should we replace the unconditional `ca->last_max_cwnd = cwnd;` in `starter.bpf.c` using `BICTCP_BETA_SCALE` and `beta`?
 
@@ -1569,7 +1569,7 @@ Why must `ca->ack_cnt += acked;` come before both `if` statements?
 <details>
 <summary>Hint and Answer</summary>
 
-- **Reason 1 (Counting ACKs during the $1/32\text{ s}$ rate-limit window)**: While the time-based cubic curve $W_{\text{cubic}}(t)$ only needs to be recomputed at most once per $1/32\text{ s}$ when `cwnd` is unchanged, the Reno-friendly window `ca->tcp_cwnd` advances based on **every ACKed segment**. Adding `ca->ack_cnt += acked;` before the early `return;` ensures that ACKs arriving during rate-limited intervals are not lost and are applied the next time execution reaches `tcp_friendliness:`.
+- **Reason 1 (Counting ACKs during the $$1/32\text{ s}$$ rate-limit window)**: While the time-based cubic curve $$W_{\text{cubic}}(t)$$ only needs to be recomputed at most once per $$1/32\text{ s}$$ when `cwnd` is unchanged, the Reno-friendly window `ca->tcp_cwnd` advances based on **every ACKed segment**. Adding `ca->ack_cnt += acked;` before the early `return;` ensures that ACKs arriving during rate-limited intervals are not lost and are applied the next time execution reaches `tcp_friendliness:`.
 - **Reason 2 (Handling `goto tcp_friendliness;`)**: When multiple ACKs arrive with the same timestamp (`now_us == ca->last_time`), jumping to `tcp_friendliness:` requires `ca->ack_cnt` to already include the current `acked` count.
 - **Interaction with `ca->epoch_start == 0`**: On the very first call of a new epoch (`ca->epoch_start == 0`), the initialisation block immediately overwrites `ca->ack_cnt = acked;` and `ca->tcp_cwnd = cwnd;`, so incrementing at the top does not double-count the first ACK.
 
@@ -1577,12 +1577,12 @@ Why must `ca->ack_cnt += acked;` come before both `if` statements?
 
 ### Q3. At the `tcp_friendliness:` label, how should we update `ca->tcp_cwnd` and `ca->ack_cnt` so the BPF verifier accepts the program and division by zero is impossible?
 
-From Section 2.3, the number of ACKed segments required per $+1$ increment of `ca->tcp_cwnd` is `delta = (cwnd * beta_scale) >> 3;`. How do we replace the kernel's `while (ca->ack_cnt > delta)` loop in BPF?
+From Section 2.3, the number of ACKed segments required per $$+1$$ increment of `ca->tcp_cwnd` is `delta = (cwnd * beta_scale) >> 3;`. How do we replace the kernel's `while (ca->ack_cnt > delta)` loop in BPF?
 
 <details>
 <summary>Hint and Answer</summary>
 
-- **Use integer division and modulo with a non-zero guard**: Because the BPF verifier rejects unbounded `while` loops whose trip counts depend on runtime variables, we guard against `delta == 0` with `if (delta)` and update `ca->tcp_cwnd` and `ca->ack_cnt` in $O(1)$ using `/` and `%`:
+- **Use integer division and modulo with a non-zero guard**: Because the BPF verifier rejects unbounded `while` loops whose trip counts depend on runtime variables, we guard against `delta == 0` with `if (delta)` and update `ca->tcp_cwnd` and `ca->ack_cnt` in $$O(1)$$ using `/` and `%`:
   ```c
   delta = (cwnd * beta_scale) >> 3;
   if (delta) {
@@ -1641,8 +1641,8 @@ __u32 BPF_PROG(bpf_cubic4_ssthresh, struct sock *sk)
 ```
 
 - `ca->epoch_start = 0;`: Ends the current CUBIC epoch on loss so that the next Congestion Avoidance call to `bictcp_update()` re-initialises `ca->bic_K`, `ca->bic_origin_point`, `ca->ack_cnt`, and `ca->tcp_cwnd`.
-- `if (cwnd < ca->last_max_cwnd)`: Detects that loss occurred before recovering to the previous $W_{\max}$ and lowers `ca->last_max_cwnd` to `(cwnd * 1741) / 2048` ($\approx 0.85 \times \text{cwnd}$).
-- `return max((cwnd * beta) / BICTCP_BETA_SCALE, 2U);`: Returns the new `snd_ssthresh` as $\max(\lfloor 0.7 \times \text{cwnd} \rfloor, 2)$.
+- `if (cwnd < ca->last_max_cwnd)`: Detects that loss occurred before recovering to the previous $$W_{\max}$$ and lowers `ca->last_max_cwnd` to `(cwnd * 1741) / 2048` ($$\approx 0.85 \times \text{cwnd}$$).
+- `return max((cwnd * beta) / BICTCP_BETA_SCALE, 2U);`: Returns the new `snd_ssthresh` as $$\max(\lfloor 0.7 \times \text{cwnd} \rfloor, 2)$$.
 
 ### 4.2 Reno-friendly Region (`tcp_friendliness`) in `bictcp_update()`
 
@@ -1700,9 +1700,9 @@ tcp_friendliness:
 ```
 
 - **Top-of-function `ca->ack_cnt += acked;`**: Accumulates every newly acknowledged segment, even when the cubic curve evaluation is rate-limited or skipped via `goto tcp_friendliness;`.
-- **Epoch initialisation (`ca->epoch_start == 0`)**: Sets `ca->ack_cnt = acked` and `ca->tcp_cwnd = cwnd`, anchoring the Reno-equivalent window $W_{\text{est}}$ at the post-recovery `cwnd`, and computes `ca->bic_K` and `ca->bic_origin_point` from the (potentially Fast-Convergence-reduced) `ca->last_max_cwnd`.
+- **Epoch initialisation (`ca->epoch_start == 0`)**: Sets `ca->ack_cnt = acked` and `ca->tcp_cwnd = cwnd`, anchoring the Reno-equivalent window $$W_{\text{est}}$$ at the post-recovery `cwnd`, and computes `ca->bic_K` and `ca->bic_origin_point` from the (potentially Fast-Convergence-reduced) `ca->last_max_cwnd`.
 - **`tcp_friendliness:` block**:
-  - Computes `delta = (cwnd * beta_scale) >> 3` ($\approx 1.875 \times \text{cwnd}$ ACKs).
+  - Computes `delta = (cwnd * beta_scale) >> 3` ($$\approx 1.875 \times \text{cwnd}$$ ACKs).
   - Advances `ca->tcp_cwnd` by `ca->ack_cnt / delta` and retains `ca->ack_cnt %= delta` without loops.
   - When `ca->tcp_cwnd > cwnd`, clamps `ca->cnt` to `max_cnt = cwnd / (ca->tcp_cwnd - cwnd)` so CUBIC grows at least as fast as the emulated Reno window.
 
@@ -1727,11 +1727,11 @@ tcp_friendliness:
 4. **Verifying Fast Convergence in Congestion Avoidance (Flight 1 & Flight 2)**:
    - **Flight 1 (`t_elapsed = 0.0s`)**: Sends 9 segments at `cwnd = 9`. With `bic_target = 10` (`ca->cnt = 9`), 9 ACKed segments grow `cwnd` from `9` to `10`.
    - **Flight 2 (`t_elapsed = 0.8s`, line 99 assertion `assert tcpi_snd_cwnd == 11`)**: After waiting 0.7 s, sends 10 segments and receives the ACK 0.1 s later (0.8 s into the epoch).
-     - **Why `solution.bpf.c` passes**: With Fast Convergence (`last_max_cwnd = 11`, `bic_K = 1750` $\approx 1.71\text{ s}$), at $t = 0.8\text{ s}$ integer truncation gives `delta = 0`, so `bic_target` has already reached the plateau at `11`. Thus `ca->cnt = 10 / (11 - 10) = 10`, and 10 ACKed segments grow `cwnd` from `10` to `11`.
-     - **Why `starter.bpf.c` fails**: Without Fast Convergence, `last_max_cwnd` is `14`, so at $t = 0.8\text{ s}$ `bic_target` is `13`. That produces `ca->cnt = 10 / (13 - 10) = 3`, causing 10 ACKed segments to jump `cwnd` from `10` to `13` and fail the assertion (`expected cwnd 11 (Fast Convergence W_max=11), got 13`).
+     - **Why `solution.bpf.c` passes**: With Fast Convergence (`last_max_cwnd = 11`, `bic_K = 1750` $$\approx 1.71\text{ s}$$), at $$t = 0.8\text{ s}$$ integer truncation gives `delta = 0`, so `bic_target` has already reached the plateau at `11`. Thus `ca->cnt = 10 / (11 - 10) = 10`, and 10 ACKed segments grow `cwnd` from `10` to `11`.
+     - **Why `starter.bpf.c` fails**: Without Fast Convergence, `last_max_cwnd` is `14`, so at $$t = 0.8\text{ s}$$ `bic_target` is `13`. That produces `ca->cnt = 10 / (13 - 10) = 3`, causing 10 ACKed segments to jump `cwnd` from `10` to `13` and fail the assertion (`expected cwnd 11 (Fast Convergence W_max=11), got 13`).
 5. **Verifying the Reno-friendly Region at the Plateau (Flights 3-6, `cwnd = 11 == last_max_cwnd`)**:
    - Once `cwnd` reaches `11`, four consecutive 11-segment flights are sent (`t_elapsed = 0.9s, 1.0s, 1.1s, 1.2s`).
-   - Throughout this interval, $t < K \approx 1.71\text{ s}$, so pure CUBIC stays flat on its plateau (`bic_target == 11 == cwnd`, `ca->cnt = 100 * 11 = 1100`). If you implement Fast Convergence alone without the Reno-friendly region, `cwnd` stays stuck at `11` and fails the final assertion on line 125 (`assert tcpi_snd_cwnd > 11`).
+   - Throughout this interval, $$t < K \approx 1.71\text{ s}$$, so pure CUBIC stays flat on its plateau (`bic_target == 11 == cwnd`, `ca->cnt = 100 * 11 = 1100`). If you implement Fast Convergence alone without the Reno-friendly region, `cwnd` stays stuck at `11` and fails the final assertion on line 125 (`assert tcpi_snd_cwnd > 11`).
    - **Why `solution.bpf.c` passes**: In the Reno-friendly region, `delta = (11 * 15) >> 3 = 20` ACKs advances `ca->tcp_cwnd` from `10 -> 11 -> 12` across the four flights. On Flight 6, `ca->tcp_cwnd` reaches `12` (`> cwnd = 11`), clamping `ca->cnt` from `1100` down to `max_cnt = 11 / (12 - 11) = 11` and growing `cwnd` to `12` (`> 11`).
 
 ### How to Run
@@ -2582,17 +2582,17 @@ In this step, you will learn from first principles why wall-clock-driven CUBIC i
 
 Classical TCP Reno (AIMD) advances `snd_cwnd` purely by counting arriving ACKs. When an application stops writing data and the connection goes idle (zero unacknowledged packets in the network, `in_flight == 0`), no ACKs arrive and Reno's congestion control clock naturally pauses.
 
-CUBIC, by contrast, computes its target window `bic_target` ($W_{\text{cubic}}(t)$) in Congestion Avoidance as a cubic function of the **wall-clock time $t$ elapsed since the current epoch began**:
+CUBIC, by contrast, computes its target window `bic_target` ($$W_{\text{cubic}}(t)$$) in Congestion Avoidance as a cubic function of the **wall-clock time $$t$$ elapsed since the current epoch began**:
 
 $$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 What happens if a flow in Congestion Avoidance sits idle for 2 seconds and then resumes sending?
 
-If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
+If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $$t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$$ **jumps forward by the entire 2-second idle gap at once**. As a result, $$(t - K)^3$$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $$1.5\times$$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $$t$$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
 
 ### 2.2 The Solution: Horizontal Time Shift (`+= delta`), Not Epoch Reset (`= 0`)
 
-To exclude the idle duration $\Delta_{\text{idle}}$ from the elapsed time $t$, we shift `ca->epoch_start` forward by $\Delta_{\text{idle}}$ at the exact moment transmission resumes:
+To exclude the idle duration $$\Delta_{\text{idle}}$$ from the elapsed time $$t$$, we shift `ca->epoch_start` forward by $$\Delta_{\text{idle}}$$ at the exact moment transmission resumes:
 
 $$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
@@ -2612,7 +2612,7 @@ $$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}})
 ```
 
 Notice why we **shift `ca->epoch_start += delta` instead of resetting `ca->epoch_start = 0`**:
-CUBIC's concave region ($t < K$) is steepest right at the start of an epoch and flattens out as `cwnd` approaches the $W_{\max}$ plateau. If we reset `ca->epoch_start = 0` on every idle pause, `bictcp_update()` would recompute `ca->bic_K` from the current `cwnd` on the next ACK and start a brand-new epoch from scratch. A flow that had already reached the flat plateau near $W_{\max}$ would repeatedly restart the steep initial climb as if it had just exited recovery. Shifting `ca->epoch_start += delta` translates the cubic curve horizontally in time, **preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's exact position on the curve** while pausing the clock during the idle gap.
+CUBIC's concave region ($$t < K$$) is steepest right at the start of an epoch and flattens out as `cwnd` approaches the $$W_{\max}$$ plateau. If we reset `ca->epoch_start = 0` on every idle pause, `bictcp_update()` would recompute `ca->bic_K` from the current `cwnd` on the next ACK and start a brand-new epoch from scratch. A flow that had already reached the flat plateau near $$W_{\max}$$ would repeatedly restart the steep initial climb as if it had just exited recovery. Shifting `ca->epoch_start += delta` translates the cubic curve horizontally in time, **preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's exact position on the curve** while pausing the clock during the idle gap.
 
 ### 2.3 Edge Case 1: When No Epoch Has Started Yet (`ca->epoch_start == 0`)
 
@@ -2628,34 +2628,34 @@ At first glance, since `delta = now - tp->lsndtime`, it might seem impossible fo
 
 Consider the following sequence of events:
 
-1. At time $T_0$, the sender transmits its last data segment before Fast Recovery finishes (`tp->lsndtime` $= T_0$).
-2. At time $T_1$ ($T_1 > T_0$, e.g. one RTT later), a cumulative ACK arrives that completes recovery, and `bictcp_update()` runs on that ACK (or a subsequent ACK), initialising `ca->epoch_start` $= T_1$. Because the application has no new data to send at $T_1$, no packet is transmitted and `tp->lsndtime` remains $T_0$.
-3. The connection sits idle until time $T_2$ (`now` $= T_2$), when the application writes new data.
+1. At time $$T_0$$, the sender transmits its last data segment before Fast Recovery finishes (`tp->lsndtime` $$= T_0$$).
+2. At time $$T_1$$ ($$T_1 > T_0$$, e.g. one RTT later), a cumulative ACK arrives that completes recovery, and `bictcp_update()` runs on that ACK (or a subsequent ACK), initialising `ca->epoch_start` $$= T_1$$. Because the application has no new data to send at $$T_1$$, no packet is transmitted and `tp->lsndtime` remains $$T_0$$.
+3. The connection sits idle until time $$T_2$$ (`now` $$= T_2$$), when the application writes new data.
 
-At $T_2$, the idle duration since the last send is $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$. Adding $\Delta_{\text{idle}}$ to `ca->epoch_start` gives:
+At $$T_2$$, the idle duration since the last send is $$\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$$. Adding $$\Delta_{\text{idle}}$$ to `ca->epoch_start` gives:
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
-`ca->epoch_start` has moved into the **future** by $T_1 - T_0$ beyond `now` ($T_2$)!
+`ca->epoch_start` has moved into the **future** by $$T_1 - T_0$$ beyond `now` ($$T_2$$)!
 
-If an ACK arrives in the same jiffy ($T_2$) while `ca->epoch_start > tcp_jiffies32`, line 174 of `bictcp_update()` suffers a catastrophic underflow:
+If an ACK arrives in the same jiffy ($$T_2$$) while `ca->epoch_start > tcp_jiffies32`, line 174 of `bictcp_update()` suffers a catastrophic underflow:
 
 ```c
 t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;
 ```
 
-Because `tcp_jiffies32 < ca->epoch_start`, `(__s32)(tcp_jiffies32 - ca->epoch_start)` evaluates to a **negative signed integer**. Multiplying by `USEC_PER_JIFFY` and assigning to `__u64 t` sign-extends and wraps that negative value into a massive unsigned number near $2^{64}$, blowing up `offs^3` and `bic_target`.
+Because `tcp_jiffies32 < ca->epoch_start`, `(__s32)(tcp_jiffies32 - ca->epoch_start)` evaluates to a **negative signed integer**. Multiplying by `USEC_PER_JIFFY` and assigning to `__u64 t` sign-extends and wraps that negative value into a massive unsigned number near $$2^{64}$$, blowing up `offs^3` and `bic_target`.
 
 To prevent `ca->epoch_start` from ever moving into the future, we must clamp it right after adding `delta`: if `after(ca->epoch_start, now)` is true, set `ca->epoch_start = now`.
 
 ### 2.5 Concrete Numerical Example (Matching `test.pkt`)
 
-Suppose a flow with RTT $= 20\text{ ms}$ ($d_{\min} = 20{,}000\ \mu\text{s}$) experiences loss at `cwnd = 20`, setting `last_max_cwnd` ($W_{\max}$) $= 20$ and `ssthresh` $= 14$ ($K \approx 2.46\text{ s}$):
+Suppose a flow with RTT $$= 20\text{ ms}$$ ($$d_{\min} = 20{,}000\ \mu\text{s}$$) experiences loss at `cwnd = 20`, setting `last_max_cwnd` ($$W_{\max}$$) $$= 20$$ and `ssthresh` $$= 14$$ ($$K \approx 2.46\text{ s}$$):
 
-- Upon exiting recovery into Congestion Avoidance, `cwnd` grows from $14 \to 15$, and after sending and ACKing one RTT ($20\text{ ms}$) of data, the elapsed time is $\approx 40\text{ ms}$ and `cwnd = 15`.
-- The connection now sits **idle for $2.0\text{ s}$**, then sends 15 segments and receives an ACK $20\text{ ms}$ later:
-  - **With idle epoch shift (correct)**: `ca->epoch_start` is shifted forward by $2.0\text{ s}$ when transmission resumes. When the ACK arrives $20\text{ ms}$ later, the effective elapsed time $t$ is only $\approx 60\text{ ms} + d_{\min}$. Because $t \ll K$, `bic_target` stays at $15$ and `cwnd` **remains $15$**.
-  - **Without idle epoch shift (bug)**: `ca->epoch_start` is not shifted, so $t$ jumps by $2.0\text{ s}$ to $\approx 2.06\text{ s}$ on the first ACK after idle. Because $2.06\text{ s}$ is close to $K = 2.46\text{ s}$, `bic_target` leaps to $W_{\max} = 20$, `ca->cnt` drops to $15 / (20 - 15) = 3$, and `cwnd` **spikes from $15$ to $20$** in a single ACK!
+- Upon exiting recovery into Congestion Avoidance, `cwnd` grows from $$14 \to 15$$, and after sending and ACKing one RTT ($$20\text{ ms}$$) of data, the elapsed time is $$\approx 40\text{ ms}$$ and `cwnd = 15`.
+- The connection now sits **idle for $$2.0\text{ s}$$**, then sends 15 segments and receives an ACK $$20\text{ ms}$$ later:
+  - **With idle epoch shift (correct)**: `ca->epoch_start` is shifted forward by $$2.0\text{ s}$$ when transmission resumes. When the ACK arrives $$20\text{ ms}$$ later, the effective elapsed time $$t$$ is only $$\approx 60\text{ ms} + d_{\min}$$. Because $$t \ll K$$, `bic_target` stays at $$15$$ and `cwnd` **remains $$15$$**.
+  - **Without idle epoch shift (bug)**: `ca->epoch_start` is not shifted, so $$t$$ jumps by $$2.0\text{ s}$$ to $$\approx 2.06\text{ s}$$ on the first ACK after idle. Because $$2.06\text{ s}$$ is close to $$K = 2.46\text{ s}$$, `bic_target` leaps to $$W_{\max} = 20$$, `ca->cnt` drops to $$15 / (20 - 15) = 3$$, and `cwnd` **spikes from $$15$$ to $$20$$** in a single ACK!
 
 ### 2.6 What the Kernel and `bpf_cc_helpers.h` Provide for This Step
 
@@ -2722,7 +2722,7 @@ When updating `ca->epoch_start` with `delta`: (1) why do we shift `ca->epoch_sta
 <summary>Hint and Answer</summary>
 
 1. **Why we shift instead of resetting (Section 2.2)**:
-   Resetting `ca->epoch_start = 0` would force `bictcp_update()` on the next ACK to recompute `ca->bic_K` and start a brand-new epoch from scratch. Because CUBIC's concave curve is steepest right at the start of an epoch and flattens near $W_{\max}$, resetting `epoch_start = 0` on every idle pause would cause a flow near the $W_{\max}$ plateau to repeatedly restart the aggressive initial climb. Shifting `ca->epoch_start += delta` translates the curve horizontally in time, preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's position on the curve.
+   Resetting `ca->epoch_start = 0` would force `bictcp_update()` on the next ACK to recompute `ca->bic_K` and start a brand-new epoch from scratch. Because CUBIC's concave curve is steepest right at the start of an epoch and flattens near $$W_{\max}$$, resetting `epoch_start = 0` on every idle pause would cause a flow near the $$W_{\max}$$ plateau to repeatedly restart the aggressive initial climb. Shifting `ca->epoch_start += delta` translates the curve horizontally in time, preserving `ca->bic_K`, `ca->bic_origin_point`, and the flow's position on the curve.
 2. **Why we check `if (ca->epoch_start && delta > 0)` (Section 2.3)**:
    `ca->epoch_start == 0` is the sentinel indicating that no Congestion Avoidance epoch is active yet (e.g. during Slow Start or right after packet loss). Adding `delta` when `ca->epoch_start == 0` would corrupt the `0` sentinel into a non-zero timestamp and skip epoch initialisation in `bictcp_update()`. Checking `delta > 0` ensures at least 1 jiffy of idle time has elapsed.
 
@@ -2735,12 +2735,12 @@ Right after `ca->epoch_start += delta;`, why do we need `if (after(ca->epoch_sta
 <details>
 <summary>Hint and Answer</summary>
 
-As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($T_0$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($T_1 > T_0$). If the last packet before recovery completes was sent at $T_0$, the epoch started on an ACK at $T_1 > T_0$ without sending new data, and the flow then sat idle until $T_2$ (`now`), then:
+As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($$T_0$$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($$T_1 > T_0$$). If the last packet before recovery completes was sent at $$T_0$$, the epoch started on an ACK at $$T_1 > T_0$$ without sending new data, and the flow then sat idle until $$T_2$$ (`now`), then:
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 placing `ca->epoch_start` in the future relative to `now`!
-If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $2^{64}$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.
+If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $$2^{64}$$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.
 
 </details>
 
@@ -2792,7 +2792,7 @@ Because `bpf_cubic5_cwnd_event_tx_start()` advances `ca->epoch_start` by the idl
 	t /= USEC_PER_SEC;
 ```
 
-- `tcp_jiffies32 - ca->epoch_start` now measures only the active (non-idle) time elapsed in the epoch, keeping `t` (in units of $1/1024\text{ s}$) aligned with the cubic curve prior to the idle pause.
+- `tcp_jiffies32 - ca->epoch_start` now measures only the active (non-idle) time elapsed in the epoch, keeping `t` (in units of $$1/1024\text{ s}$$) aligned with the cubic curve prior to the idle pause.
 
 ### 4.3 Registering `.cwnd_event_tx_start` in `struct tcp_congestion_ops bpf_cubic5`
 
@@ -2817,7 +2817,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 
 ### 5.1 Walkthrough of `test.pkt`
 
-`test.pkt` tests the idle epoch shift across five stages on a connection with a $20\text{ ms}$ RTT:
+`test.pkt` tests the idle epoch shift across five stages on a connection with a $$20\text{ ms}$$ RTT:
 
 1. **Connection establishment and sysctl setup (lines 8–20)**:
    - Sets `net.ipv4.tcp_congestion_control=bpf_cubic5`.
@@ -2827,13 +2827,13 @@ struct tcp_congestion_ops bpf_cubic5 = {
 3. **Packet loss and Fast Recovery into Congestion Avoidance (lines 30–46)**:
    - Sends 20 segments (20,000 bytes); loses the first segment and receives 3 SACKs to enter Fast Recovery.
    - `bpf_cubic5_recalc_ssthresh()` sets `ca->last_max_cwnd = 20`, `snd_ssthresh = (20 * 717) / 1024 = 14`, and `ca->epoch_start = 0`.
-   - A cumulative ACK (`ack 30001`) completes recovery: `tcp_complete_cwr()` sets `snd_cwnd = ssthresh = 14` and transitions to `TCP_CA_Open`, and `bpf_cubic5_cong_avoid()` runs on the same ACK. `bictcp_update()` initialises `ca->epoch_start = tcp_jiffies32` and `ca->bic_K = 2524` ($\approx 2.46\text{ s}$), and with `bic_target = 15` (`ca->cnt = 14`), `tcpi_snd_cwnd` grows from `14` to `15`.
+   - A cumulative ACK (`ack 30001`) completes recovery: `tcp_complete_cwr()` sets `snd_cwnd = ssthresh = 14` and transitions to `TCP_CA_Open`, and `bpf_cubic5_cong_avoid()` runs on the same ACK. `bictcp_update()` initialises `ca->epoch_start = tcp_jiffies32` and `ca->bic_K = 2524` ($$\approx 2.46\text{ s}$$), and with `bic_target = 15` (`ca->cnt = 14`), `tcpi_snd_cwnd` grows from `14` to `15`.
 4. **One RTT (15 segments) in Congestion Avoidance before going idle (lines 48–54)**:
-   - Sends 15 segments (15,000 bytes) and receives an ACK $20\text{ ms}$ later, verifying `tcpi_snd_cwnd == 15`. At this point, `in_flight` drops to `0`.
+   - Sends 15 segments (15,000 bytes) and receives an ACK $$20\text{ ms}$$ later, verifying `tcpi_snd_cwnd == 15`. At this point, `in_flight` drops to `0`.
 5. **2.0-second idle period followed by 15 segments and ACK (lines 56–67)**:
-   - Sits idle for `+2.000` seconds with `in_flight == 0`, then writes 15 segments (`15,000` bytes), receives the ACK $20\text{ ms}$ later, and asserts `tcpi_snd_cwnd <= 15`.
-   - **Why `starter.bpf.c` fails**: `bpf_cubic5_cwnd_event_tx_start()` is a no-op, leaving `ca->epoch_start` 2 seconds in the past. When the ACK arrives after the idle period, `t` jumps to $\approx 2.06\text{ s}$, `bic_target` leaps to `W_max = 20`, `ca->cnt` drops to `15 / (20 - 15) = 3`, and `tcpi_snd_cwnd` spikes from `15` to **`>= 20`** in a single ACK, failing `assert tcpi_snd_cwnd <= 15`.
-   - **Why `solution.bpf.c` passes**: sending the first segment after the pause triggers `bpf_cubic5_cwnd_event_tx_start()`, which shifts `ca->epoch_start` forward by the 2-second idle delta. When the ACK arrives $20\text{ ms}$ later, `t` is only $\approx 60\text{ ms}$, `bic_target = 15 <= cwnd (15)` (`ca->cnt = 100 * 15 = 1500`), and `tcpi_snd_cwnd` stays **`15`** (`<= 15`), passing the assertion.
+   - Sits idle for `+2.000` seconds with `in_flight == 0`, then writes 15 segments (`15,000` bytes), receives the ACK $$20\text{ ms}$$ later, and asserts `tcpi_snd_cwnd <= 15`.
+   - **Why `starter.bpf.c` fails**: `bpf_cubic5_cwnd_event_tx_start()` is a no-op, leaving `ca->epoch_start` 2 seconds in the past. When the ACK arrives after the idle period, `t` jumps to $$\approx 2.06\text{ s}$$, `bic_target` leaps to `W_max = 20`, `ca->cnt` drops to `15 / (20 - 15) = 3`, and `tcpi_snd_cwnd` spikes from `15` to **`>= 20`** in a single ACK, failing `assert tcpi_snd_cwnd <= 15`.
+   - **Why `solution.bpf.c` passes**: sending the first segment after the pause triggers `bpf_cubic5_cwnd_event_tx_start()`, which shifts `ca->epoch_start` forward by the 2-second idle delta. When the ACK arrives $$20\text{ ms}$$ later, `t` is only $$\approx 60\text{ ms}$$, `bic_target = 15 <= cwnd (15)` (`ca->cnt = 100 * 15 = 1500`), and `tcpi_snd_cwnd` stays **`15`** (`<= 15`), passing the assertion.
 
 ### 5.2 How to Run
 
@@ -3590,13 +3590,13 @@ However, our implementation still suffers from a major flaw during connection st
 ### 1. Why Does Initial Slow Start Cause Massive Loss? (The Overshoot Problem)
 
 When a new TCP connection starts, the sender has no knowledge of the network's Bandwidth-Delay Product (BDP), so it begins in **Slow Start**.
-Initially, the slow start threshold `tp->snd_ssthresh` is set to `TCP_INFINITE_SSTHRESH` (`0x7fffffff`). As long as `tp->snd_cwnd < tp->snd_ssthresh`, the kernel's `tcp_slow_start()` increases `tp->snd_cwnd` by 1 for every acknowledged packet—**doubling `snd_cwnd` every round-trip time ($10 \to 20 \to 40 \to 80 \dots$)**.
+Initially, the slow start threshold `tp->snd_ssthresh` is set to `TCP_INFINITE_SSTHRESH` (`0x7fffffff`). As long as `tp->snd_cwnd < tp->snd_ssthresh`, the kernel's `tcp_slow_start()` increases `tp->snd_cwnd` by 1 for every acknowledged packet—**doubling `snd_cwnd` every round-trip time ($$10 \to 20 \to 40 \to 80 \dots$$)**.
 
 This creates a severe overshoot problem:
 
-- Suppose that at the start of a round, `snd_cwnd` reaches the exact BDP of the path ($W_{\text{BDP}}$), completely filling the bottleneck pipe.
-- Because no packet has been dropped yet, Slow Start continues uninterrupted. As those $W_{\text{BDP}}$ packets are acknowledged over the course of the RTT, `snd_cwnd` **doubles to $2 \times W_{\text{BDP}}$**.
-- If the bottleneck switch or router buffer holds fewer than $W_{\text{BDP}}$ packets, up to $W_{\text{BDP}}$ excess packets overflow the buffer and are tail-dropped in a single massive burst.
+- Suppose that at the start of a round, `snd_cwnd` reaches the exact BDP of the path ($$W_{\text{BDP}}$$), completely filling the bottleneck pipe.
+- Because no packet has been dropped yet, Slow Start continues uninterrupted. As those $$W_{\text{BDP}}$$ packets are acknowledged over the course of the RTT, `snd_cwnd` **doubles to $$2 \times W_{\text{BDP}}$$**.
+- If the bottleneck switch or router buffer holds fewer than $$W_{\text{BDP}}$$ packets, up to $$W_{\text{BDP}}$$ excess packets overflow the buffer and are tail-dropped in a single massive burst.
 - Recovering from such a large multi-packet loss often overwhelms SACK Fast Recovery and triggers a Retransmission Timeout (RTO), collapsing `snd_cwnd` to 1 and stalling the connection right after startup.
 
 **The Core Idea of HyStart (Hybrid Slow Start)**:
@@ -3638,14 +3638,14 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
 #### Detector 1: ACK Train Length (`HYSTART_ACK_TRAIN`)
 
 - **Intuition**:
-  During Slow Start, packets sent in a round traverse the bottleneck link back-to-back at the bottleneck bandwidth rate. Their corresponding ACKs return to the sender closely spaced (within `HYSTART_ACK_DELTA_US = 2000` $\mu\text{s}$ = $2\text{ ms}$ of one another), forming a dense "ACK train".
-  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $\text{delay}_{\min} / 2$ in each direction), **an unbroken ACK train lasting at least $\text{delay}_{\min} / 2$ indicates that the flight of packets has filled the forward bottleneck pipe**.
+  During Slow Start, packets sent in a round traverse the bottleneck link back-to-back at the bottleneck bandwidth rate. Their corresponding ACKs return to the sender closely spaced (within `HYSTART_ACK_DELTA_US = 2000` $$\mu\text{s}$$ = $$2\text{ ms}$$ of one another), forming a dense "ACK train".
+  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $$\text{delay}_{\min} / 2$$ in each direction), **an unbroken ACK train lasting at least $$\text{delay}_{\min} / 2$$ indicates that the flight of packets has filled the forward bottleneck pipe**.
 - **Exact Rule and Formula**:
-  1. Check whether the time elapsed since the previous ACK in the train (`ca->last_ack`) is at most `HYSTART_ACK_DELTA_US` ($2000\ \mu\text{s}$):
+  1. Check whether the time elapsed since the previous ACK in the train (`ca->last_ack`) is at most `HYSTART_ACK_DELTA_US` ($$2000\ \mu\text{s}$$):
      ```c
      if ((__s32)(now_us - ca->last_ack) <= HYSTART_ACK_DELTA_US)
      ```
-  2. If so, extend the train by updating `ca->last_ack = now_us` (if an ACK arrives more than $2\text{ ms}$ after `ca->last_ack`, `ca->last_ack` is not updated, so `now_us - ca->last_ack` grows even larger on subsequent ACKs and the train detector cannot fire for the rest of that round).
+  2. If so, extend the train by updating `ca->last_ack = now_us` (if an ACK arrives more than $$2\text{ ms}$$ after `ca->last_ack`, `ca->last_ack` is not updated, so `now_us - ca->last_ack` grows even larger on subsequent ACKs and the train detector cannot fire for the rest of that round).
   3. Check whether the train duration since `ca->round_start` has reached at least half of `ca->delay_min` (`ca->delay_min >> 1`):
      ```c
      if ((__s32)(now_us - ca->round_start) >= (ca->delay_min >> 1)) {
@@ -3660,7 +3660,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
   On links where ACK coalescing (GRO/LRO) or ACK thinning disrupts ACK spacing, the ACK train detector may not fire. However, as soon as in-flight packets exceed the BDP and begin queueing in the bottleneck buffer, **the measured RTT increases above the baseline minimum RTT (`ca->delay_min`)**.
   To avoid false exits caused by a single delayed ACK (e.g., OS scheduling jitter or NIC interrupt moderation), HyStart collects at least `HYSTART_MIN_SAMPLES` (`8`) RTT samples within the current round and tracks their **minimum** (`ca->curr_rtt`). Only if even the smallest of the first 8+ RTT samples in the round exceeds `ca->delay_min` by a safety threshold does HyStart declare that a persistent queue has formed.
 - **Exact Rule and Formula**:
-  1. Update the current round's minimum RTT `ca->curr_rtt` with the latest ACK's RTT `delay` ($\mu\text{s}$):
+  1. Update the current round's minimum RTT `ca->curr_rtt` with the latest ACK's RTT `delay` ($$\mu\text{s}$$):
      ```c
      if (ca->curr_rtt > delay)
          ca->curr_rtt = delay;
@@ -3670,7 +3670,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
      if (ca->sample_cnt < HYSTART_MIN_SAMPLES)
          ca->sample_cnt++;
      ```
-  3. Once `ca->sample_cnt >= HYSTART_MIN_SAMPLES` (at least 8 samples collected in this round), compare `ca->curr_rtt` against `ca->delay_min` plus a clamped threshold $\Delta_{\text{thresh}}$:
+  3. Once `ca->sample_cnt >= HYSTART_MIN_SAMPLES` (at least 8 samples collected in this round), compare `ca->curr_rtt` against `ca->delay_min` plus a clamped threshold $$\Delta_{\text{thresh}}$$:
      $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay}_{\min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
      ```c
      if (ca->curr_rtt >= ca->delay_min + clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)) {
@@ -3678,26 +3678,26 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
          tp->snd_ssthresh = tp->snd_cwnd;
      }
      ```
-  - **Why clamp `delay_min >> 3` ($12.5\%$) between $4\text{ ms}$ and $16\text{ ms}$?**:
-    - By default, HyStart tolerates a queueing delay of $1/8$ ($12.5\%$) of the baseline RTT (`ca->delay_min >> 3`).
-    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($4\text{ ms}$)**: On low-latency data-centre or LAN paths where $\text{delay}_{\min} \le 1\text{ ms}$, $\text{delay}_{\min} / 8$ is only $125\ \mu\text{s}$—smaller than normal TSO/GRO batching jitter. Enforcing a $4\text{ ms}$ floor prevents premature Slow Start exits.
-    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($16\text{ ms}$)**: On long-delay paths (e.g., transcontinental or satellite links with $\text{delay}_{\min} > 200\text{ ms}$), waiting for $\text{delay}_{\min} / 8 > 25\text{ ms}$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $16\text{ ms}$.
+  - **Why clamp `delay_min >> 3` ($$12.5\%$$) between $$4\text{ ms}$$ and $$16\text{ ms}$$?**:
+    - By default, HyStart tolerates a queueing delay of $$1/8$$ ($$12.5\%$$) of the baseline RTT (`ca->delay_min >> 3`).
+    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($$4\text{ ms}$$)**: On low-latency data-centre or LAN paths where $$\text{delay}_{\min} \le 1\text{ ms}$$, $$\text{delay}_{\min} / 8$$ is only $$125\ \mu\text{s}$$—smaller than normal TSO/GRO batching jitter. Enforcing a $$4\text{ ms}$$ floor prevents premature Slow Start exits.
+    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($$16\text{ ms}$$)**: On long-delay paths (e.g., transcontinental or satellite links with $$\text{delay}_{\min} > 200\text{ ms}$$), waiting for $$\text{delay}_{\min} / 8 > 25\text{ ms}$$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $$16\text{ ms}$$.
 
 ---
 
 ### 4. Concrete Numerical Example (Delay Increase Detection)
 
-Let us trace a connection with a baseline minimum RTT of $20\text{ ms}$ (`delay_min = 20000` $\mu\text{s}$):
+Let us trace a connection with a baseline minimum RTT of $$20\text{ ms}$$ (`delay_min = 20000` $$\mu\text{s}$$):
 
 - **Computing the delay threshold**:
-  `delay_min >> 3` is $20000 / 8 = 2500\ \mu\text{s}$ ($2.5\text{ ms}$). Clamping `2500` to `[4000U, 16000U]` selects the lower bound **`4000` $\mu\text{s}$ ($4\text{ ms}$)**.
-  Therefore, Delay Increase detection will fire if `curr_rtt >= 20000 + 4000 = 24000` $\mu\text{s}$ (**$24\text{ ms}$**) after 8 samples in a round.
+  `delay_min >> 3` is $$20000 / 8 = 2500\ \mu\text{s}$$ ($$2.5\text{ ms}$$). Clamping `2500` to `[4000U, 16000U]` selects the lower bound **`4000` $$\mu\text{s}$$ ($$4\text{ ms}$$)**.
+  Therefore, Delay Increase detection will fire if `curr_rtt >= 20000 + 4000 = 24000` $$\mu\text{s}$$ (**$$24\text{ ms}$$**) after 8 samples in a round.
 - **Round 1 (`snd_cwnd: 10 -> 20`)**:
-  The sender transmits its initial window of 10 segments. After $20\text{ ms}$, a cumulative ACK arrives: `ca->delay_min = 20000` is recorded, `snd_cwnd` doubles from `10` to `20` ($\ge 16$), and the sender transmits the next 20 segments.
-- **Round 2 (`snd_cwnd >= 20`, queue builds up and RTT rises to $35\text{ ms}$)**:
-  - **1st ACK arrives** (`delay = 35000` $\mu\text{s}$): `after(tp->snd_una, ca->end_seq)` is true, so `hystart_reset()` starts Round 2. `ca->curr_rtt` becomes `35000` and `ca->sample_cnt` becomes `1`.
-  - **2nd through 7th ACKs arrive** (`delay = 35000` $\mu\text{s}$): `ca->sample_cnt` increments to `7`. Because fewer than 8 samples have been collected, `snd_ssthresh` remains `0x7fffffff` (while `snd_cwnd` grows by $+1$ per ACK).
-  - **8th sample ACK arrives** (`delay = 35000` $\mu\text{s}$): `ca->sample_cnt` reaches `8` (`HYSTART_MIN_SAMPLES`). Because `ca->curr_rtt` ($35000\ \mu\text{s}$) $\ge$ `24000` $\mu\text{s}$, **HyStart immediately sets `ca->found = 1` and `tp->snd_ssthresh = tp->snd_cwnd`, exiting Slow Start with zero packet loss!**
+  The sender transmits its initial window of 10 segments. After $$20\text{ ms}$$, a cumulative ACK arrives: `ca->delay_min = 20000` is recorded, `snd_cwnd` doubles from `10` to `20` ($$\ge 16$$), and the sender transmits the next 20 segments.
+- **Round 2 (`snd_cwnd >= 20`, queue builds up and RTT rises to $$35\text{ ms}$$)**:
+  - **1st ACK arrives** (`delay = 35000` $$\mu\text{s}$$): `after(tp->snd_una, ca->end_seq)` is true, so `hystart_reset()` starts Round 2. `ca->curr_rtt` becomes `35000` and `ca->sample_cnt` becomes `1`.
+  - **2nd through 7th ACKs arrive** (`delay = 35000` $$\mu\text{s}$$): `ca->sample_cnt` increments to `7`. Because fewer than 8 samples have been collected, `snd_ssthresh` remains `0x7fffffff` (while `snd_cwnd` grows by $$+1$$ per ACK).
+  - **8th sample ACK arrives** (`delay = 35000` $$\mu\text{s}$$): `ca->sample_cnt` reaches `8` (`HYSTART_MIN_SAMPLES`). Because `ca->curr_rtt` ($$35000\ \mu\text{s}$$) $$\ge$$ `24000` $$\mu\text{s}$$, **HyStart immediately sets `ca->found = 1` and `tp->snd_ssthresh = tp->snd_cwnd`, exiting Slow Start with zero packet loss!**
 
 ---
 
@@ -3716,11 +3716,11 @@ Before answering the design questions in Section 3, review the exact kernel fiel
 3. **`icsk_ca_priv` and `struct bictcp *ca = inet_csk_ca(sk)`**:
    - Every `struct inet_connection_sock` includes a per-socket private storage area `icsk_ca_priv` for congestion control state, accessed via `inet_csk_ca(sk)`.
    - In this lab, we use the kernel's `struct bictcp` definition from `vmlinux.h`, which provides:
-     - `ca->delay_min` (`__u32`): Minimum RTT observed over the lifetime of the connection ($\mu\text{s}$).
-     - `ca->round_start` (`__u32`): Timestamp (`tp->tcp_mstamp` in $\mu\text{s}$) when the current round started.
-     - `ca->last_ack` (`__u32`): Timestamp ($\mu\text{s}$) of the most recent ACK in the current ACK train.
+     - `ca->delay_min` (`__u32`): Minimum RTT observed over the lifetime of the connection ($$\mu\text{s}$$).
+     - `ca->round_start` (`__u32`): Timestamp (`tp->tcp_mstamp` in $$\mu\text{s}$$) when the current round started.
+     - `ca->last_ack` (`__u32`): Timestamp ($$\mu\text{s}$$) of the most recent ACK in the current ACK train.
      - `ca->end_seq` (`__u32`): Sequence number (`tp->snd_nxt`) marking the end of the current round.
-     - `ca->curr_rtt` (`__u32`): Minimum RTT ($\mu\text{s}$) observed among samples in the current round (initialised to `~0U` in `hystart_reset()`).
+     - `ca->curr_rtt` (`__u32`): Minimum RTT ($$\mu\text{s}$$) observed among samples in the current round (initialised to `~0U` in `hystart_reset()`).
      - `ca->sample_cnt` (`__u32`): Number of RTT samples collected in the current round.
      - `ca->found` (`__u8`): Flag set to `1` once either HyStart detector triggers.
 4. **Inline helpers in `bpf_cc_helpers.h`**:
@@ -3800,7 +3800,7 @@ if ((__s32)(now_us - ca->last_ack) <= HYSTART_ACK_DELTA_US) {
 
 ### Q4. How do we write Detector 2 (`HYSTART_DELAY`) in C?
 
-Using the `delay` parameter ($\mu\text{s}$), write the C statements for Detector 2: update the round minimum `ca->curr_rtt`, increment `ca->sample_cnt` up to `HYSTART_MIN_SAMPLES` (`8`), and once `ca->sample_cnt >= HYSTART_MIN_SAMPLES`, check whether `ca->curr_rtt` exceeds `ca->delay_min` by at least `clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)`.
+Using the `delay` parameter ($$\mu\text{s}$$), write the C statements for Detector 2: update the round minimum `ca->curr_rtt`, increment `ca->sample_cnt` up to `HYSTART_MIN_SAMPLES` (`8`), and once `ca->sample_cnt >= HYSTART_MIN_SAMPLES`, check whether `ca->curr_rtt` exceeds `ca->delay_min` by at least `clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)`.
 
 <details>
 <summary>Hint and Answer</summary>
@@ -3842,9 +3842,9 @@ if (ca->sample_cnt >= HYSTART_MIN_SAMPLES) {
 ```
 
 - `HYSTART_LOW_WINDOW` (`16`): Minimum `snd_cwnd` required before running the HyStart detectors.
-- `HYSTART_ACK_DELTA_US` (`2000U` = $2\text{ ms}$): Maximum inter-ACK spacing for consecutive ACKs to belong to the same train.
+- `HYSTART_ACK_DELTA_US` (`2000U` = $$2\text{ ms}$$): Maximum inter-ACK spacing for consecutive ACKs to belong to the same train.
 - `HYSTART_MIN_SAMPLES` (`8`): Minimum number of RTT samples required in a round before evaluating Delay Increase detection.
-- `HYSTART_DELAY_MIN` (`4000U` = $4\text{ ms}$) and `HYSTART_DELAY_MAX` (`16000U` = $16\text{ ms}$): Bounds for clamping the dynamic delay threshold `ca->delay_min >> 3`.
+- `HYSTART_DELAY_MIN` (`4000U` = $$4\text{ ms}$$) and `HYSTART_DELAY_MAX` (`16000U` = $$16\text{ ms}$$): Bounds for clamping the dynamic delay threshold `ca->delay_min >> 3`.
 
 ### 2. `hystart_reset()` — Initialising a New Round
 
@@ -3941,30 +3941,30 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 
 ### Packet Trace Walkthrough (`test.pkt`)
 
-`test.pkt` verifies that HyStart Delay Increase detection exits Slow Start early when RTT inflates from a $20\text{ ms}$ baseline to $35\text{ ms}$:
+`test.pkt` verifies that HyStart Delay Increase detection exits Slow Start early when RTT inflates from a $$20\text{ ms}$$ baseline to $$35\text{ ms}$$:
 
 1. **Three-way Handshake (`0.000s` – `0.020s`)**:
    - Sets `net.ipv4.tcp_congestion_control=bpf_cubic6` and establishes a connection with MSS 1012 bytes.
    - `bpf_cubic6_init()` calls `hystart_reset()`, setting `end_seq = 1`.
 2. **Round 1: Establishing `delay_min = 20 ms` and Doubling `cwnd: 10 -> 20` (`0.020s` – `0.040s`)**:
    - The application writes 30360 bytes (30 segments of 1012 bytes). With initial `snd_cwnd = 10`, the kernel sends the first 10 segments (`1:10121`).
-   - At `+.020` ($20\text{ ms}$ later), `ack 10121` arrives:
-     - `bpf_cubic6_acked()` records `ca->delay_min = 20000` ($20\text{ ms}$).
+   - At `+.020` ($$20\text{ ms}$$ later), `ack 10121` arrives:
+     - `bpf_cubic6_acked()` records `ca->delay_min = 20000` ($$20\text{ ms}$$).
      - Inside `hystart_update()`, `after(10121, 1)` is true, so `hystart_reset()` advances `ca->end_seq = 10121` (since `snd_cwnd == 10 < 16`, the detectors do not run yet).
      - `bpf_cubic6_cong_avoid()` doubles `snd_cwnd` from `10` to `20`, and the kernel transmits the remaining 20 segments (`10121:30361`).
      - Assertions verify `tcpi_snd_cwnd == 20` and `tcpi_snd_ssthresh == 0x7fffffff`.
-3. **Round 2: Queue Inflation ($35\text{ ms}$) and HyStart Trigger on the 8th Sample (`0.075s`)**:
-   - At `+.035` ($35\text{ ms}$ RTT), the first Round 2 ACK (`ack 11133`) arrives:
+3. **Round 2: Queue Inflation ($$35\text{ ms}$$) and HyStart Trigger on the 8th Sample (`0.075s`)**:
+   - At `+.035` ($$35\text{ ms}$$ RTT), the first Round 2 ACK (`ack 11133`) arrives:
      - `after(11133, 10121)` is true, so `hystart_reset()` starts Round 2 with `end_seq = 30361`, `sample_cnt = 0`, and `curr_rtt = ~0U`.
      - Because `snd_cwnd == 20 >= 16`, the detectors run: `curr_rtt` is updated to `35000` and `sample_cnt` becomes `1`. `tcpi_snd_ssthresh` is still `0x7fffffff`.
    - Next, 7 individual 1-MSS ACKs (`ack 12145` through `ack 18217`) arrive in a burst (`+0.000`), incrementing `sample_cnt` from `2` to `8` (note that because `round_start` was reset on `ack 11133` at `+.035` and subsequent ACKs arrive at `+0.000`, `now_us - round_start == 0 < 10000`, so the ACK Train detector does not fire).
-   - Once the 8th sample (`ack 18217`) and 9th ACK (`ack 19229`) arrive, `sample_cnt >= 8` and `curr_rtt` ($35\text{ ms}$) $\ge$ `delay_min + 4 ms` ($20\text{ ms} + 4\text{ ms} = 24\text{ ms}$), so **Detector 2 (`HYSTART_DELAY`) triggers** and sets `tp->snd_ssthresh = tp->snd_cwnd`.
+   - Once the 8th sample (`ack 18217`) and 9th ACK (`ack 19229`) arrive, `sample_cnt >= 8` and `curr_rtt` ($$35\text{ ms}$$) $$\ge$$ `delay_min + 4 ms` ($$20\text{ ms} + 4\text{ ms} = 24\text{ ms}$$), so **Detector 2 (`HYSTART_DELAY`) triggers** and sets `tp->snd_ssthresh = tp->snd_cwnd`.
    - Assertions confirm `tcpi_snd_ssthresh == tcpi_snd_cwnd` and `tcpi_snd_ssthresh < 0x7fffffff` without a single packet drop.
 
 ### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - **`starter.bpf.c`**: Because `hystart_update()` is left as an empty stub, `tp->snd_ssthresh` never changes from `0x7fffffff`, failing the assertion `assert tcpi_snd_ssthresh == tcpi_snd_cwnd` on line 49 of `test.pkt`.
-- **`solution.bpf.c`**: On the 8th RTT sample in Round 2, `hystart_update()` detects that `curr_rtt` ($35\text{ ms}$) $\ge 24\text{ ms}$ and sets `tp->snd_ssthresh = tp->snd_cwnd`, passing all assertions.
+- **`solution.bpf.c`**: On the 8th RTT sample in Round 2, `hystart_update()` detects that `curr_rtt` ($$35\text{ ms}$$) $$\ge 24\text{ ms}$$ and sets `tp->snd_ssthresh = tp->snd_cwnd`, passing all assertions.
 
 ### Commands to Run
 

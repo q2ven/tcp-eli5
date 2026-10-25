@@ -15,19 +15,19 @@ Step 1 では、直近の ACK から得られた配送レート（`rs->delivered
 TCP 送信側が ACK を受け取るたびに観測できるのは、その時点の **瞬間的な RTT（`rs->rtt_us`）** と **瞬間的な配送レート（`rs->delivered / rs->interval_us`）** です。しかし、これらをそのまま経路の特性として上書きすると 2 つの深刻な問題が起きます。
 
 1. **キューイング遅延による RTT の膨張**:
-   観測される RTT は、光ファイバやルータの物理的な往復伝播遅延（$\text{RTprop}$）と、途中のボトルネックルータのバッファでの待ち時間（$\text{QueueDelay}_t \ge 0$）の和です。
+   観測される RTT は、光ファイバやルータの物理的な往復伝播遅延（$$\text{RTprop}$$）と、途中のボトルネックルータのバッファでの待ち時間（$$\text{QueueDelay}_t \ge 0$$）の和です。
    $$\text{RTT}_t = \text{RTprop} + \text{QueueDelay}_t$$
-   待ち時間 $\text{QueueDelay}_t$ は決して負にならないため、バッファが空のときにだけ $\text{RTT}_t = \text{RTprop}$ となり、バッファにパケットが溜まると $\text{RTT}_t$ は必ず $\text{RTprop}$ より大きくなります。したがって、経路の真の伝播遅延 $\text{RTprop}$ を知るには、観測された有効な RTT サンプル（`rs->rtt_us > 0`）の **最小値（min-filter）** を記録し続けなければなりません。
+   待ち時間 $$\text{QueueDelay}_t$$ は決して負にならないため、バッファが空のときにだけ $$\text{RTT}_t = \text{RTprop}$$ となり、バッファにパケットが溜まると $$\text{RTT}_t$$ は必ず $$\text{RTprop}$$ より大きくなります。したがって、経路の真の伝播遅延 $$\text{RTprop}$$ を知るには、観測された有効な RTT サンプル（`rs->rtt_us > 0`）の **最小値（min-filter）** を記録し続けなければなりません。
 
 2. **送信データ不足（App-Limited）による配送レートの低下**:
-   逆に、ある区間で観測される配送レート $\text{bw}_t = \text{delivered} / \Delta t$ は、物理的なボトルネックリンク容量（$\text{BtlBw}$）を絶対に超えることはできません（$\text{bw}_t \le \text{BtlBw}$）。パケットはボトルネックリンクが送り出せる速度以上では受信側に届かないからです。
-   一方で、送信側がパイプ（経路）を満たすほど十分なデータを送っていないとき、配送レートは簡単に $\text{BtlBw}$ を下回ります。したがって、ボトルネック帯域 $\text{BtlBw}$ を推定するには、観測された配送レートの **最大値（max-filter）** を取る必要があります。
+   逆に、ある区間で観測される配送レート $$\text{bw}_t = \text{delivered} / \Delta t$$ は、物理的なボトルネックリンク容量（$$\text{BtlBw}$$）を絶対に超えることはできません（$$\text{bw}_t \le \text{BtlBw}$$）。パケットはボトルネックリンクが送り出せる速度以上では受信側に届かないからです。
+   一方で、送信側がパイプ（経路）を満たすほど十分なデータを送っていないとき、配送レートは簡単に $$\text{BtlBw}$$ を下回ります。したがって、ボトルネック帯域 $$\text{BtlBw}$$ を推定するには、観測された配送レートの **最大値（max-filter）** を取る必要があります。
 
 ### App-Limited（アプリケーション制限）サンプルの不変条件
 
 特に注意が必要なのが、Web サーバのレスポンス間や対話型通信のように、アプリケーションが一時的に少ししかデータを書き込まない **App-Limited（アプリケーション制限）** 状態です。
 
-たとえば $1000\text{ pkts/s}$ の回線で、最初に 10 パケットをバースト送信して $\text{max}_{\text{bw}} = 1000\text{ pkts/s}$ を計測したあと、アプリケーションが $30\text{ ms}$ 休止してから 2 パケットだけを送ったとします。このとき配送区間は $\Delta t = 50\text{ ms}$ に引き伸ばされ、見かけの配送レートは $2 / 50\text{ ms} = 40\text{ pkts/s}$ まで落ち込みます。これはネットワークが遅くなったのではなく、**アプリケーションがデータを送らなかっただけ** です。
+たとえば $$1000\text{ pkts/s}$$ の回線で、最初に 10 パケットをバースト送信して $$\text{max}_{\text{bw}} = 1000\text{ pkts/s}$$ を計測したあと、アプリケーションが $$30\text{ ms}$$ 休止してから 2 パケットだけを送ったとします。このとき配送区間は $$\Delta t = 50\text{ ms}$$ に引き伸ばされ、見かけの配送レートは $$2 / 50\text{ ms} = 40\text{ pkts/s}$$ まで落ち込みます。これはネットワークが遅くなったのではなく、**アプリケーションがデータを送らなかっただけ** です。
 
 Linux カーネルの配送レート計測器（`tcp_rate.c`）は、送信ウィンドウやパイプを使い切っていない状態で計測されたサンプルに自動的に `rs->is_app_limited = 1` フラグを立てます。BBR はこのフラグに対して次の不変条件（ルール）を設けています。
 
@@ -66,11 +66,11 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
   1 マイクロ秒あたりに届くパケット数（`rs->delivered / rs->interval_us`）は通常 `1` 未満の小さな小数になるため、割り算の前に `BW_UNIT` を掛けて整数化します。
   $$\text{bw} = \left\lfloor \frac{\text{rs}\to\text{delivered} \times \text{BW}_{\text{UNIT}}}{\text{rs}\to\text{interval}_{\text{us}}} \right\rfloor$$
 - **`BBR_SCALE = 8`（`BBR_UNIT = 1U << 8 = 256`）**:
-  ゲイン（倍率）を表す固定小数点単位です。等倍（$1.0\times$）は `BBR_UNIT`（`256`）で表されます。
+  ゲイン（倍率）を表す固定小数点単位です。等倍（$$1.0\times$$）は `BBR_UNIT`（`256`）で表されます。
 
-この `bw`（単位: $\text{packets}/\mu\text{s} \times 2^{24}$）と `ca->min_rtt_us`（単位: $\mu\text{s}$）、および `gain`（単位: $2^8$）から BDP パケット数を求める式は次の通りです（`bbr_bdp()`）：
+この `bw`（単位: $$\text{packets}/\mu\text{s} \times 2^{24}$$）と `ca->min_rtt_us`（単位: $$\mu\text{s}$$）、および `gain`（単位: $$2^8$$）から BDP パケット数を求める式は次の通りです（`bbr_bdp()`）：
 
-1. まず 64 ビット整数で `w = (__u64)bw * ca->min_rtt_us` を計算します（単位は $\text{packets} \times \text{BW}_{\text{UNIT}}$）。
+1. まず 64 ビット整数で `w = (__u64)bw * ca->min_rtt_us` を計算します（単位は $$\text{packets} \times \text{BW}_{\text{UNIT}}$$）。
 2. 次に `gain` を掛けて `BBR_SCALE`（`8` ビット）右シフトし、最後に `BW_UNIT` で **切り上げ除算（ceil）** を行います。
    ```c
    return (((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT;
@@ -91,22 +91,22 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
 
 ### 具体例（`test.pkt` の数値で計算してみよう）
 
-MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に起きたときの計算を追ってみましょう。
+MSS = $$1000\text{ Bytes}$$ の経路で、以下の 2 つのフェーズが順に起きたときの計算を追ってみましょう。
 
 - **Phase 1（フルスピードの 10 パケット送信）**:
-  - 10 パケット（$10,000\text{ Bytes}$）を送信し、$10\text{ ms}$（$10,000\ \mu\text{s}$）後に ACK が到着。
+  - 10 パケット（$$10,000\text{ Bytes}$$）を送信し、$$10\text{ ms}$$（$$10,000\ \mu\text{s}$$）後に ACK が到着。
   - `rs->rtt_us = 10000`, `rs->delivered = 10`, `rs->interval_us = 10000`, `rs->is_app_limited = 0`。
   - `ca->min_rtt_us` は初回（`0`）なので `10000` に更新。
-  - $\text{bw} = \lfloor 10 \times 16,777,216 / 10000 \rfloor = 16,777$（約 $0.001\text{ pkts/}\mu\text{s} = 1000\text{ pkts/s}$）。
+  - $$\text{bw} = \lfloor 10 \times 16,777,216 / 10000 \rfloor = 16,777$$（約 $$0.001\text{ pkts/}\mu\text{s} = 1000\text{ pkts/s}$$）。
   - `!rs->is_app_limited` かつ `bw > ca->max_bw` なので、`ca->max_bw = 16777` に更新。
-  - `bbr_bdp()` では $w = 16,777 \times 10000 = 167,770,000$。等倍ゲイン（`gain = BBR_UNIT`）で切り上げ除算すると $\lceil 167,770,000 / 16,777,216 \rceil = 10\text{ パケット}$。
-  - よって `tp->snd_cwnd = max(10 + 4, 4) = 14`、`sk_pacing_rate` は約 $990,000\text{ Bytes/sec}$（$1\text{ MB/s}$ から 1% マージンを引いた値）になります。
-- **Phase 2（$30\text{ ms}$ 休止後の App-Limited な 2 パケット送信＋キュー遅延）**:
-  - アプリが $30\text{ ms}$ 休止したあと 2 パケットだけを送信し、別トラフィックのキュー遅延により $20\text{ ms}$ かかって ACK が到着。
+  - `bbr_bdp()` では $$w = 16,777 \times 10000 = 167,770,000$$。等倍ゲイン（`gain = BBR_UNIT`）で切り上げ除算すると $$\lceil 167,770,000 / 16,777,216 \rceil = 10\text{ パケット}$$。
+  - よって `tp->snd_cwnd = max(10 + 4, 4) = 14`、`sk_pacing_rate` は約 $$990,000\text{ Bytes/sec}$$（$$1\text{ MB/s}$$ から 1% マージンを引いた値）になります。
+- **Phase 2（$$30\text{ ms}$$ 休止後の App-Limited な 2 パケット送信＋キュー遅延）**:
+  - アプリが $$30\text{ ms}$$ 休止したあと 2 パケットだけを送信し、別トラフィックのキュー遅延により $$20\text{ ms}$$ かかって ACK が到着。
   - `rs->rtt_us = 20000`, `rs->delivered = 2`, `rs->interval_us = 50000`, `rs->is_app_limited = 1`。
   - **RTprop フィルタ**: `rs->rtt_us`（`20000`）は `ca->min_rtt_us`（`10000`）より大きいため無視され、`ca->min_rtt_us = 10000` が維持されます。
-  - **BtlBw フィルタ**: 今回の $\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$（$40\text{ pkts/s}$）ですが、`rs->is_app_limited == 1` かつ `bw < ca->max_bw` なので無視され、`ca->max_bw = 16777` が維持されます。
-  - その結果、Phase 2 の後も `tp->snd_cwnd == 14` と `sk_pacing_rate`（約 $990\text{ KB/s}$）が崩れずに保たれます。
+  - **BtlBw フィルタ**: 今回の $$\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$$（$$40\text{ pkts/s}$$）ですが、`rs->is_app_limited == 1` かつ `bw < ca->max_bw` なので無視され、`ca->max_bw = 16777` が維持されます。
+  - その結果、Phase 2 の後も `tp->snd_cwnd == 14` と `sk_pacing_rate`（約 $$990\text{ KB/s}$$）が崩れずに保たれます。
 
 ### カーネルが提供するフィールドとヘルパー（このステップで使うもの）
 
@@ -229,7 +229,7 @@ struct bpf_bbr2_ca {
 };
 ```
 
-- `BW_UNIT`（`1 << 24`）は帯域（$\text{packets}/\mu\text{s}$）のスケール、`BBR_UNIT`（`1 << 8`）はゲインのスケールです。
+- `BW_UNIT`（`1 << 24`）は帯域（$$\text{packets}/\mu\text{s}$$）のスケール、`BBR_UNIT`（`1 << 8`）はゲインのスケールです。
 - `struct bpf_bbr2_ca` は `inet_csk_ca(sk)` を通じて各ソケットの `icsk_ca_priv` 内に配置されます。
 
 ### 2. ペーシングレート変換ヘルパー `bbr_rate_bytes_per_sec()` と `bbr_set_pacing_rate()`
@@ -247,8 +247,8 @@ static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate,
 }
 ```
 
-- 引数 `rate` には `BW_UNIT` スケールの帯域（$\text{packets}/\mu\text{s} \times 2^{24}$）が渡されます。
-- これに `mss`（Bytes/packet）と `gain`（`>> BBR_SCALE`）、さらに 1 秒あたりのマイクロ秒数 `USEC_PER_SEC` から 1% のペーシングマージン（`BBR_PACING_MARGIN_PCT = 1U`）を差し引いた係数（$990,000$）を掛け、最後に `>> BW_SCALE` でスケールを戻すことで、1 秒あたりのバイト数（`Bytes/sec`）に変換します。
+- 引数 `rate` には `BW_UNIT` スケールの帯域（$$\text{packets}/\mu\text{s} \times 2^{24}$$）が渡されます。
+- これに `mss`（Bytes/packet）と `gain`（`>> BBR_SCALE`）、さらに 1 秒あたりのマイクロ秒数 `USEC_PER_SEC` から 1% のペーシングマージン（`BBR_PACING_MARGIN_PCT = 1U`）を差し引いた係数（$$990,000$$）を掛け、最後に `>> BW_SCALE` でスケールを戻すことで、1 秒あたりのバイト数（`Bytes/sec`）に変換します。
 - `bbr_set_pacing_rate()` はこの値を `sk->sk_max_pacing_rate` でクランプした上で `sk->sk_pacing_rate` に書き込みます。
 
 ### 3. BDP 計算ヘルパー `bbr_bdp()`
@@ -339,17 +339,17 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ### `test.pkt` のパケットトレース解説
 
-1. **3-way ハンドシェイク（14〜17 行目、RTT = $10\text{ ms}$, ペイロード MSS = $1000\text{ Bytes}$）**:
-   - 時刻 `0.00` に SYN / SYN-ACK を交換し、`+0.01`（$10\text{ ms}$ 後）に ACK が到着してコネクションが確立されます。TCP タイムスタンプオプション（12 バイト）込みで `mss 1012` が指定されているため、ペイロード 1 セグメントあたりちょうど $1000\text{ Bytes}$ になります。
+1. **3-way ハンドシェイク（14〜17 行目、RTT = $$10\text{ ms}$$, ペイロード MSS = $$1000\text{ Bytes}$$）**:
+   - 時刻 `0.00` に SYN / SYN-ACK を交換し、`+0.01`（$$10\text{ ms}$$ 後）に ACK が到着してコネクションが確立されます。TCP タイムスタンプオプション（12 バイト）込みで `mss 1012` が指定されているため、ペイロード 1 セグメントあたりちょうど $$1000\text{ Bytes}$$ になります。
 2. **Phase 1: 高帯域バーストと 1 回目のアサート（26〜33 行目）**:
-   - `write(4, ..., 10000)` で 10 セグメント（`1:10001(10000)`）を送信し、`+0.01`（$10\text{ ms}$ 後）にまとめて ACK（`ack 10001`）を受け取ります。
-   - このサンプルは `rs->rtt_us = 10000`（$10\text{ ms}$）、`rs->delivered = 10`、`rs->interval_us = 10000`（$10\text{ ms}$）です。
-   - `min_rtt_us = 10000`、`max_bw` は $1000\text{ pkts/s}$（$1,000,000\text{ Bytes/s}$）となり、$\text{BDP} = 10$ パケット、`tcpi_snd_cwnd == 14`（$10 + 4$）、`tcpi_pacing_rate` が約 $990\text{ KB/s}$（`950000 < tcpi_pacing_rate < 1050000`）になることを検証します。
+   - `write(4, ..., 10000)` で 10 セグメント（`1:10001(10000)`）を送信し、`+0.01`（$$10\text{ ms}$$ 後）にまとめて ACK（`ack 10001`）を受け取ります。
+   - このサンプルは `rs->rtt_us = 10000`（$$10\text{ ms}$$）、`rs->delivered = 10`、`rs->interval_us = 10000`（$$10\text{ ms}$$）です。
+   - `min_rtt_us = 10000`、`max_bw` は $$1000\text{ pkts/s}$$（$$1,000,000\text{ Bytes/s}$$）となり、$$\text{BDP} = 10$$ パケット、`tcpi_snd_cwnd == 14`（$$10 + 4$$）、`tcpi_pacing_rate` が約 $$990\text{ KB/s}$$（`950000 < tcpi_pacing_rate < 1050000`）になることを検証します。
 3. **Phase 2: App-Limited な小バースト＋膨張した RTT と 2 回目のアサート（39〜46 行目）**:
-   - $30\text{ ms}$ のアイドル時間（`+0.03`）を空けたあと、`write(4, ..., 2000)` で 2 セグメント（$2000\text{ Bytes}$）だけを送信し、`+0.02`（$20\text{ ms}$ 後）に ACK（`ack 12001`）を受け取ります。
-   - このサンプルでは `rs->rtt_us = 20000`（$20\text{ ms}$ に倍増）、`rs->delivered = 2`、`rs->interval_us = 50000`（$40\text{ pkts/s}$ に激減）、`rs->is_app_limited = true` となります。
-   - **なぜ `starter.bpf.c` は失敗するのか**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) は毎回 `ca->min_rtt_us = rs->rtt_us` と `ca->max_bw = bw` をそのまま上書きしてしまうため、Phase 2 の ACK で `max_bw` が $1/25$（$40\text{ pkts/s}$）に崩壊し、`tcpi_snd_cwnd` が `5`（$\text{BDP } 1 + 4$）、`tcpi_pacing_rate` が約 $39.6\text{ KB/s}$ に落ちて 44〜45 行目のアサートに失敗します。
-   - **なぜ `solution.bpf.c` はパスするのか**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) では最小値フィルタが `min_rtt_us = 10000` を守り、App-Limited ガード付き最大値フィルタが `max_bw = 1000 pkts/s` を守るため、Phase 2 の後も `tcpi_snd_cwnd == 14` と `tcpi_pacing_rate`（約 $990\text{ KB/s}$）が維持されてテストをパスします。
+   - $$30\text{ ms}$$ のアイドル時間（`+0.03`）を空けたあと、`write(4, ..., 2000)` で 2 セグメント（$$2000\text{ Bytes}$$）だけを送信し、`+0.02`（$$20\text{ ms}$$ 後）に ACK（`ack 12001`）を受け取ります。
+   - このサンプルでは `rs->rtt_us = 20000`（$$20\text{ ms}$$ に倍増）、`rs->delivered = 2`、`rs->interval_us = 50000`（$$40\text{ pkts/s}$$ に激減）、`rs->is_app_limited = true` となります。
+   - **なぜ `starter.bpf.c` は失敗するのか**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) は毎回 `ca->min_rtt_us = rs->rtt_us` と `ca->max_bw = bw` をそのまま上書きしてしまうため、Phase 2 の ACK で `max_bw` が $$1/25$$（$$40\text{ pkts/s}$$）に崩壊し、`tcpi_snd_cwnd` が `5`（$$\text{BDP } 1 + 4$$）、`tcpi_pacing_rate` が約 $$39.6\text{ KB/s}$$ に落ちて 44〜45 行目のアサートに失敗します。
+   - **なぜ `solution.bpf.c` はパスするのか**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) では最小値フィルタが `min_rtt_us = 10000` を守り、App-Limited ガード付き最大値フィルタが `max_bw = 1000 pkts/s` を守るため、Phase 2 の後も `tcpi_snd_cwnd == 14` と `tcpi_pacing_rate`（約 $$990\text{ KB/s}$$）が維持されてテストをパスします。
 
 ### テストの実行コマンド
 

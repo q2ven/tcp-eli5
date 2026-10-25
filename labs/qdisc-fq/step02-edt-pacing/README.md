@@ -32,7 +32,7 @@ EDT ペーシング送信:
 
 ### 2.2 Earliest Departure Time (EDT) モデル
 
-Linux 4.20 で導入された **EDT モデル** では、ソケットが設定した目標レート（`sk->sk_max_pacing_rate`）に基づき、各パケットに「このパケットは未来の時刻 $t$ に送信せよ」という **最早出発時刻（`skb->tstamp`）** をスタンプします。
+Linux 4.20 で導入された **EDT モデル** では、ソケットが設定した目標レート（`sk->sk_max_pacing_rate`）に基づき、各パケットに「このパケットは未来の時刻 $$t$$ に送信せよ」という **最早出発時刻（`skb->tstamp`）** をスタンプします。
 
 パケット送信予定時刻 `time_to_send` は次のように計算されます：
 
@@ -40,7 +40,7 @@ Linux 4.20 で導入された **EDT モデル** では、ソケットが設定�
 2. **ソケットの `sk_max_pacing_rate` が有効な場合**:
    現在のフローの次回送出時刻 `flow->time_next_packet` と現在時刻 `now` の大きい方を基準とします：
    $$\text{time to send} = \max(\text{flow} \to \text{next packet time}, \text{now})$$
-   そして、このパケットを送るのに必要な時間幅（$\Delta t$）を足して、次回のパケットのために `time_next_packet` を進めます：
+   そして、このパケットを送るのに必要な時間幅（$$\Delta t$$）を足して、次回のパケットのために `time_next_packet` を進めます：
    $$\text{flow} \to \text{next packet time} = \text{time to send} + \frac{\text{packet len} \times 10^9}{\text{rate}}$$
 3. **上記以外**: 即座に送出可能（`time_to_send = now`）とします。
 
@@ -64,7 +64,7 @@ Dequeue 時にフローの先頭パケットを取り出した際、そのパケ
 
 ## 3. 具体数値トレース（本ステップの `test.pkt` シナリオ）
 
-設定値：`SO_MAX_PACING_RATE = 200,000` バイト/秒（200 KB/s）、パケット長 $\approx 1066$ バイト。
+設定値：`SO_MAX_PACING_RATE = 200,000` バイト/秒（200 KB/s）、パケット長 $$\approx 1066$$ バイト。
 パケットあたりの所要時間：
 $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.33 \text{ ms}$$
 
@@ -74,7 +74,7 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 | Pkt 2 の検査 | — | Pkt 2 の目標時刻は `+5.33 ms`（未来）。<br>フローは `fq_delayed` へ退避され、タイマーがセットされる。 |
 | タイマー発火 (+5.33 ms) | **~ +0.005** | Pkt 2 (1001:2001) が **Watchdog によって送出**！<br>`time_next_packet` は `now + 10.66 ms` へ進む。 |
 | タイマー発火 (+10.66 ms) | **~ +0.010** | Pkt 3 (2001:3001) が **Watchdog によって送出**！ |
-| `SO_MAX_PACING_RATE = 100` B/s に設定 | — | 1000B パケットで $\Delta t = \frac{1066 \times 10^9}{100} > 10$ 秒！ |
+| `SO_MAX_PACING_RATE = 100` B/s に設定 | — | 1000B パケットで $$\Delta t = \frac{1066 \times 10^9}{100} > 10$$ 秒！ |
 | `write(4, ..., 2000)` (2 セグメント) | **+0.000** | Pkt 1 (3001:4001) が送出され、`time_next_packet` は `now + 10.66s` へ進む。 |
 | Pkt 2 の Enqueue | — | Pkt 2 の目標時刻は `now + 10.66s` となり、**`now + 2s` のホライゾンを超過**！<br>`bpf_qdisc_skb_drop()` で **即座にドロップ**！ |
 

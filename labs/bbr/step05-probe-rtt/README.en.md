@@ -10,12 +10,12 @@ In this step, you will implement BBRv1's fourth state, `BBR_PROBE_RTT`, in BPF t
 
 ### Why `BBR_PROBE_BW` Alone Loses Track of the True Propagation Delay (RTprop)
 
-BBR estimates a path's bandwidth-delay product ($\text{BDP} = \text{BtlBw} \times \text{RTprop}$) by tracking two independent quantities: the windowed maximum delivery rate `max_bw` ($\approx \text{BtlBw}$) and the windowed minimum round-trip time `min_rtt_us` ($\approx \text{RTprop}$). However, the physical two-way propagation delay ($\text{RTprop}$) can only be observed when the bottleneck queue is completely empty (queueing delay $= 0$).
+BBR estimates a path's bandwidth-delay product ($$\text{BDP} = \text{BtlBw} \times \text{RTprop}$$) by tracking two independent quantities: the windowed maximum delivery rate `max_bw` ($$\approx \text{BtlBw}$$) and the windowed minimum round-trip time `min_rtt_us` ($$\approx \text{RTprop}$$). However, the physical two-way propagation delay ($$\text{RTprop}$$) can only be observed when the bottleneck queue is completely empty (queueing delay $$= 0$$).
 
-In steady-state `BBR_PROBE_BW`, a flow cycles through 8 pacing gain phases (`[1.25, 0.75, 1, 1, 1, 1, 1, 1]`). While phase 1 (`0.75`) drains the excess queue (`0.25 * BDP`) that the flow itself created during phase 0 (`1.25`), the remaining 6 phases keep inflight at $1.0 \times \text{BDP}$. It never intentionally drops inflight below $1.0 \times \text{BDP}$. This leads to two fundamental issues:
+In steady-state `BBR_PROBE_BW`, a flow cycles through 8 pacing gain phases (`[1.25, 0.75, 1, 1, 1, 1, 1, 1]`). While phase 1 (`0.75`) drains the excess queue (`0.25 * BDP`) that the flow itself created during phase 0 (`1.25`), the remaining 6 phases keep inflight at $$1.0 \times \text{BDP}$$. It never intentionally drops inflight below $$1.0 \times \text{BDP}$$. This leads to two fundamental issues:
 
 1. **Standing Queues from Competing Flows**:
-   If another flow joins while a queue is already present at the bottleneck buffer, each flow maintaining $1.0 \times \text{BDP}$ prevents the bottleneck queue from ever draining all the way to zero packets. Every RTT sample measured by every flow equals `true RTprop + standing queue delay`, leaving `min_rtt_us` permanently inflated.
+   If another flow joins while a queue is already present at the bottleneck buffer, each flow maintaining $$1.0 \times \text{BDP}$$ prevents the bottleneck queue from ever draining all the way to zero packets. Every RTT sample measured by every flow equals `true RTprop + standing queue delay`, leaving `min_rtt_us` permanently inflated.
 2. **Route Changes Increasing True RTprop**:
    If physical path routing changes to a longer path (for instance, true `RTprop` increases from `10 ms` to `15 ms`), tracking `min_rtt_us` as an all-time minimum over the lifetime of the connection would keep the obsolete `10 ms` value forever.
 
@@ -42,7 +42,7 @@ Upon entering `BBR_PROBE_RTT`, BBR saves the prior working congestion window int
   (since `0` means "not app-limited" in the kernel, `: 1` ensures a non-zero value).
 - **When the Hold Timer Starts and the Two Exit Criteria**:
   Clamping `tp->snd_cwnd = 4` does not make packets already in the network vanish instantaneously; dozens or hundreds of packets may still be in flight (`tcp_packets_in_flight(tp) > 4`). BBR therefore waits until **in-flight packets actually drop to 4 or fewer (`tcp_packets_in_flight(tp) <= BBR_MIN_PIPE_CWND`)** before starting the hold timer and packet-timed round counter:
-  - **Criterion A (Time Duration: 200 ms)**: Once `tcp_packets_in_flight(tp) <= BBR_MIN_PIPE_CWND`, BBR sets `ca->probe_rtt_done_stamp = tp->tcp_mstamp + BBR_PROBE_RTT_MODE_US` (`200 ms`). Holding for 200 ms ensures that competing flows with different RTTs overlap their drain phases. With a 200 ms probe every 10 seconds in production Linux BBR, the theoretical throughput cost is bounded to $\frac{200\text{ ms}}{10\text{ s}} = 2\%$.
+  - **Criterion A (Time Duration: 200 ms)**: Once `tcp_packets_in_flight(tp) <= BBR_MIN_PIPE_CWND`, BBR sets `ca->probe_rtt_done_stamp = tp->tcp_mstamp + BBR_PROBE_RTT_MODE_US` (`200 ms`). Holding for 200 ms ensures that competing flows with different RTTs overlap their drain phases. With a 200 ms probe every 10 seconds in production Linux BBR, the theoretical throughput cost is bounded to $$\frac{200\text{ ms}}{10\text{ s}} = 2\%$$.
   - **Criterion B (Packet-Timed Round: 1 full round trip)**: At the same moment `probe_rtt_done_stamp` is armed, BBR resets `ca->probe_rtt_round_done = 0` and sets `ca->next_rtt_delivered = tp->delivered`. When a full packet-timed round finishes (`ca->round_start == 1`), BBR sets `ca->probe_rtt_round_done = 1`. This guarantees that on long-RTT paths (e.g. a 300 ms satellite link where 200 ms is less than one RTT), BBR waits until at least one packet sent while the queue was drained has completed a full round trip and delivered its RTT sample.
 - **Exiting `BBR_PROBE_RTT` and Restoring `prior_cwnd`**:
   Once **both** `ca->probe_rtt_round_done` and `tp->tcp_mstamp > ca->probe_rtt_done_stamp` hold (`bbr_check_probe_rtt_done()`), BBR refreshes `ca->min_rtt_stamp = tp->tcp_mstamp` (so it does not immediately re-enter `BBR_PROBE_RTT`), restores `tp->snd_cwnd = max(tp->snd_cwnd, ca->prior_cwnd)` to resume full-speed transmission without re-running slow start, and calls `bbr_reset_mode()` to return to `BBR_PROBE_BW` (if `full_bw_reached`) or `BBR_STARTUP` (if not).
@@ -404,7 +404,7 @@ done:
    assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
    }%
    ```
-   - After waiting `+0.250` seconds (`> BBR_PROBE_RTT_MODE_US = 200 ms`) with inflight $\le 4$, 1 segment is sent and ACKed at `RTT = 10 ms`, completing 1 packet-timed round trip (`probe_rtt_round_done = 1`).
+   - After waiting `+0.250` seconds (`> BBR_PROBE_RTT_MODE_US = 200 ms`) with inflight $$\le 4$$, 1 segment is sent and ACKed at `RTT = 10 ms`, completing 1 packet-timed round trip (`probe_rtt_round_done = 1`).
    - With both the 200 ms timer and 1 round trip satisfied, BBR exits `BBR_PROBE_RTT`, restores `prior_cwnd` (20), and adds the newly ACKed segment so `tcpi_snd_cwnd >= 20` passes.
 
 ### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes

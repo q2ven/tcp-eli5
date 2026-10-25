@@ -2,7 +2,7 @@
 
 Linux カーネルの BPF `struct_ops`（`struct tcp_congestion_ops` および `struct Qdisc_ops`）と `packetdrill` を使って、**TCP 輻輳制御（Reno・CUBIC・BBRv1）** と **パケットスケジューラ / Qdisc（FIFO・FQ + EDT Pacing・CoDel / FQ-CoDel）** の計 6 トラック・18 ステップをステップバイステップでゼロから実装・検証するハンズオン教材（`labs/` ディレクトリ）です。
 
-事前知識がなくても読めるよう、各トラックの冒頭（[第 18 章: Reno](18-lab-reno.md)〜[第 23 章: FQ-CoDel](23-lab-qdisc-fq-codel.md)）と各ステップの最初に **「なぜそのアルゴリズムが生まれたのか」「どういう仕組み・数式で動くのか」「カーネルが最初から提供している構造体・kfunc は何か」** の解説を置き、その仕組みを理解したうえで **設計チェックポイント（VibeWise 方式の設計問答）** $\to$ **BPF 実装** $\to$ **`packetdrill` テスト** に進む構成になっています。
+事前知識がなくても読めるよう、各トラックの冒頭（[第 18 章: Reno](18-lab-reno.md)〜[第 23 章: FQ-CoDel](23-lab-qdisc-fq-codel.md)）と各ステップの最初に **「なぜそのアルゴリズムが生まれたのか」「どういう仕組み・数式で動くのか」「カーネルが最初から提供している構造体・kfunc は何か」** の解説を置き、その仕組みを理解したうえで **設計チェックポイント（VibeWise 方式の設計問答）** $$\to$$ **BPF 実装** $$\to$$ **`packetdrill` テスト** に進む構成になっています。
 
 ---
 
@@ -51,7 +51,7 @@ labs/
 | 章 / トラック | 対象アルゴリズム | ステップ数 | 学べること |
 | :--- | :--- | :--- | :--- |
 | **[18. TCP Reno](18-lab-reno.md)** | RFC 5681 Reno | 全 2 ステップ | フロー制御（`snd_wnd`）と輻輳制御（`snd_cwnd`）の違い、AIMD の公平性、Slow Start / Congestion Avoidance の整数演算（`snd_cwnd_cnt`）、`icsk_ca_priv` と DSACK Undo |
-| **[19. TCP CUBIC](19-lab-cubic.md)** | RFC 9438 CUBIC | 全 4 ステップ | 高 BDP 回線での Reno の限界、3 次関数 $W_{\text{cubic}}(t)$ と固定小数点立方根 `cubic_root()`、Reno-friendly 領域（$W_{\text{est}}$）と Fast Convergence、アイドル後の Epoch シフト、HyStart（ACK Train & Delay Increase） |
+| **[19. TCP CUBIC](19-lab-cubic.md)** | RFC 9438 CUBIC | 全 4 ステップ | 高 BDP 回線での Reno の限界、3 次関数 $$W_{\text{cubic}}(t)$$ と固定小数点立方根 `cubic_root()`、Reno-friendly 領域（$$W_{\text{est}}$$）と Fast Convergence、アイドル後の Epoch シフト、HyStart（ACK Train & Delay Increase） |
 | **[20. TCP BBR](20-lab-bbr.md)** | BBRv1 | 全 6 ステップ | Bufferbloat と浅いバッファでのロスベース CC の限界、BtlBw × RTprop の水道管モデル、`.cong_control` フックと `sk_pacing_rate`、STARTUP / DRAIN / PROBE_BW（8 フェーズ） / PROBE_RTT の状態機械、Loss Undo と `extra_acked` 補償 |
 | **[21. BPF Qdisc: FIFO / 優先度](21-lab-qdisc-fifo.md)** | `pfifo` / `bfifo` / Priority | 全 2 ステップ | `struct Qdisc_ops`（`.enqueue` / `.dequeue` / `.init` / `.reset` / `.destroy`）、BPF Arena リンクリスト `bpf_sk_buff_ptr`、`bpf_qdisc_skb_drop()` / `bpf_qdisc_bstats_update()`、`sch->qstats.backlog` と優先度バンド |
 | **[22. BPF Qdisc: FQ と EDT Pacing](22-lab-qdisc-fq.md)** | `sch_fq` (DRR + EDT) | 全 2 ステップ | `bpf_skb_get_hash()` によるフロー分類、`new_flows` / `old_flows` の DRR（Deficit Round Robin）と Sparse Flow 優先、`skb->tstamp`（EDT）と `bpf_qdisc_watchdog_schedule()` による 타이マー駆動 Pacing |

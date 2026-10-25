@@ -20,16 +20,16 @@
 
 ### RED（倉庫の荷物の高さを見てくじ引きで間引く係員）
 
-そこで 1993 年に登場した **RED（Random Early Detection）** 係員は、「倉庫が満杯になる前に、早め（Early）にランダム（Random）で小包を間引いて、一部の発送係にだけブレーキを踏んでもらおう」と考えました。一時的な荷物の塊（バースト）で誤って捨てないよう、倉庫の「現在の荷物の高さ（バイト数）」を指数移動平均（$q_{\text{avg}}$）でならし、それがある目印（$q_{\min}$）を超えたら少しずつくじ引きの当選率を上げていきます。
+そこで 1993 年に登場した **RED（Random Early Detection）** 係員は、「倉庫が満杯になる前に、早め（Early）にランダム（Random）で小包を間引いて、一部の発送係にだけブレーキを踏んでもらおう」と考えました。一時的な荷物の塊（バースト）で誤って捨てないよう、倉庫の「現在の荷物の高さ（バイト数）」を指数移動平均（$$q_{\text{avg}}$$）でならし、それがある目印（$$q_{\min}$$）を超えたら少しずつくじ引きの当選率を上げていきます。
 
-しかし RED 係員には弱点がありました。「倉庫に何キログラムの荷物があるか」だけを見ていたため、外の道路の速度（リンク帯域）が 10 Mbps から 100 Mbps、あるいは Wi-Fi のように刻々と変わると、同じ荷物の量でも「すぐ捌けるのか、何秒も滞留するのか」がまったく変わってしまい、目印（$q_{\min}, q_{\max}, w_q$）の調整が極めて難しかったのです。
+しかし RED 係員には弱点がありました。「倉庫に何キログラムの荷物があるか」だけを見ていたため、外の道路の速度（リンク帯域）が 10 Mbps から 100 Mbps、あるいは Wi-Fi のように刻々と変わると、同じ荷物の量でも「すぐ捌けるのか、何秒も滞留するのか」がまったく変わってしまい、目印（$$q_{\min}, q_{\max}, w_q$$）の調整が極めて難しかったのです。
 
 ### CoDel と FQ-CoDel（小包に受付時刻スタンプを押し、大荷物と小荷物のレーンを分ける係員）
 
 2012 年に登場した **CoDel（Controlled Delay）** 係員は、荷物の重さや個数を見るのをやめ、すべての小包に **「倉庫に入った時刻」のスタンプ** を押すことにしました。そして小包を道路へ送り出す出口（dequeue）で「いま何ミリ秒待たされたか（**滞在時間：sojourn time**）」を測ります。
 
 - 一時的なバースト（「良いキュー」）なら、100 ms（`interval`）以内にすぐ捌けて待ち時間は 5 ms（`target`）未満に戻るので、何もしません。
-- 100 ms のあいだ一度も待ち時間が 5 ms を下回らなければ、「ずっと捌けないまま居座っている（**Standing Queue / 悪いキュー**）」と判断し、先頭の小包を 1 つ捨てて（または ECN マークを付けて）発送係に知らせます。それでも待ち時間が下がらなければ、$\text{interval}/\sqrt{\text{count}}$ のペースで通知の間隔を詰めていきます。
+- 100 ms のあいだ一度も待ち時間が 5 ms を下回らなければ、「ずっと捌けないまま居座っている（**Standing Queue / 悪いキュー**）」と判断し、先頭の小包を 1 つ捨てて（または ECN マークを付けて）発送係に知らせます。それでも待ち時間が下がらなければ、$$\text{interval}/\sqrt{\text{count}}$$ のペースで通知の間隔を詰めていきます。
 
 さらに **FQ-CoDel（Fair Queue CoDel）** 係員は、倉庫の中に 1024 本のレーン（フローごとのキュー）を用意し、**「新しく届いたばかりの小口レーン（`new_flows`）を、大荷物を送り続けている常連レーン（`old_flows`）より先に通す」** という整理券方式（DRR）を組み合わせました。これで、大きなファイル転送の裏でも SSH や音声通話の小包は待ち時間ほぼゼロで先頭から飛び出せるようになり、大荷物レーンにはそのレーン専用の CoDel 係員が的確にブレーキをかけてくれます。
 
@@ -46,9 +46,9 @@
 ルータやホストの送信キュー（Qdisc）における **Tail-drop（末尾廃棄）** には、大きく 3 つの構造的な問題があります。
 
 1. **Good Queue（良いキュー）と Bad Queue（悪いキュー）の区別がつかない**
-   パケット交換網におけるバッファの本来の目的は、複数の送信元から同時に到着した短時間のバーストや、TCP の slow start・ACK 圧縮による一時的な到着レートの山を吸収し、ボトルネックリンクを 100% 稼働させることです。このような「1 RTT 程度で速やかに捌けて空に戻るキュー」は **Good Queue** です。一方、ロスベースの TCP（Reno や CUBIC）がボトルネック帯域を超えて `cwnd` を増やし続けた結果、常時一定の深さで居座り続けるキューは **Standing Queue（Bad Queue）** と呼ばれます。Standing Queue はスループットを 1 ビットも増やさず、すべてのパケットに一定のキューイング遅延（$\Delta \text{RTT} = Q / C$）を上乗せするだけです。Tail-drop はバッファ上限（`limit`）に達するまで一切の輻輳シグナルを出さないため、バッファ容量のほぼすべてが Standing Queue として埋め尽くされます（**Bufferbloat**）。
+   パケット交換網におけるバッファの本来の目的は、複数の送信元から同時に到着した短時間のバーストや、TCP の slow start・ACK 圧縮による一時的な到着レートの山を吸収し、ボトルネックリンクを 100% 稼働させることです。このような「1 RTT 程度で速やかに捌けて空に戻るキュー」は **Good Queue** です。一方、ロスベースの TCP（Reno や CUBIC）がボトルネック帯域を超えて `cwnd` を増やし続けた結果、常時一定の深さで居座り続けるキューは **Standing Queue（Bad Queue）** と呼ばれます。Standing Queue はスループットを 1 ビットも増やさず、すべてのパケットに一定のキューイング遅延（$$\Delta \text{RTT} = Q / C$$）を上乗せするだけです。Tail-drop はバッファ上限（`limit`）に達するまで一切の輻輳シグナルを出さないため、バッファ容量のほぼすべてが Standing Queue として埋め尽くされます（**Bufferbloat**）。
 2. **TCP グローバル同期（Global Synchronization）と Lock-out**
-   Tail-drop キューが満杯になると、その瞬間に到着した複数フローのパケットが連続してドロップします。すると全フローが同時に `cwnd` を削減（Reno なら半減、CUBIC なら $\times 0.7$）し、リンク利用率が急落したあと、再び全フローが同時にウィンドウを広げて同時にドロップする波（同期現象）を繰り返します。また、少数のバースト的なフローがバッファを占有し、後から到着した別フローのパケットが入り口で弾かれ続ける **Lock-out（締め出し）** も発生します。
+   Tail-drop キューが満杯になると、その瞬間に到着した複数フローのパケットが連続してドロップします。すると全フローが同時に `cwnd` を削減（Reno なら半減、CUBIC なら $$\times 0.7$$）し、リンク利用率が急落したあと、再び全フローが同時にウィンドウを広げて同時にドロップする波（同期現象）を繰り返します。また、少数のバースト的なフローがバッファを占有し、後から到着した別フローのパケットが入り口で弾かれ続ける **Lock-out（締め出し）** も発生します。
 3. **Head-of-Line（HoL）ブロッキングによるインタラクティブ通信の悪化**
    単一の FIFO キューをバルク転送フロー（大容量ダウンロードなど）とスパースなフロー（DNS、SSH、VoIP、Web API、TCP ハンドシェイクの SYN 等）が共有すると、スパースなフローの 1 パケットがバルクフローの数百〜数千パケットの後ろに並ばされ、数百ミリ秒〜数秒のジッタとレイテンシ悪化を被ります。
 
@@ -57,9 +57,9 @@
 ### 各 RFC・論文のあらまし
 
 - **Sally Floyd and Van Jacobson, "Random Early Detection Gateways for Congestion Avoidance" (IEEE/ACM Transactions on Networking, 1993)**
-  AQM という分野を切り拓いた記念碑的論文です。瞬間的なキュー長ではなく指数移動平均（EWMA）のキュー長 $q_{\text{avg}}$ を計算し、2 つの閾値 $q_{\min}$ と $q_{\max}$ のあいだでドロップ（またはマーキング）確率を線形に増加させる **RED** アルゴリズムを提案しました。
+  AQM という分野を切り拓いた記念碑的論文です。瞬間的なキュー長ではなく指数移動平均（EWMA）のキュー長 $$q_{\text{avg}}$$ を計算し、2 つの閾値 $$q_{\min}$$ と $$q_{\max}$$ のあいだでドロップ（またはマーキング）確率を線形に増加させる **RED** アルゴリズムを提案しました。
 - **Sally Floyd, Ramakrishna Gummadi, and Scott Shenker, "Adaptive RED: An Algorithm for Increasing the Robustness of RED's AQM" (2001)**
-  RED の最大の弱点であった「フロー数やリンク条件によって平均キュー長が $q_{\min}$ 付近や $q_{\max}$ 付近に張り付いてしまう」問題に対し、$q_{\text{avg}}$ が目標範囲 $[q_{\min} + 0.4(q_{\max} - q_{\min}),\, q_{\min} + 0.6(q_{\max} - q_{\min})]$ に収まるよう、0.5 秒ごとに最大ドロップ確率 $\max_p$ を AIMD で自動調整する **Adaptive RED（ARED）** を提案しました。また $q_{\text{avg}}$ が $q_{\max}$ から $2 q_{\max}$ に向かう領域で確率を $\max_p$ から $1.0$ へ滑らかに引き上げる **gentle モード** も導入されました。
+  RED の最大の弱点であった「フロー数やリンク条件によって平均キュー長が $$q_{\min}$$ 付近や $$q_{\max}$$ 付近に張り付いてしまう」問題に対し、$$q_{\text{avg}}$$ が目標範囲 $$[q_{\min} + 0.4(q_{\max} - q_{\min}),\, q_{\min} + 0.6(q_{\max} - q_{\min})]$$ に収まるよう、0.5 秒ごとに最大ドロップ確率 $$\max_p$$ を AIMD で自動調整する **Adaptive RED（ARED）** を提案しました。また $$q_{\text{avg}}$$ が $$q_{\max}$$ から $$2 q_{\max}$$ に向かう領域で確率を $$\max_p$$ から $$1.0$$ へ滑らかに引き上げる **gentle モード** も導入されました。
 - **[RFC 7567](https://www.rfc-editor.org/rfc/rfc7567) — IETF Recommendations Regarding Active Queue Management (2015, BCP 197)**
   旧 RFC 2309（1998 年、RED の導入を推奨した文書）を置き換えた現行の Best Current Practice です。RED のパラメータ調整の難しさを総括したうえで、特定のアルゴリズム 1 つを義務付けるのではなく「設定不要または最小限のパラメータで自己適応する AQM（CoDel、PIE など）と、フロー分離（FQ-CoDel など）および ECN の活用」を推奨しています。
 - **[RFC 8289](https://www.rfc-editor.org/rfc/rfc8289) — Controlled Delay Active Queue Management (CoDel) (2018)**
@@ -73,33 +73,33 @@
 
 [RFC 8289 §3](https://www.rfc-editor.org/rfc/rfc8289#section-3) の設計原理は次の 3 点に集約されます。
 
-1. **キュー長ではなく滞在時間（sojourn time）を測る**: パケット $p$ がエンキューされた時刻を $t_{\text{enq}}(p)$、デキューされた時刻を $t_{\text{deq}}(p)$ とすると、滞在時間は
+1. **キュー長ではなく滞在時間（sojourn time）を測る**: パケット $$p$$ がエンキューされた時刻を $$t_{\text{enq}}(p)$$、デキューされた時刻を $$t_{\text{deq}}(p)$$ とすると、滞在時間は
    $$d(p) = t_{\text{deq}}(p) - t_{\text{enq}}(p)$$
    です。デキュー時に計測することで、リンク速度が可変（Wi-Fi、セルラー、動的シェーパ、HTB の帯域借用など）であっても、設定変更なしに「実際にパケットがどれだけ待たされたか」が正確にわかります。また、キューの先頭（最も長く待ったパケット）をドロップまたは ECN マークする **Head Drop** を行うため、末尾ドロップ（Tail Drop）よりも現在のキュー遅延分だけ早く送信側の TCP に輻輳シグナルが届きます。
-2. **スライディングウィンドウ内の最小滞在時間を見る**: 一時的なバースト（Good Queue）は、およそ 1 RTT（公衆インターネットの典型的な最大 RTT として `interval` = 100 ms）以内に解消されて滞在時間が 0 付近まで下がります。一方、Standing Queue（Bad Queue）は 100 ms のあいだ一度も滞在時間が下がりません。そこで CoDel は、明示的なリングバッファを持たず、`first_above_time` というタイムスタンプ 1 つだけで「$d(p) \ge \text{target}$ の状態が `interval`（100 ms）以上継続したか」を追跡します。ただし、キュー全体のバックログが 1 MTU（`params->mtu`）以下のときは、最後の 1 パケットを捨ててリンクをアイドルにしないようドロップを禁止します。
-3. **逆平方根の制御則（Control Law）**: TCP Reno / CUBIC が 1 RTT ごとにウィンドウを線形に増やし、ドロップに対してウィンドウを定数倍で減らすとき、定常状態のドロップ頻度 $f$ は活動フロー数やドロップ回数 `count` に対して平方根でスケーリングする必要があります。そのため `dropping` 状態に入った後の $n$ 回目（$\text{count} = n$）の次期ドロップ予定時刻 $t_{\text{next}}$ は、[RFC 8289 §3.2](https://www.rfc-editor.org/rfc/rfc8289#section-3.2) の制御則により次のように定まります。
+2. **スライディングウィンドウ内の最小滞在時間を見る**: 一時的なバースト（Good Queue）は、およそ 1 RTT（公衆インターネットの典型的な最大 RTT として `interval` = 100 ms）以内に解消されて滞在時間が 0 付近まで下がります。一方、Standing Queue（Bad Queue）は 100 ms のあいだ一度も滞在時間が下がりません。そこで CoDel は、明示的なリングバッファを持たず、`first_above_time` というタイムスタンプ 1 つだけで「$$d(p) \ge \text{target}$$ の状態が `interval`（100 ms）以上継続したか」を追跡します。ただし、キュー全体のバックログが 1 MTU（`params->mtu`）以下のときは、最後の 1 パケットを捨ててリンクをアイドルにしないようドロップを禁止します。
+3. **逆平方根の制御則（Control Law）**: TCP Reno / CUBIC が 1 RTT ごとにウィンドウを線形に増やし、ドロップに対してウィンドウを定数倍で減らすとき、定常状態のドロップ頻度 $$f$$ は活動フロー数やドロップ回数 `count` に対して平方根でスケーリングする必要があります。そのため `dropping` 状態に入った後の $$n$$ 回目（$$\text{count} = n$$）の次期ドロップ予定時刻 $$t_{\text{next}}$$ は、[RFC 8289 §3.2](https://www.rfc-editor.org/rfc/rfc8289#section-3.2) の制御則により次のように定まります。
 
 $$t_{\text{next}} = t + \frac{\text{interval}}{\sqrt{\text{count}}}$$
 
-カーネル内で浮動小数点演算や `sqrt()`、整数除算を毎ドロップごとに実行するのは高コストなため、Linux（および RFC 8289 §4.1）は $1/\sqrt{\text{count}}$ の固定小数点近似値 `rec_inv_sqrt` を保持し、`count` が 1 増えるたびに **ニュートン・ラフソン法（Newton-Raphson step）** を 1 ステップ回して更新します。
+カーネル内で浮動小数点演算や `sqrt()`、整数除算を毎ドロップごとに実行するのは高コストなため、Linux（および RFC 8289 §4.1）は $$1/\sqrt{\text{count}}$$ の固定小数点近似値 `rec_inv_sqrt` を保持し、`count` が 1 増えるたびに **ニュートン・ラフソン法（Newton-Raphson step）** を 1 ステップ回して更新します。
 
-関数 $f(x) = \frac{1}{x^2} - c = 0$（ここで $c = \text{count}$、解は $x = 1/\sqrt{c}$）に対するニュートン法の漸化式は
+関数 $$f(x) = \frac{1}{x^2} - c = 0$$（ここで $$c = \text{count}$$、解は $$x = 1/\sqrt{c}$$）に対するニュートン法の漸化式は
 
 $$x_{k+1} = x_k - \frac{f(x_k)}{f'(x_k)} = x_k - \frac{x_k^{-2} - c}{-2 x_k^{-3}} = \frac{x_k}{2}\left(3 - c \cdot x_k^2\right)$$
 
-です。`count` が $1 \to 2 \to 3 \dots$ と 1 ずつ増えるとき、前回の値 $x_k \approx 1/\sqrt{c-1}$ を初期値として上式を 1 回計算するだけで、実用上十分な精度の $1/\sqrt{c}$ が乗算とビットシフトだけで得られます。
+です。`count` が $$1 \to 2 \to 3 \dots$$ と 1 ずつ増えるとき、前回の値 $$x_k \approx 1/\sqrt{c-1}$$ を初期値として上式を 1 回計算するだけで、実用上十分な精度の $$1/\sqrt{c}$$ が乗算とビットシフトだけで得られます。
 
-また、一度 `dropping` 状態を抜けた直後（`now - drop_next < 16 * interval`）に再び `dropping` 状態へ入った場合は、前回のドロップレートがまだ妥当であったとみなし、`count` を 1 に戻さず $\text{delta} = \text{count} - \text{lastcount}$ から再開します（[RFC 8289 §4.3](https://www.rfc-editor.org/rfc/rfc8289#section-4.3)）。
+また、一度 `dropping` 状態を抜けた直後（`now - drop_next < 16 * interval`）に再び `dropping` 状態へ入った場合は、前回のドロップレートがまだ妥当であったとみなし、`count` を 1 に戻さず $$\text{delta} = \text{count} - \text{lastcount}$$ から再開します（[RFC 8289 §4.3](https://www.rfc-editor.org/rfc/rfc8289#section-4.3)）。
 
 | パラメータ / 変数 | 既定値 | 役割 |
 | --- | --- | --- |
 | `target` | 5 ms | 許容する定常最小キュー滞在時間（バンド幅の約 5% のバッファに相当） |
 | `interval` | 100 ms | Standing Queue と判定するまでの継続観測時間（典型的な公衆網 RTT） |
 | `ce_threshold` | 無効（`INT_MAX`） | DCTCP / L4S 向けに、`ldelay > ce_threshold` なら CoDel 状態機械と無関係に即時 CE マークする閾値 |
-| `first_above_time` | 0 | $d(p) \ge \text{target}$ が最初に成立した時刻 $+$ `interval` |
+| `first_above_time` | 0 | $$d(p) \ge \text{target}$$ が最初に成立した時刻 $$+$$ `interval` |
 | `dropping` | `false` | 現在ドロップ（または ECN マーク）周期中かどうか |
 | `count` / `lastcount` | 0 | `dropping` 状態に入ってからの累計ドロップ回数と、突入時の初期値 |
-| `rec_inv_sqrt` | 0 | $1/\sqrt{\text{count}}$ の上位 16 ビット固定小数点表現（`REC_INV_SQRT_SHIFT` = 16 で Q0.32 化） |
+| `rec_inv_sqrt` | 0 | $$1/\sqrt{\text{count}}$$ の上位 16 ビット固定小数点表現（`REC_INV_SQRT_SHIFT` = 16 で Q0.32 化） |
 | `drop_next` | 0 | 次のドロップ予定時刻（非 `dropping` 時は直近のドロップ時刻） |
 
 ---
@@ -124,36 +124,36 @@ $$x_{k+1} = x_k - \frac{f(x_k)}{f'(x_k)} = x_k - \frac{x_k^{-2} - c}{-2 x_k^{-3}
 
 ### RED の数式とアルゴリズム（Floyd & Jacobson 1993, Adaptive RED 2001）
 
-RED は CoDel とは対照的に **エンキュー時（`red_enqueue()`）** に動作し、物理的な子 Qdisc（既定はバイト単位の FIFO である `bfifo`）の現在のバックログ $q$（バイト）から指数移動平均 $q_{\text{avg}}$ を更新します。
+RED は CoDel とは対照的に **エンキュー時（`red_enqueue()`）** に動作し、物理的な子 Qdisc（既定はバイト単位の FIFO である `bfifo`）の現在のバックログ $$q$$（バイト）から指数移動平均 $$q_{\text{avg}}$$ を更新します。
 
-1. **平均キュー長 $q_{\text{avg}}$ の計算（EWMA とアイドル減衰）**
+1. **平均キュー長 $$q_{\text{avg}}$$ の計算（EWMA とアイドル減衰）**
    - キューが空でない（非アイドル）状態でパケットが到着したとき:
      $$q_{\text{avg}} \leftarrow (1 - w_q)\, q_{\text{avg}} + w_q\, q$$
-     ここで重み $w_q = 2^{-\text{Wlog}}$ です。Linux カーネルは浮動小数点を避け、かつシフト時の下位ビット切り捨て誤差を防ぐため、内部変数 `v->qavg` を **$q_{\text{avg}} \cdot 2^{\text{Wlog}}$（固定小数点位置が `Wlog` ビット目）** として保持します。すると更新式は
+     ここで重み $$w_q = 2^{-\text{Wlog}}$$ です。Linux カーネルは浮動小数点を避け、かつシフト時の下位ビット切り捨て誤差を防ぐため、内部変数 `v->qavg` を **$$q_{\text{avg}} \cdot 2^{\text{Wlog}}$$（固定小数点位置が `Wlog` ビット目）** として保持します。すると更新式は
      $$\text{v->qavg} \leftarrow \text{v->qavg} + \left(q - (\text{v->qavg} \gg \text{Wlog})\right)$$
      という加減算と右シフト 1 回だけで正確に計算できます。
-   - キューが空（アイドル）だった期間 $\Delta t_{\text{idle}}$ の後に最初のパケットが到着したとき:
-     もしリンク速度 $C$ で平均サイズ $S$ のダミーパケットがアイドル期間中に $m = \Delta t_{\text{idle}} / (S / C)$ 個通過したとみなせば、平均キュー長は
+   - キューが空（アイドル）だった期間 $$\Delta t_{\text{idle}}$$ の後に最初のパケットが到着したとき:
+     もしリンク速度 $$C$$ で平均サイズ $$S$$ のダミーパケットがアイドル期間中に $$m = \Delta t_{\text{idle}} / (S / C)$$ 個通過したとみなせば、平均キュー長は
      $$q_{\text{avg}} \leftarrow q_{\text{avg}} \cdot (1 - w_q)^m$$
-     だけ減衰するはずです。カーネル内でべき乗 $(1 - w_q)^m$ を計算するのは重いため、`iproute2`（`tc` コマンド）が設定時に 256 エントリのシフト量ルックアップテーブル `Stab[256]` を事前計算して Netlink でカーネルに渡し、カーネルは `us_idle >> Scell_log` で `Stab` を引いて右シフトします。
-2. **ドロップ確率 $p_b$ と一様化確率 $p_a$**
-   - $q_{\text{avg}} < q_{\min}$: ドロップしない（`RED_BELOW_MIN_THRESH`、`qcount = -1`）。
-   - $q_{\min} \le q_{\text{avg}} < q_{\max}$: 基本確率 $p_b$ を線形に計算します。
+     だけ減衰するはずです。カーネル内でべき乗 $$(1 - w_q)^m$$ を計算するのは重いため、`iproute2`（`tc` コマンド）が設定時に 256 エントリのシフト量ルックアップテーブル `Stab[256]` を事前計算して Netlink でカーネルに渡し、カーネルは `us_idle >> Scell_log` で `Stab` を引いて右シフトします。
+2. **ドロップ確率 $$p_b$$ と一様化確率 $$p_a$$**
+   - $$q_{\text{avg}} < q_{\min}$$: ドロップしない（`RED_BELOW_MIN_THRESH`、`qcount = -1`）。
+   - $$q_{\min} \le q_{\text{avg}} < q_{\max}$$: 基本確率 $$p_b$$ を線形に計算します。
      $$p_b = \max_p \cdot \frac{q_{\text{avg}} - q_{\min}}{q_{\max} - q_{\min}}$$
-     さらに、ドロップとドロップの間隔が幾何分布になって塊（クラスタ）でドロップするのを防ぎ、ドロップ間隔を一様分布に近づけるため、前回のドロップからの経過パケット数 $\text{count}$（`v->qcount`）を使って最終確率 $p_a$ を
+     さらに、ドロップとドロップの間隔が幾何分布になって塊（クラスタ）でドロップするのを防ぎ、ドロップ間隔を一様分布に近づけるため、前回のドロップからの経過パケット数 $$\text{count}$$（`v->qcount`）を使って最終確率 $$p_a$$ を
      $$p_a = \frac{p_b}{1 - \text{count} \cdot p_b}$$
-     とします。Linux の実装（`red_mark_probability()`）は、この $p_a$ をさらに高速化し、ドロップ時に 1 回だけ区間 $[0, (q_{\max} - q_{\min}) / \max_p)$ の乱数 `qR` を引いてキャッシュしておき、以降のパケットでは乱数を引かずに
+     とします。Linux の実装（`red_mark_probability()`）は、この $$p_a$$ をさらに高速化し、ドロップ時に 1 回だけ区間 $$[0, (q_{\max} - q_{\min}) / \max_p)$$ の乱数 `qR` を引いてキャッシュしておき、以降のパケットでは乱数を引かずに
      $$(q_{\text{avg}} - q_{\min}) \cdot \text{qcount} \ge \text{qR}$$
      が成立した瞬間にドロップ（または ECN マーク）するという巧みな変形を使っています。
-   - $q_{\text{avg}} \ge q_{\max}$: 強制ドロップまたはマーク（`RED_ABOVE_MAX_TRESH` → `RED_HARD_MARK`）。
-3. **Adaptive RED（ARED）**: `adaptive` フラグが有効な場合、500 ms（`HZ / 2`）周期のタイマー `red_adaptative_timer()` が走り、$q_{\text{avg}}$ が目標帯域 $[q_{\min} + 0.4 \Delta,\, q_{\min} + 0.6 \Delta]$（ただし $\Delta = q_{\max} - q_{\min}$）を上回っていれば $\max_p \leftarrow \max_p + \alpha$（$\alpha = \min(0.01, \max_p / 4)$、上限 $0.50$）、下回っていれば $\max_p \leftarrow 0.9 \max_p$（下限 $0.01$）と更新します。
+   - $$q_{\text{avg}} \ge q_{\max}$$: 強制ドロップまたはマーク（`RED_ABOVE_MAX_TRESH` → `RED_HARD_MARK`）。
+3. **Adaptive RED（ARED）**: `adaptive` フラグが有効な場合、500 ms（`HZ / 2`）周期のタイマー `red_adaptative_timer()` が走り、$$q_{\text{avg}}$$ が目標帯域 $$[q_{\min} + 0.4 \Delta,\, q_{\min} + 0.6 \Delta]$$（ただし $$\Delta = q_{\max} - q_{\min}$$）を上回っていれば $$\max_p \leftarrow \max_p + \alpha$$（$$\alpha = \min(0.01, \max_p / 4)$$、上限 $$0.50$$）、下回っていれば $$\max_p \leftarrow 0.9 \max_p$$（下限 $$0.01$$）と更新します。
 
 ### なぜ現在 RED は本番環境でほとんど使われなくなったのか
 
 RED は AQM の基礎を作った歴史的に極めて重要なアルゴリズムですが、現在の Linux では以下の理由から `fq_codel`（または `cake` / `sch_fq`）に取って代わられています。
 
 - **パラメータ調整がリンク帯域に強く依存する**: `tc qdisc add ... red` では `min`、`max`、`avpkt`、`burst`、`bandwidth` をすべて管理者が指定しなければならず、`Stab`（アイドル減衰テーブル）も指定した `bandwidth` と `avpkt` から計算されます。実際のリンク速度が変動したり設定値と乖離したりすると、バーストを誤って大量ドロップするか、逆に Standing Queue を放置してしまいます。
-- **キュー長（バイト）は遅延の悪い代理変数である**: 同じ 64 KB のキューでも、10 Gbps リンクなら $51\ \mu\text{s}$ で捌けますが、1 Mbps リンクなら $512\ \text{ms}$ かかります。CoDel は滞在時間を直接測るため、帯域の事前知識が一切不要です。
+- **キュー長（バイト）は遅延の悪い代理変数である**: 同じ 64 KB のキューでも、10 Gbps リンクなら $$51\ \mu\text{s}$$ で捌けますが、1 Mbps リンクなら $$512\ \text{ms}$$ かかります。CoDel は滞在時間を直接測るため、帯域の事前知識が一切不要です。
 - **エンキュー時判定と Tail / Random Drop の限界**: RED はエンキュー時に判定するため、リンク速度が急落した瞬間にすでにキューに入っているパケットの遅延増大を検知できません。
 
 それでも、データセンタースイッチのハードウェアオフロード（`TC_SETUP_QDISC_RED`、スイッチ ASIC 上の WRED / DCQCN バッファ設定）や、カーネルの selftests（`tools/testing/selftests/tc-testing/` およびスイッチドライバの qevent テスト）では今も現役で使われています。
@@ -249,7 +249,7 @@ static inline codel_time_t codel_get_time(void)
 - `codel_get_time()`（[include/net/codel.h#L65](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/codel.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n65)）は、64 ビットナノ秒クロック `ktime_get_ns()` を `CODEL_SHIFT`（10 ビット）右シフトして 32 ビットの `codel_time_t` に収めます。
 - なぜ 64 ビットの `ktime_t` をそのまま使わないのでしょうか。理由は 2 つあります。
   1. `sk_buff` の制御ブロック `qdisc_skb_cb(skb)->data`（最大 20 バイト）と、1024 個並ぶ `struct fq_codel_flow`（1 バケットあたり 64 バイト = 1 キャッシュライン以内）のメモリフットプリントを最小限に抑えるためです。32 ビットにすれば、`first_above_time`、`drop_next`、`ldelay` の 3 つの時刻フィールドが合計 12 バイトで済みます。
-  2. 1000（マイクロ秒への除算）ではなく $2^{10} = 1024\ \text{ns} \approx 1.024\ \mu\text{s}$ を 1 ティックに選ぶことで、ナノ秒からの変換が 1 命令のシフト（`>> 10`）で完結します。符号付き 32 ビット差分比較（`codel_time_after(a, b)` = `((s32)((a) - (b)) > 0)`）がラップアラウンドせずに比較できる最大時間幅は $2^{31} \times 1024\ \text{ns} \approx 2199\ \text{秒}$（約 36.6 分）であり、パケットのキュー滞在時間としては十分すぎる長さです。
+  2. 1000（マイクロ秒への除算）ではなく $$2^{10} = 1024\ \text{ns} \approx 1.024\ \mu\text{s}$$ を 1 ティックに選ぶことで、ナノ秒からの変換が 1 命令のシフト（`>> 10`）で完結します。符号付き 32 ビット差分比較（`codel_time_after(a, b)` = `((s32)((a) - (b)) > 0)`）がラップアラウンドせずに比較できる最大時間幅は $$2^{31} \times 1024\ \text{ns} \approx 2199\ \text{秒}$$（約 36.6 分）であり、パケットのキュー滞在時間としては十分すぎる長さです。
 
 続いて `struct codel_params`（[include/net/codel.h#L107](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/codel.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n107)）、`struct codel_vars`（[include/net/codel.h#L129](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/codel.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n129)）、`struct codel_stats`（[include/net/codel.h#L156](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/codel.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n156)）です。
 
@@ -368,14 +368,14 @@ static codel_time_t codel_control_law(codel_time_t t,
 ビットの位置（固定小数点の小数点位置）を正確に追いかけましょう。
 
 - **初期状態（`count = 1` のとき）**: `codel_dequeue()` が `vars->count = 1` にするとき、`vars->rec_inv_sqrt = ~0U >> REC_INV_SQRT_SHIFT`（つまり `0xffff`）を代入します。
-- **`u32 invsqrt = ((u32)vars->rec_inv_sqrt) << REC_INV_SQRT_SHIFT;`**: 16 ビットの `rec_inv_sqrt` を 16 ビット左シフトし、**Q0.32 形式**（$2^{32}$ を $1.0$ とする 32 ビット固定小数点、すなわち $\text{invsqrt} \approx \frac{1}{\sqrt{\text{count}}} \cdot 2^{32}$）に拡張します。
-- **`u32 invsqrt2 = ((u64)invsqrt * invsqrt) >> 32;`**: Q0.32 同士を 64 ビット乗算すると Q0.64 になるので、32 ビット右シフトして再び Q0.32 の $x_k^2$（`invsqrt2`）を得ます。
-- **`u64 val = (3LL << 32) - ((u64)vars->count * invsqrt2);`**: `3LL << 32` は Q2.32 形式の $3.0$ です。そこから `count * invsqrt2`（Q0.32）を引くことで、$3 - \text{count} \cdot x_k^2$ を Q2.32 形式で得ます。`count` が 1 増えた直後なので $\text{count} \cdot x_k^2 \approx \frac{c}{c-1} > 1$ となり、`val` はおおよそ $1.0 \sim 2.0$（$\times 2^{32}$）の範囲にあります。
-- **`val >>= 2; /* avoid overflow in following multiply */`**: ここが重要な工夫です。もし Q2.32 の `val`（最大約 $2 \times 2^{32}$）にそのまま Q0.32 の `invsqrt`（最大約 $2^{32}$）を掛けると、64 ビット符号なし整数 `u64`（上限 $2^{64}-1$）をわずかにオーバーフローする危険があります。そこで先に `val` を 2 ビット右シフトして Q2.30 にしておきます。
-- **`val = (val * invsqrt) >> (32 - 2 + 1);`**: Q2.30 の `val` と Q0.32 の `invsqrt` を掛けると小数部は $30 + 32 = 62$ ビットになります。さらにニュートン法の式の $\frac{1}{2}$ を掛ける分（$+1$ ビット右シフト）を合わせ、合計 $32 - 2 + 1 = 31$ ビット右シフトすることで、結果の `val` は再び **Q0.32 形式** の $x_{k+1} = \frac{x_k}{2}(3 - c x_k^2)$ になります。
+- **`u32 invsqrt = ((u32)vars->rec_inv_sqrt) << REC_INV_SQRT_SHIFT;`**: 16 ビットの `rec_inv_sqrt` を 16 ビット左シフトし、**Q0.32 形式**（$$2^{32}$$ を $$1.0$$ とする 32 ビット固定小数点、すなわち $$\text{invsqrt} \approx \frac{1}{\sqrt{\text{count}}} \cdot 2^{32}$$）に拡張します。
+- **`u32 invsqrt2 = ((u64)invsqrt * invsqrt) >> 32;`**: Q0.32 同士を 64 ビット乗算すると Q0.64 になるので、32 ビット右シフトして再び Q0.32 の $$x_k^2$$（`invsqrt2`）を得ます。
+- **`u64 val = (3LL << 32) - ((u64)vars->count * invsqrt2);`**: `3LL << 32` は Q2.32 形式の $$3.0$$ です。そこから `count * invsqrt2`（Q0.32）を引くことで、$$3 - \text{count} \cdot x_k^2$$ を Q2.32 形式で得ます。`count` が 1 増えた直後なので $$\text{count} \cdot x_k^2 \approx \frac{c}{c-1} > 1$$ となり、`val` はおおよそ $$1.0 \sim 2.0$$（$$\times 2^{32}$$）の範囲にあります。
+- **`val >>= 2; /* avoid overflow in following multiply */`**: ここが重要な工夫です。もし Q2.32 の `val`（最大約 $$2 \times 2^{32}$$）にそのまま Q0.32 の `invsqrt`（最大約 $$2^{32}$$）を掛けると、64 ビット符号なし整数 `u64`（上限 $$2^{64}-1$$）をわずかにオーバーフローする危険があります。そこで先に `val` を 2 ビット右シフトして Q2.30 にしておきます。
+- **`val = (val * invsqrt) >> (32 - 2 + 1);`**: Q2.30 の `val` と Q0.32 の `invsqrt` を掛けると小数部は $$30 + 32 = 62$$ ビットになります。さらにニュートン法の式の $$\frac{1}{2}$$ を掛ける分（$$+1$$ ビット右シフト）を合わせ、合計 $$32 - 2 + 1 = 31$$ ビット右シフトすることで、結果の `val` は再び **Q0.32 形式** の $$x_{k+1} = \frac{x_k}{2}(3 - c x_k^2)$$ になります。
 - **`vars->rec_inv_sqrt = val >> REC_INV_SQRT_SHIFT;`**: 上位 16 ビットを取り出して `rec_inv_sqrt` に保存します。
-- 具体例で確かめてみましょう。`count` が $1 \to 2$ になった瞬間、`invsqrt = 0xffff0000`（$\approx 1.0$）から 1 ステップ回すと、$\frac{1}{2}(3 - 2 \times 1^2) = 0.5$、次の `count = 3` の前に、もし `count = 2` でもう一度回れば $0.5 \times (3 - 2 \times 0.25) / 2 = 0.625$ と $\frac{1}{\sqrt{2}} \approx 0.7071$ に 2 次収束していきます。実際の CoDel では `count` が 1 増えるごとに 1 ステップ進むため、`count = 1, 2, 3, 4...` に対して非常に滑らかな減衰曲線を描きます。
-- **`codel_control_law()`**: `reciprocal_scale(interval, rec_inv_sqrt << 16)`（[include/linux/math.h#L194](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/linux/math.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n194)）は `(u32)(((u64)interval * (rec_inv_sqrt << 16)) >> 32)` を計算します。つまり除算命令（`div`）を一切使わず、64 ビット乗算と右シフトだけで $\lfloor \text{interval} \times \text{invsqrt} \rfloor = \lfloor \text{interval} / \sqrt{\text{count}} \rfloor$ を求めています。
+- 具体例で確かめてみましょう。`count` が $$1 \to 2$$ になった瞬間、`invsqrt = 0xffff0000`（$$\approx 1.0$$）から 1 ステップ回すと、$$\frac{1}{2}(3 - 2 \times 1^2) = 0.5$$、次の `count = 3` の前に、もし `count = 2` でもう一度回れば $$0.5 \times (3 - 2 \times 0.25) / 2 = 0.625$$ と $$\frac{1}{\sqrt{2}} \approx 0.7071$$ に 2 次収束していきます。実際の CoDel では `count` が 1 増えるごとに 1 ステップ進むため、`count = 1, 2, 3, 4...` に対して非常に滑らかな減衰曲線を描きます。
+- **`codel_control_law()`**: `reciprocal_scale(interval, rec_inv_sqrt << 16)`（[include/linux/math.h#L194](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/linux/math.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n194)）は `(u32)(((u64)interval * (rec_inv_sqrt << 16)) >> 32)` を計算します。つまり除算命令（`div`）を一切使わず、64 ビット乗算と右シフトだけで $$\lfloor \text{interval} \times \text{invsqrt} \rfloor = \lfloor \text{interval} / \sqrt{\text{count}} \rfloor$$ を求めています。
 - **`max_t(u32, 1, ...)`**: 2026 年 9 月のコミット `7f4a5ec6258f` で追加されたガードです。もしユーザーが極端に小さな `interval`（例: `2us`）を設定したり、`count` が巨大になったりして `reciprocal_scale()` が `0` に切り捨てられると、`drop_next` が 1 ティックも進まなくなり、`codel_dequeue()` の `while (codel_time_after_eq(now, vars->drop_next))` ループがスピンロックを握ったまま全バックログを捨てるまで回ってソフトロックアップを起こしてしまいます。最小でも `1` ティック（1024 ns）進めることで、前進性を保証しています。
 
 ---
@@ -530,7 +530,7 @@ static struct sk_buff *codel_dequeue(void *ctx,
 - **L166-170（空キュー時の早期リターン）**: `if (!skb)` のとき、`WRITE_ONCE(vars->dropping, false)` だけでなく **`vars->first_above_time = 0`** もリセットしています。この 1 行は 2026 年 3 月のコミット `815980fe6dbb` で修正された重要なバグ修正です。もしここで `first_above_time` を 0 に戻さないと、NAPI 遅延などで 1 パケットだけ `ldelay >= target` になったスパースなフロー（ICMP ping など）が一旦空になったあと、100 ms 以上経って届いた 2 個目のパケットで `now > first_above_time` がいきなり成立し、輻輳していない ping パケットが周期的にドロップしてしまいます。
 - **L174-177（`dropping` 状態からの脱出）**: すでに `dropping` 状態にあるとき、今回のパケットで `codel_should_drop()` が `false`（滞在時間が `target` 未満に下がった）を返したら、即座に `vars->dropping = false` にしてそのパケットを送り出します。
 - **L178-229（`dropping` 状態での周期的ドロップ・ECN マークの `while` ループ）**: `drop` が真で、かつ現在時刻 `now` が予定時刻 `vars->drop_next` に達していればループに入ります。
-  - なぜ `if` ではなく `while` なのでしょうか。下位リンクがしばらく詰まってデキューが遅延したり、`count` が大きくなってドロップ間隔 $\text{interval}/\sqrt{\text{count}}$ が非常に短くなったりすると、1 回の `codel_dequeue()` 呼び出し時点で複数のドロップ予定時刻を過ぎていることがあるからです。また、1 個ドロップして次のパケットを `dequeue_func()` で取り出したとき、その新しい先頭パケットで `codel_should_drop()` を再評価する必要があります。
+  - なぜ `if` ではなく `while` なのでしょうか。下位リンクがしばらく詰まってデキューが遅延したり、`count` が大きくなってドロップ間隔 $$\text{interval}/\sqrt{\text{count}}$$ が非常に短くなったりすると、1 回の `codel_dequeue()` 呼び出し時点で複数のドロップ予定時刻を過ぎていることがあるからです。また、1 個ドロップして次のパケットを `dequeue_func()` で取り出したとき、その新しい先頭パケットで `codel_should_drop()` を再評価する必要があります。
   - **L189-196（`CODEL_MAX_DROPS_PER_DEQUEUE`）**: ただし無制限にループすると、長いアイドルギャップの後などに 1 回のデキューで何万パケットも捨て続けてソフトロックアップを起こすため、最大 256 個（`CODEL_MAX_DROPS_PER_DEQUEUE`）に達したら `drop_next` を `vars->drop_next` ではなく **現在時刻 `now` 基準** に再同期してループを抜けます。
   - **L200-201**: `vars->count` を 1 増やし、`codel_Newton_step(vars)` で `rec_inv_sqrt` を更新します。
   - **L202-210（ECN CE マーキング）**: `params->ecn` が有効（`sch_fq_codel` では既定で `true`、`sch_codel` では既定で `false`）で、かつパケットの IP ヘッダが ECT(0) または ECT(1) であれば、`INET_ECN_set_ce(skb)`（[include/net/inet_ecn.h#L186](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/inet_ecn.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n186)）が CE ビット（`0x03`）を立てて `1` を返します。この場合パケットは **捨てずにそのまま送出する必要がある** ため、次の `drop_next` をスケジュールして `goto end;` でループを抜け、CE マーク済みの `skb` を呼び出し元へ返します。
@@ -597,7 +597,7 @@ end:
 ```
 
 - **L231-246（`dropping` 状態への新規突入）**: 非 `dropping` 状態で `drop` が `true`（`target` 超過が `interval` 継続した瞬間）になったら、まず現在の先頭パケットに対して ECN CE マークまたはドロップを 1 回実行し、`vars->dropping = true` に遷移します。
-- **L251-265（`count` の引き継ぎ判定）**: 前回 `dropping` 状態にいたときの最終ドロップ時刻（`vars->drop_next` に残っている値）から現在時刻 `now` までの経過時間が `16 * params->interval`（既定 1.6 秒）未満で、かつ前回のサイクルで 2 回以上ドロップしていた（`delta = vars->count - vars->lastcount > 1`）なら、キューは一度しかかりで抜けたものの同じ輻輳がまだ続いていると判断し、`vars->count = delta` として `codel_Newton_step(vars)` を 1 回呼びます。それ以外（十分時間が経った後や初回）なら `vars->count = 1`、`vars->rec_inv_sqrt = 0xffff`（$1/\sqrt{1} = 1.0$）に初期化します。
+- **L251-265（`count` の引き継ぎ判定）**: 前回 `dropping` 状態にいたときの最終ドロップ時刻（`vars->drop_next` に残っている値）から現在時刻 `now` までの経過時間が `16 * params->interval`（既定 1.6 秒）未満で、かつ前回のサイクルで 2 回以上ドロップしていた（`delta = vars->count - vars->lastcount > 1`）なら、キューは一度しかかりで抜けたものの同じ輻輳がまだ続いていると判断し、`vars->count = delta` として `codel_Newton_step(vars)` を 1 回呼びます。それ以外（十分時間が経った後や初回）なら `vars->count = 1`、`vars->rec_inv_sqrt = 0xffff`（$$1/\sqrt{1} = 1.0$$）に初期化します。
 - **L271-283（`ce_threshold`：DCTCP / L4S 向けの浅い閾値マーキング）**: 第 14 章で扱った DCTCP や L4S（TCP Prague 等）は、100 ms の `interval` を待たずに **滞在時間がごく浅い閾値（例: 1 ms）を超えたら即座に CE マークを付ける（ステップ関数型 AQM）** ことを必要とします。`ce_threshold` が設定されていれば、CoDel 本体の `interval` や `dropping` 状態とは独立に、`vars->ldelay > params->ce_threshold` であるすべてのパケットに CE マークを付与し、`stats->ce_mark` をインクリメントします。さらに `ce_threshold_mask` と `ce_threshold_selector` を使えば、「IP ヘッダの ECN フィールドが `ECT(1)`（`0x01`）のパケット（L4S トラフィック）にだけ浅い `ce_threshold` を適用し、古典的 `ECT(0)` トラフィックには通常の CoDel（5 ms / 100 ms）を適用する」というデュアル挙動も同じキュー上で実現できます（コミット `e72aeb9ee0e3`、`dfcb63ce1de6`）。
 
 ---
@@ -716,7 +716,7 @@ static int fq_codel_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 }
 ```
 
-- **L195-202（フロー分類）**: `fq_codel_classify()`（[net/sched/sch_fq_codel.c#L76](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_fq_codel.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n76)）は、外部 TC フィルタ（`q->filter_list`）がアタッチされていなければ `fq_codel_hash(q, skb) + 1`（`reciprocal_scale(skb_get_hash(skb), q->flows_cnt) + 1`）を返します。戻り値 `0` を「フィルタによるドロップ（`TC_ACT_SHOT` 等）」に予約しているため、バケット番号は $1 \dots \text{flows}_{\text{cnt}}$ で返り、`idx--` で $0 \dots \text{flows}_{\text{cnt}}-1$ に戻します。
+- **L195-202（フロー分類）**: `fq_codel_classify()`（[net/sched/sch_fq_codel.c#L76](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_fq_codel.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n76)）は、外部 TC フィルタ（`q->filter_list`）がアタッチされていなければ `fq_codel_hash(q, skb) + 1`（`reciprocal_scale(skb_get_hash(skb), q->flows_cnt) + 1`）を返します。戻り値 `0` を「フィルタによるドロップ（`TC_ACT_SHOT` 等）」に予約しているため、バケット番号は $$1 \dots \text{flows}_{\text{cnt}}$$ で返り、`idx--` で $$0 \dots \text{flows}_{\text{cnt}}-1$$ に戻します。
 - **L204-208（タイムスタンプ付与とキュー追加）**: `codel_set_enqueue_time(skb)` で `skb->cb` に現在時刻を書き込み、`flow_queue_add(flow, skb)` でバケットの単方向リスト（`flow->head` / `flow->tail`）の末尾に繋ぎ、`q->backlogs[idx]` と Qdisc 全体の `sch->qstats.backlog` を加算します。
 - **L210-214（新規フローの `new_flows` 登録）**: `list_empty(&flow->flowchain)` が真（現在そのバケットが `new_flows` にも `old_flows` にも繋がっていないアイドル状態）なら、`q->new_flows` の末尾に追加し、統計カウンタ `q->new_flow_count` を増やし、初期クレジット `flow->deficit = q->quantum` を与えます。注意してほしいのは、**ここでは `flow->cvars`（CoDel の状態変数）を初期化しない** ことです（コミット `b379135c4016`）。もしバケットが空になるたびに `cvars` をゼロクリアしてしまうと、1 パケットずつ入ってすぐ抜けるような状況で `first_above_time` や前回の `count` 履歴が毎回消えてしまい、CoDel が一切働かなくなるからです。
 - **L215-220（メモリ上限チェックと `is_skb_wmem()`）**:
@@ -992,9 +992,9 @@ static inline void red_set_parms(struct red_parms *p,
 }
 ```
 
-- **`qth_min << Wlog` と `qth_max << Wlog`**: 平均キュー長 `v->qavg` は重み $w_q = 2^{-\text{Wlog}}$ の固定小数点数（小数点位置が下から `Wlog` ビット目）として保持されます。そのため、毎パケットの閾値比較（`red_cmp_thresh()`）で `qavg >> Wlog` を計算せずに済むよう、初期化時に閾値 `p->qth_min` と `p->qth_max` の側をあらかじめ `Wlog` ビット左シフトして格納しています。なお `qth_min << Wlog` が 32 ビット符号なし整数をオーバーフローしないことは、直前の `red_check_params()`（[include/net/red.h#L170](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/red.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n170)）にある `fls(qth_min) + Wlog >= 32` チェックで保証されています（コミット `3a87571f0ffc`）。
-- **`max_P` と `max_P_reciprocal`**: `max_P` は $[0, 1.0)$ を $2^{32}$ スケール（Q0.32）で表した最大ドロップ確率です。後述する乱数生成 `red_random()` は、32 ビット一様乱数 `get_random_u32()` を `max_P / (qth_max - qth_min)` で割ることで、区間 $[0, (q_{\max} - q_{\min}) / \max_p)$ の乱数 `qR` を作ります。パケット到着パスでの除算を避けるため、`max_p_delta = max_P / delta` の逆数構造体 `reciprocal_value` を事前計算して `p->max_P_reciprocal` に保存します。
-- **`target_min` と `target_max`**: Adaptive RED（ARED）が目標とする平均キュー長レンジ $[q_{\min} + \frac{2}{5}\Delta,\, q_{\min} + \frac{3}{5}\Delta]$（バイト単位、シフトなし）です。
+- **`qth_min << Wlog` と `qth_max << Wlog`**: 平均キュー長 `v->qavg` は重み $$w_q = 2^{-\text{Wlog}}$$ の固定小数点数（小数点位置が下から `Wlog` ビット目）として保持されます。そのため、毎パケットの閾値比較（`red_cmp_thresh()`）で `qavg >> Wlog` を計算せずに済むよう、初期化時に閾値 `p->qth_min` と `p->qth_max` の側をあらかじめ `Wlog` ビット左シフトして格納しています。なお `qth_min << Wlog` が 32 ビット符号なし整数をオーバーフローしないことは、直前の `red_check_params()`（[include/net/red.h#L170](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/red.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n170)）にある `fls(qth_min) + Wlog >= 32` チェックで保証されています（コミット `3a87571f0ffc`）。
+- **`max_P` と `max_P_reciprocal`**: `max_P` は $$[0, 1.0)$$ を $$2^{32}$$ スケール（Q0.32）で表した最大ドロップ確率です。後述する乱数生成 `red_random()` は、32 ビット一様乱数 `get_random_u32()` を `max_P / (qth_max - qth_min)` で割ることで、区間 $$[0, (q_{\max} - q_{\min}) / \max_p)$$ の乱数 `qR` を作ります。パケット到着パスでの除算を避けるため、`max_p_delta = max_P / delta` の逆数構造体 `reciprocal_value` を事前計算して `p->max_P_reciprocal` に保存します。
+- **`target_min` と `target_max`**: Adaptive RED（ARED）が目標とする平均キュー長レンジ $$[q_{\min} + \frac{2}{5}\Delta,\, q_{\min} + \frac{3}{5}\Delta]$$（バイト単位、シフトなし）です。
 
 次に、パケット到着時に平均キュー長を計算する `red_calc_qavg_from_idle_time()`（[include/net/red.h#L289](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/red.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n289)）、`red_calc_qavg_no_idle_time()`（[include/net/red.h#L337](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/red.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n337)）、`red_calc_qavg()`（[include/net/red.h#L353](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/red.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n353)）を読みます。
 
@@ -1054,12 +1054,12 @@ static inline unsigned long red_calc_qavg(const struct red_parms *p,
 }
 ```
 
-- **非アイドル時（`red_calc_qavg_no_idle_time()`）**: Alexey Kuznetsov の 1998 年のコメント（`--ANK (980924)`）がそのまま残っています。`v->qavg` は実数値 $q_{\text{avg}}$ の $2^{\text{Wlog}}$ 倍なので、
+- **非アイドル時（`red_calc_qavg_no_idle_time()`）**: Alexey Kuznetsov の 1998 年のコメント（`--ANK (980924)`）がそのまま残っています。`v->qavg` は実数値 $$q_{\text{avg}}$$ の $$2^{\text{Wlog}}$$ 倍なので、
   $$\text{v->qavg}_{\text{new}} = \text{v->qavg} - \frac{\text{v->qavg}}{2^{\text{Wlog}}} + \text{backlog}$$
-  の両辺を $2^{\text{Wlog}}$ で割れば、まさに $q_{\text{avg, new}} = (1 - 2^{-\text{Wlog}}) q_{\text{avg}} + 2^{-\text{Wlog}} \cdot \text{backlog}$ となります。
+  の両辺を $$2^{\text{Wlog}}$$ で割れば、まさに $$q_{\text{avg, new}} = (1 - 2^{-\text{Wlog}}) q_{\text{avg}} + 2^{-\text{Wlog}} \cdot \text{backlog}$$ となります。
 - **アイドル明け（`red_calc_qavg_from_idle_time()`）**: 前回のデキューでキューが空になった時刻 `v->qidlestart` からの経過マイクロ秒 `delta` を求め、`p->Scell_max`（`255 << Scell_log`）でクランプします。
   - `us_idle >> p->Scell_log` をインデックスとして 256 要素のテーブル `p->Stab[]` を引きます。`shift` が 1 以上なら、単に `v->qavg >> shift` で指数減衰を近似します。
-  - `shift == 0`（アイドル時間がまだ短く、半減するほどのビットシフトに達していない領域）では、$(1 - W)^m \approx 1 - mW$ という 1 次テイラー展開（線形近似）を使って `v->qavg - ((v->qavg * (u64)us_idle) >> p->Scell_log)` を返します（下限は `v->qavg >> 1`）。
+  - `shift == 0`（アイドル時間がまだ短く、半減するほどのビットシフトに達していない領域）では、$$(1 - W)^m \approx 1 - mW$$ という 1 次テイラー展開（線形近似）を使って `v->qavg - ((v->qavg * (u64)us_idle) >> p->Scell_log)` を返します（下限は `v->qavg >> 1`）。
 
 ---
 
@@ -1122,10 +1122,10 @@ static inline int red_action(const struct red_parms *p,
 ```
 
 - **Floyd & Jacobson 論文の Fig. 17（「除算なしアルゴリズム」）の実装**:
-  - $q_{\text{avg}} < q_{\min}$ の間は `v->qcount = -1` に保たれます。
-  - $q_{\text{avg}}$ が初めて $[q_{\min}, q_{\max})$ に入った最初のパケットでは、`++v->qcount` が `0`（偽）になるため、`else` 節で乱数 `v->qR = red_random(p)` だけをキャッシュして `RED_DONT_MARK` を返します。
-  - 2 個目以降のパケットでは `++v->qcount` が $1, 2, 3 \dots$（真）になり、`red_mark_probability()` を評価します。
-  - `v->qR` は $\left[0,\, \frac{q_{\max} - q_{\min}}{\max_p}\right)$ の一様乱数なので、`((qavg - p->qth_min) >> p->Wlog) * v->qcount >= v->qR` が成り立つ確率は
+  - $$q_{\text{avg}} < q_{\min}$$ の間は `v->qcount = -1` に保たれます。
+  - $$q_{\text{avg}}$$ が初めて $$[q_{\min}, q_{\max})$$ に入った最初のパケットでは、`++v->qcount` が `0`（偽）になるため、`else` 節で乱数 `v->qR = red_random(p)` だけをキャッシュして `RED_DONT_MARK` を返します。
+  - 2 個目以降のパケットでは `++v->qcount` が $$1, 2, 3 \dots$$（真）になり、`red_mark_probability()` を評価します。
+  - `v->qR` は $$\left[0,\, \frac{q_{\max} - q_{\min}}{\max_p}\right)$$ の一様乱数なので、`((qavg - p->qth_min) >> p->Wlog) * v->qcount >= v->qR` が成り立つ確率は
     $$\Pr\left[\text{qR} \le (q_{\text{avg}} - q_{\min}) \cdot \text{qcount}\right] = \text{qcount} \cdot \max_p \frac{q_{\text{avg}} - q_{\min}}{q_{\max} - q_{\min}} = \text{qcount} \cdot p_b$$
     となり、条件が成立したら `v->qcount = 0` に戻して次の `v->qR = red_random(p)` を引き直し、`RED_PROB_MARK` を返します。パケットごとに乱数を生成したり除算したりする必要が一切ありません。
 
@@ -1255,11 +1255,11 @@ congestion_drop:
 
 - **L79-85**: 子 Qdisc（既定は `bfifo`）の現在のバイトバックログ `child->qstats.backlog` を渡して `q->vars.qavg` を更新し、アイドル状態を解除します。
 - **3 つのフラグ（`ecn`、`harddrop`、`nodrop`）の組み合わせ**:
-  - `RED_PROB_MARK`（$q_{\min} \le q_{\text{avg}} < q_{\max}$ での確率的ヒット）:
+  - `RED_PROB_MARK`（$$q_{\min} \le q_{\text{avg}} < q_{\max}$$ での確率的ヒット）:
     - `ecn` 無効なら `prob_drop` を増やして `goto congestion_drop;`（早期ドロップ、理由は `QDISC_DROP_CONGESTED`）。
     - `ecn` 有効なら `INET_ECN_set_ce(skb)` を試みます。パケットが ECT(0)/ECT(1) であれば `prob_mark` を増やしてそのまま子 Qdisc へエンキューします。もしパケットが Non-ECT（ECN 非対応）だった場合、通常は `prob_drop` としてドロップしますが、`nodrop` フラグ（`TC_RED_NODROP`）が付いていればドロップせずにそのまま通過させます。
-  - `RED_HARD_MARK`（$q_{\text{avg}} \ge q_{\max}$ での強制ヒット）:
-    - ここで `harddrop` フラグ（`TC_RED_HARDDROP`）が効きます。`harddrop` が指定されていれば、たとえ ECN 対応パケットであっても CE マークではなく強制ドロップ（`forced_drop`、理由は `QDISC_DROP_OVERLIMIT`）します。`harddrop` がなければ、$q_{\text{avg}} \ge q_{\max}$ でも ECN 対応パケットには CE マーク（`forced_mark`）を付けて通します。
+  - `RED_HARD_MARK`（$$q_{\text{avg}} \ge q_{\max}$$ での強制ヒット）:
+    - ここで `harddrop` フラグ（`TC_RED_HARDDROP`）が効きます。`harddrop` が指定されていれば、たとえ ECN 対応パケットであっても CE マークではなく強制ドロップ（`forced_drop`、理由は `QDISC_DROP_OVERLIMIT`）します。`harddrop` がなければ、$$q_{\text{avg}} \ge q_{\max}$$ でも ECN 対応パケットには CE マーク（`forced_mark`）を付けて通します。
 - **`tcf_qevent_handle()`（`qe_mark` / `qe_early_drop`）**: スイッチ ASIC オフロード環境などで「早期ドロップされたパケットや ECN マークされたパケットを `tc action mirred` で監視ポートへミラーリング・サンプリングする」ためのフック（qevent）です（コミット `aee9caa03fc3`）。なお `len = qdisc_pkt_len(skb)` を `tcf_qevent_handle()` の **後**（L138）で読んでいるのは、`tcf_qevent_handle()` がパケットを drop / redirect して `skb` を解放した後に触ってしまう UAF を防ぐためです（コミット `8bdc2acd420c`）。
 - **L139-148**: 子 Qdisc（`bfifo`）にエンキューします。もし `qavg` がまだ立ち上がる前の急激な大バーストで子 `bfifo` の物理上限 `limit` にぶつかってドロップした場合は、早期ドロップ（`prob_drop` / `forced_drop`）とは区別して `q->stats.pdrop`（physical drop）にカウントされます。
 - そして `red_dequeue()`（[net/sched/sch_red.c#L159](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_red.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n159)）では、子 Qdisc から `qdisc_dequeue_peeked(child)` でパケットを取り出し、空になったら `red_start_of_idle_period(&q->vars)` で `qidlestart = ktime_get()` を記録します。
@@ -1344,8 +1344,8 @@ struct netem_skb_cb {
 ```
 
 - **3 つの内部キューの役割分担**: NetEm はパケットの性質に応じて 3 つの場所を使い分けます。
-  1. **線形リスト `t_head` / `t_tail`（`tfifo` の高速パス）**: ジッタ（`jitter`）が 0 のときや、ジッタがあっても今回のパケットの送出予定時刻 `time_to_send` が直前の末尾パケット `t_tail` の `time_to_send` 以上である（順序が逆転しない）ときは、赤黒木を使わず単方向リスト `t_head` $\to \dots \to$ `t_tail` に $O(1)$ で追加します。
-  2. **赤黒木 `t_root`（`tfifo` のジッタ・順序逆転パス）**: 大きなジッタ等によって、後から到着したパケットの `time_to_send` が `t_tail` の `time_to_send` より前になったときだけ、赤黒木 `t_root` に $O(\log N)$ で挿入します（コミット `d66280b12bd7`）。なお `struct sk_buff` の中で `skb->rbnode` は `skb->next` / `skb->prev` / `skb->tstamp`（および `skb->dev`）と union を共有しているため、赤黒木に入れている間は送出予定時刻を `skb->tstamp` ではなく `qdisc_skb_cb(skb)->data`（`netem_skb_cb(skb)->time_to_send`）に退避し、デキュー時に `skb->dev = qdisc_dev(sch)` を復元します。
+  1. **線形リスト `t_head` / `t_tail`（`tfifo` の高速パス）**: ジッタ（`jitter`）が 0 のときや、ジッタがあっても今回のパケットの送出予定時刻 `time_to_send` が直前の末尾パケット `t_tail` の `time_to_send` 以上である（順序が逆転しない）ときは、赤黒木を使わず単方向リスト `t_head` $$\to \dots \to$$ `t_tail` に $$O(1)$$ で追加します。
+  2. **赤黒木 `t_root`（`tfifo` のジッタ・順序逆転パス）**: 大きなジッタ等によって、後から到着したパケットの `time_to_send` が `t_tail` の `time_to_send` より前になったときだけ、赤黒木 `t_root` に $$O(\log N)$$ で挿入します（コミット `d66280b12bd7`）。なお `struct sk_buff` の中で `skb->rbnode` は `skb->next` / `skb->prev` / `skb->tstamp`（および `skb->dev`）と union を共有しているため、赤黒木に入れている間は送出予定時刻を `skb->tstamp` ではなく `qdisc_skb_cb(skb)->data`（`netem_skb_cb(skb)->time_to_send`）に退避し、デキュー時に `skb->dev = qdisc_dev(sch)` を復元します。
   3. **即時送出キュー `sch->q`**: `gap` と `reorder` による明示的なリオーダで「遅延させずに先頭へ割り込ませる」パケットは、`tfifo` ではなく標準キュー `&sch->q` の先頭（`__qdisc_enqueue_head()`）に入れられ、デキュー時に最優先で取り出されます。
 
 `tfifo_enqueue()`（[net/sched/sch_netem.c#L401](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n401)）を一行ずつ確認しましょう。
@@ -1383,7 +1383,7 @@ static void tfifo_enqueue(struct sk_buff *nskb, struct Qdisc *sch)
 }
 ```
 
-- 固定遅延（例: `tc qdisc add ... netem delay 50ms`）やレート制限（`rate`）のみのテストでは、100% のパケットが `if (!q->t_tail || tnext >= netem_skb_cb(q->t_tail)->time_to_send)` の分岐を通るため、何万パケット溜まっても赤黒木の回転やリバランスは一度も起きず、単純な FIFO と同じ $O(1)$ で動作します。
+- 固定遅延（例: `tc qdisc add ... netem delay 50ms`）やレート制限（`rate`）のみのテストでは、100% のパケットが `if (!q->t_tail || tnext >= netem_skb_cb(q->t_tail)->time_to_send)` の分岐を通るため、何万パケット溜まっても赤黒木の回転やリバランスは一度も起きず、単純な FIFO と同じ $$O(1)$$ で動作します。
 - 逆にジッタで追い越しが発生したパケットは `else` 節の赤黒木 `q->t_root` に入り、デキュー時の `netem_peek()`（[net/sched/sch_netem.c#L701](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n701)）が `skb_rb_first(&q->t_root)` と `q->t_head` の `time_to_send` を比べて小さい方を先に取り出します。つまり **ジッタ自体が自然なパケットリオーダを引き起こす** 仕組みになっています。
 
 ---
@@ -1423,9 +1423,9 @@ static s64 tabledist(s64 mu, s32 sigma,
 ```
 
 - `sigma`（`jitter`）が 0 なら常に平均 `mu`（`latency`）を返します。
-- `get_crandom(state, prng)`（[net/sched/sch_netem.c#L200](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n200)）は、相関係数 $\rho$（`state->rho`）が指定されていれば前回の乱数値 `state->last` との一次結合 $\text{ans} = ((2^{32} - \rho)\cdot\text{rnd} + \rho\cdot\text{last}) \gg 32$ を返し、指定されていなければ Qdisc 固有のシード付き擬似乱数生成器 `prandom_u32_state(&prng->prng_state)` を返します。なお `prng.seed` は `tc qdisc add ... netem ... seed 12345` で明示指定できるため、**テスト環境で全く同じ乱数系列（同じロス・同じジッタ）を決定論的に再現** できます（コミット `4072d97ddc44`、`986afaf80994`）。
-- 分布テーブル `dist` が指定されていない場合（`tc ... netem delay 100ms 10ms`）は、区間 $[\mu - \sigma,\, \mu + \sigma)$ の **一様分布** になります。
-- `distribution normal` や `distribution pareto` が指定されている場合は、`iproute2` が `/usr/lib/tc/*.dist` から読み込んで渡した `s16` 配列 `dist->table[]`（平均 0・標準偏差 `NETEM_DIST_SCALE` = 8192 に正規化された逆累積分布テーブル）を `rnd % dist->size` で引き、$\mu + \frac{\sigma \cdot t}{8192}$ をオーバーフローしないよう商と余りに分けて計算します。
+- `get_crandom(state, prng)`（[net/sched/sch_netem.c#L200](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n200)）は、相関係数 $$\rho$$（`state->rho`）が指定されていれば前回の乱数値 `state->last` との一次結合 $$\text{ans} = ((2^{32} - \rho)\cdot\text{rnd} + \rho\cdot\text{last}) \gg 32$$ を返し、指定されていなければ Qdisc 固有のシード付き擬似乱数生成器 `prandom_u32_state(&prng->prng_state)` を返します。なお `prng.seed` は `tc qdisc add ... netem ... seed 12345` で明示指定できるため、**テスト環境で全く同じ乱数系列（同じロス・同じジッタ）を決定論的に再現** できます（コミット `4072d97ddc44`、`986afaf80994`）。
+- 分布テーブル `dist` が指定されていない場合（`tc ... netem delay 100ms 10ms`）は、区間 $$[\mu - \sigma,\, \mu + \sigma)$$ の **一様分布** になります。
+- `distribution normal` や `distribution pareto` が指定されている場合は、`iproute2` が `/usr/lib/tc/*.dist` から読み込んで渡した `s16` 配列 `dist->table[]`（平均 0・標準偏差 `NETEM_DIST_SCALE` = 8192 に正規化された逆累積分布テーブル）を `rnd % dist->size` で引き、$$\mu + \frac{\sigma \cdot t}{8192}$$ をオーバーフローしないよう商と余りに分けて計算します。
 
 次に、3 種類のパケットロス生成器を切り替える `loss_event()`（[net/sched/sch_netem.c#L307](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n307)）です。
 
@@ -1448,11 +1448,11 @@ static bool loss_event(struct netem_sched_data *q)
 }
 ```
 
-- **`CLG_RANDOM`（`loss random <percent> [<corr>]`）**: $0 \sim 2^{32}-1$ にスケーリングされた `q->loss` と `get_crandom()` を比較する最も基本的な独立（または簡易相関付き）ランダムロスです。
+- **`CLG_RANDOM`（`loss random <percent> [<corr>]`）**: $$0 \sim 2^{32}-1$$ にスケーリングされた `q->loss` と `get_crandom()` を比較する最も基本的な独立（または簡易相関付き）ランダムロスです。
 - **`CLG_4_STATES`（`loss state p13 [p31 [p32 [p23 [p14]]]]`、`loss_4state()`（[net/sched/sch_netem.c#L220](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n220)））**:
   - 疎なロス期間（Gap Period）と密なバーストロス期間（Burst Period）をモデル化する 4 状態マルコフ連鎖です。状態 1（`TX_IN_GAP_PERIOD`：通常送信）、状態 2（`TX_IN_BURST_PERIOD`：バースト中の送信成功）、状態 3（`LOST_IN_BURST_PERIOD`：バーストロス）、状態 4（`LOST_IN_GAP_PERIOD`：孤立単発ロス）の 4 状態間を遷移確率 `p13`, `p31`, `p32`, `p23`, `p14` で移動します。
 - **`CLG_GILB_ELL`（`loss gemodel p [r [1-h [1-k]]]`、`loss_gilb_ell()`（[net/sched/sch_netem.c#L285](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_netem.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n285)））**:
-  - 無線回線やフェージング環境でよく使われる **Gilbert-Elliott（ギルバート・エリオット）2 状態モデル** です。`GOOD_STATE`（低ロス状態、ロス率 $1-k = a_4$）と `BAD_STATE`（バースト悪化状態、ロス率 $1-h = 1 - a_3$）の間を遷移確率 $p = a_1$（Good $\to$ Bad）と $r = a_2$（Bad $\to$ Good）で往復します。TCP の SACK ロス回復や RACK-TLP が「1 ウィンドウ内の連続バーストロス」に耐えられるかをテストするときに非常に重宝します。
+  - 無線回線やフェージング環境でよく使われる **Gilbert-Elliott（ギルバート・エリオット）2 状態モデル** です。`GOOD_STATE`（低ロス状態、ロス率 $$1-k = a_4$$）と `BAD_STATE`（バースト悪化状態、ロス率 $$1-h = 1 - a_3$$）の間を遷移確率 $$p = a_1$$（Good $$\to$$ Bad）と $$r = a_2$$（Bad $$\to$$ Good）で往復します。TCP の SACK ロス回復や RACK-TLP が「1 ウィンドウ内の連続バーストロス」に耐えられるかをテストするときに非常に重宝します。
 
 ---
 
@@ -1671,7 +1671,7 @@ static int netem_enqueue(struct sk_buff *skb, struct Qdisc *sch,
   - その際、ツリー内に複数の NetEm があっても無限に複製ループしないよう、`skb2->tc_depth++` をインクリメントし、L474 の `skb->tc_depth == 0` チェックで 2 回目の複製を禁止しています（2026 年 5 月のコミット `9552b11e3eda`）。また、再エンキューされた `skb2` は独立に `tabledist()` を通るため、ジッタがあれば元パケットとは異なる時刻に届きます。
 - **L588-624（レート制限 `q->rate` とシリアライズ遅延の計算）**:
   - `q->rate`（バイト/秒）が設定されている場合、先行するすべてのキュー（`sch->q.tail`、`q->t_root` の最大ノード `skb_rb_last()`、`q->t_tail`）の中で最も遅い送出予定時刻 `last->time_to_send` を探します。
-  - 先行パケットがまだ送出待ち（`last->time_to_send > now`）であれば、リンクが空く時刻 `last->time_to_send` を新たな基準点 `now` とし、その待ち時間分だけ伝播遅延 `delay` を差し引いたうえで、今回のパケット自身のシリアライズ時間 `packet_time_ns(qdisc_pkt_len(skb), q)`（$\text{len} / \text{rate}$、パケットオーバーヘッドや ATM 等のセル分割オーバーヘッドも考慮）を加算します。これにより、伝播遅延（`latency`）とボトルネック回線の直列化遅延（`rate`）が物理法則どおりに合成されます。
+  - 先行パケットがまだ送出待ち（`last->time_to_send > now`）であれば、リンクが空く時刻 `last->time_to_send` を新たな基準点 `now` とし、その待ち時間分だけ伝播遅延 `delay` を差し引いたうえで、今回のパケット自身のシリアライズ時間 `packet_time_ns(qdisc_pkt_len(skb), q)`（$$\text{len} / \text{rate}$$、パケットオーバーヘッドや ATM 等のセル分割オーバーヘッドも考慮）を加算します。これにより、伝播遅延（`latency`）とボトルネック回線の直列化遅延（`rate`）が物理法則どおりに合成されます。
 - **L632-643（明示的リオーダ `else` 節）**:
   - `q->gap` 個以上の間隔が空いた（`q->counter >= q->gap - 1`）状態で `q->reorder` の確率に当選すると、`cb->time_to_send = ktime_get_ns()`（遅延ゼロ）として `q->counter = 0` にリセットし、`__qdisc_enqueue_head(skb, &sch->q)` で即時送出キューの先頭にねじ込みます。先行パケットが `tfifo` の中で `latency` 分だけ待っている間に、このパケットだけが即座にデキューされて追い越していくため、確実なパケットリオーダが発生します。
 
@@ -1808,7 +1808,7 @@ tc -s qdisc show dev veth0
 > [!WARNING]
 > **NetEm を送信ホストに直接置くときの TSQ / バッファ上限の落とし穴**
 >
-> 1. **`limit` の既定値は 1000 パケットしかない**: 1 Gbps・片道 50 ms（BDP $\approx 4166$ パケット）の実験で `limit` を指定し忘れると、1000 パケットで Tail-drop が起きてしまい、1 Gbps の帯域を決して使い切れません。高 BDP をエミュレートするときは必ず `limit 100000` のように BDP の 2 倍以上の `limit` を指定してください。
+> 1. **`limit` の既定値は 1000 パケットしかない**: 1 Gbps・片道 50 ms（BDP $$\approx 4166$$ パケット）の実験で `limit` を指定し忘れると、1000 パケットで Tail-drop が起きてしまい、1 Gbps の帯域を決して使い切れません。高 BDP をエミュレートするときは必ず `limit 100000` のように BDP の 2 倍以上の `limit` を指定してください。
 > 2. **送信元ホスト直付け vs 中継 Namespace（veth / ルータ）**: Step 16 で見たように、単体の `netem` は `skb_orphan_partial()` を呼ぶため TSQ（`net.ipv4.tcp_limit_output_bytes`）をブロックしません。しかし、**`htb` や `tbf` の子として `netem` をぶら下げたり、GSO 分割やトンネルデバイスを組み合わせたりすると**、親 Qdisc に入る段階や `sch_fq` と併用する構成で TSQ やソケット送信バッファが効き、想定よりスループットが頭打ちになることがあります。また `skb_orphan_partial()` が走ることで、本番の NIC ドライバとは `sk_wmem_alloc` の解放タイミングが変わります。したがって、TCP 輻輳制御や TSQ 自身の正確なベンチマークを行う際は、**送信元 `netns` と受信先 `netns` の間に中継用の第 3 の `netns`（または `veth` ペアの受信側・ブリッジ）を挟み、フォワーディング経路上に `netem` を配置する** のが鉄則です。
 
 ---
@@ -1819,14 +1819,14 @@ CoDel（RFC 8289）、FQ-CoDel（RFC 8290）、RED（Floyd & Jacobson 1993 / Ada
 
 | 項目 | 論文 / RFC の記述 | Linux の実装 | 理由・背景 |
 | --- | --- | --- | --- |
-| CoDel の時計の単位 | [RFC 8289 §4](https://www.rfc-editor.org/rfc/rfc8289#section-4) は時刻表現を実装依存とする | `u32 codel_time_t`（1 ティック = $2^{10}\ \text{ns} = 1024\ \text{ns}$） | `ktime_get_ns() >> 10` の 1 命令で変換でき、`skb->cb` と `struct fq_codel_flow` を 64 バイト以内に収めるため |
-| CoDel の $1/\sqrt{\text{count}}$ 計算 | $\text{interval} / \sqrt{\text{count}}$（または事前計算テーブル） | 16 ビット固定小数点 `rec_inv_sqrt` と `codel_Newton_step()` + `reciprocal_scale()` | テーブル参照のキャッシュミスと除算命令（`div`）の両方を排除するため |
+| CoDel の時計の単位 | [RFC 8289 §4](https://www.rfc-editor.org/rfc/rfc8289#section-4) は時刻表現を実装依存とする | `u32 codel_time_t`（1 ティック = $$2^{10}\ \text{ns} = 1024\ \text{ns}$$） | `ktime_get_ns() >> 10` の 1 命令で変換でき、`skb->cb` と `struct fq_codel_flow` を 64 バイト以内に収めるため |
+| CoDel の $$1/\sqrt{\text{count}}$$ 計算 | $$\text{interval} / \sqrt{\text{count}}$$（または事前計算テーブル） | 16 ビット固定小数点 `rec_inv_sqrt` と `codel_Newton_step()` + `reciprocal_scale()` | テーブル参照のキャッシュミスと除算命令（`div`）の両方を排除するため |
 | CoDel の 1 デキューあたり最大ドロップ数 | RFC 8289 では `now >= drop_next` の限り無制限に `while` ループ | `CODEL_MAX_DROPS_PER_DEQUEUE`（256 個）で打ち切り、`drop_next` を `now` 基準に再同期、かつ制御則の増分を最小 1 ティックにクランプ | 極小 `interval` や長いアイドルギャップの後に 1 回のデキューで数万パケットを捨ててソフトロックアップするのを防ぐため（`7f4a5ec6258f`） |
 | CoDel の浅い ECN 閾値 | RFC 8289 には存在しない | `ce_threshold` + `ce_threshold_selector` / `ce_threshold_mask` | DCTCP や L4S（ECT(1)）のように `interval`（100 ms）を待たず数ミリ秒で即時 CE マークするトラフィックを混在させるため |
 | FQ-CoDel の `memory_limit` 会計 | [RFC 8290 §4.1](https://www.rfc-editor.org/rfc/rfc8290#section-4.1) は全パケットのメモリを追跡 | `is_skb_wmem(skb)` が真（ローカルソケット送信）なら `mem_usage = 0` | ローカル TCP/UDP ソケットは `sk_wmem_alloc` と TSQ で既に制限されており、32 MiB 上限で二重に落とすのを防ぐため（`150061a20651`） |
 | FQ-CoDel の CoDel 最小バックログ判定 | フローまたはキューのバックログが 1 MTU 以下ならドロップしない | 個別フローの `q->backlogs[idx]` ではなく Qdisc 全体の `sch->qstats.backlog <= params->mtu` で判定 | 多数のフローが少しずつ溜まって全体で大きな遅延を作っているときに、個別フローが 1 MTU 以下だからといって免除すると遅延を抑えられないため（`865ec5523dad`） |
-| RED の確率関数と gentle モード | ARED 論文は $q_{\max} \sim 2 q_{\max}$ で $\max_p \to 1.0$ に増やす gentle モードを推奨 | カーネル（`include/net/red.h`）は $q_{\text{avg}} \ge q_{\max}$ で即 `RED_HARD_MARK`（ただし `iproute2` 側が gentle 指定時に `qth_max` を 2 倍に広げて設定する） | カーネル内のデータパス分岐を最小化し、`qR` キャッシュ方式の「除算なし」判定を維持するため |
-| RED の乱数と確率評価 | パケットごとに一様乱数を引き $p_a = p_b / (1 - \text{count}\cdot p_b)$ と比較 | ドロップ時に 1 回だけ `qR = red_random(p)` を引き、`((qavg - qth_min) >> Wlog) * qcount >= qR` で判定 | Floyd & Jacobson 1993 Fig. 17 の除算なしアルゴリズムを採用し、パケットごとの PRNG 呼び出しと除算を省くため |
+| RED の確率関数と gentle モード | ARED 論文は $$q_{\max} \sim 2 q_{\max}$$ で $$\max_p \to 1.0$$ に増やす gentle モードを推奨 | カーネル（`include/net/red.h`）は $$q_{\text{avg}} \ge q_{\max}$$ で即 `RED_HARD_MARK`（ただし `iproute2` 側が gentle 指定時に `qth_max` を 2 倍に広げて設定する） | カーネル内のデータパス分岐を最小化し、`qR` キャッシュ方式の「除算なし」判定を維持するため |
+| RED の乱数と確率評価 | パケットごとに一様乱数を引き $$p_a = p_b / (1 - \text{count}\cdot p_b)$$ と比較 | ドロップ時に 1 回だけ `qR = red_random(p)` を引き、`((qavg - qth_min) >> Wlog) * qcount >= qR` で判定 | Floyd & Jacobson 1993 Fig. 17 の除算なしアルゴリズムを採用し、パケットごとの PRNG 呼び出しと除算を省くため |
 
 ---
 
@@ -1858,7 +1858,7 @@ CoDel（RFC 8289）、FQ-CoDel（RFC 8290）、RED（Floyd & Jacobson 1993 / Ada
 
 - Linux 2.6.8（2004 年）に Stephen Hemminger が NIST Net に触発されて `sch_netem` を実装しました。
 - `f2f872f9272a` "netem: Introduce skb_orphan_partial() helper"（Eric Dumazet, 2013-07-30）: NetEm の遅延キューが TCP Small Queues（TSQ）を詰まらせないよう、かつ下流の `sch_fq` 等が `skb->sk` を参照できるよう `skb_orphan_partial()` を導入しました。
-- `aec0a40a6f78` "netem: use rb tree to implement the time queue"（Eric Dumazet, 2013-06-28）と `d66280b12bd7` "net: netem: use a list in addition to rbtree"（Peter Oskolkov, 2018-12-04）: 大量パケット保持時に $O(N)$ かかっていた線形リスト探索を赤黒木 `t_root` に置き換え、さらに順序が逆転しない通常ケースでは単方向リスト `t_head` / `t_tail` に $O(1)$ で繋ぐ現在のハイブリッド `tfifo` 構造を完成させました。
+- `aec0a40a6f78` "netem: use rb tree to implement the time queue"（Eric Dumazet, 2013-06-28）と `d66280b12bd7` "net: netem: use a list in addition to rbtree"（Peter Oskolkov, 2018-12-04）: 大量パケット保持時に $$O(N)$$ かかっていた線形リスト探索を赤黒木 `t_root` に置き換え、さらに順序が逆転しない通常ケースでは単方向リスト `t_head` / `t_tail` に $$O(1)$$ で繋ぐ現在のハイブリッド `tfifo` 構造を完成させました。
 - `4072d97ddc44` "netem: add prng attribute to netem_sched_data"（François Michel, 2023-08-15）と `986afaf80994`（Stephen Hemminger, 2026-04-17）: 再現可能なプロトコルテストのためにシード指定可能な `prng` を導入しました。
 - `d64cb81dcbd5`（Yucheng Lu, 2026-03-31）、`e8be7cdedc41` "net/sched: netem: handle multi-segment skb in corruption"、`9371b229a1ce` "net/sched: netem: reorder struct netem_sched_data"、`a2f6ed7b4873` "net/sched: netem: add per-impairment extended statistics"（いずれも Stephen Hemminger, 2026-05-09）、`9552b11e3eda` "net/sched: fix packet loop on netem when duplicate is on"（Jamal Hadi Salim, 2026-05-25）: 非線形パケット破損時の `skb_linearize()` 対応、`struct netem_sched_data` のキャッシュライン再編、イベント別統計 `tc_netem_xstats` の追加、および `skb->tc_depth` による複製無限ループ防止です。
 
@@ -1875,7 +1875,7 @@ CoDel（RFC 8289）、FQ-CoDel（RFC 8290）、RED（Floyd & Jacobson 1993 / Ada
 ### キャッシュライン設計
 
 - **`fq_codel`**:
-  - `struct fq_codel_flow` は 60 バイト（$\le 64$ バイト = 1 キャッシュライン）に厳密に抑えられています。特定のフローのエンキュー・デキューでは、そのバケットの 1 キャッシュラインだけを触れば `head`, `tail`, `flowchain`, `deficit`, `cvars` のすべてにアクセスできます。
+  - `struct fq_codel_flow` は 60 バイト（$$\le 64$$ バイト = 1 キャッシュライン）に厳密に抑えられています。特定のフローのエンキュー・デキューでは、そのバケットの 1 キャッシュラインだけを触れば `head`, `tail`, `flowchain`, `deficit`, `cvars` のすべてにアクセスできます。
   - `u32 *backlogs` を別配列に切り出すことで、`fq_codel_drop()` の 1024 バケット全走査が 4 KB（64 キャッシュライン）の連続メモリアクセスで終わり、さらに最大 64 パケットのバッチ廃棄によって 1 ドロップあたり 1 キャッシュライン以下に償却されます。
   - `sch_codel.c` の `dequeue_func()`（[net/sched/sch_codel.c#L39](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/sched/sch_codel.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n39)）では、デキュー直後にドライバや GSO が必ず参照する `skb_shinfo(skb)` に備えて `prefetch(&skb->end)` を発行しています。
 - **`netem`**:
@@ -1890,13 +1890,13 @@ CoDel（RFC 8289）、FQ-CoDel（RFC 8290）、RED（Floyd & Jacobson 1993 / Ada
 
 | 処理 | 素朴な式 | カーネル内の実装 |
 | --- | --- | --- |
-| CoDel の時刻取得 | $\text{ns} / 1000\ (\mu\text{s})$ | `ktime_get_ns() >> 10`（1024 ns 単位） |
-| CoDel の逆平方根 | $1 / \sqrt{\text{count}}$ | Q0.32 固定小数点ニュートン法 `codel_Newton_step()`（乗算 2 回＋シフト） |
-| CoDel の制御則 | $\text{interval} / \sqrt{\text{count}}$ | `reciprocal_scale(interval, rec_inv_sqrt << 16)`（64 ビット乗算＋`>> 32`） |
-| FQ-CoDel のバケット選択 | $\text{hash} \bmod \text{flows}_{\text{cnt}}$ | `reciprocal_scale(skb_get_hash(skb), q->flows_cnt)` |
-| RED の EWMA 更新 | $(1 - W) q_{\text{avg}} + W q$ | `v->qavg + (backlog - (v->qavg >> p->Wlog))`（`v->qavg` を $2^{\text{Wlog}}$ 倍で保持） |
-| RED の乱数スケーリング | $\text{rnd} / (\max_p / \Delta)$ | 事前計算した `p->max_P_reciprocal` による `reciprocal_divide()` |
-| NetEm の ATM/セル分割計算 | $\text{len} / \text{cell}_{\text{size}}$ | 事前計算した `q->cell_size_reciprocal` による `reciprocal_divide()` |
+| CoDel の時刻取得 | $$\text{ns} / 1000\ (\mu\text{s})$$ | `ktime_get_ns() >> 10`（1024 ns 単位） |
+| CoDel の逆平方根 | $$1 / \sqrt{\text{count}}$$ | Q0.32 固定小数点ニュートン法 `codel_Newton_step()`（乗算 2 回＋シフト） |
+| CoDel の制御則 | $$\text{interval} / \sqrt{\text{count}}$$ | `reciprocal_scale(interval, rec_inv_sqrt << 16)`（64 ビット乗算＋`>> 32`） |
+| FQ-CoDel のバケット選択 | $$\text{hash} \bmod \text{flows}_{\text{cnt}}$$ | `reciprocal_scale(skb_get_hash(skb), q->flows_cnt)` |
+| RED の EWMA 更新 | $$(1 - W) q_{\text{avg}} + W q$$ | `v->qavg + (backlog - (v->qavg >> p->Wlog))`（`v->qavg` を $$2^{\text{Wlog}}$$ 倍で保持） |
+| RED の乱数スケーリング | $$\text{rnd} / (\max_p / \Delta)$$ | 事前計算した `p->max_P_reciprocal` による `reciprocal_divide()` |
+| NetEm の ATM/セル分割計算 | $$\text{len} / \text{cell}_{\text{size}}$$ | 事前計算した `q->cell_size_reciprocal` による `reciprocal_divide()` |
 
 ---
 
@@ -1953,7 +1953,7 @@ perf script
 
 <details><summary>答え</summary>
 
-NAPI のポーリング周期や一時的なバーストによって、`ping` の 1 パケット目（時刻 $t_0$）のデキュー時滞在時間 `ldelay` がたまたま `target`（5 ms）を超えたとします。`codel_should_drop()` は `first_above_time = t_0 + 100ms` をセットして `false` を返し、1 パケット目は無事送信されます。直後に次のデキューでこの `ping` のバケットから `dequeue_func()` が呼ばれると、バケットは空（`skb == NULL`）なので `if (!skb)` に入ります。もしここで `first_above_time = 0` にリセットしないと、バケットは空のまま `first_above_time = t_0 + 100ms` を保持し続けます。200 ms 後（$t_0 + 200\text{ms}$）に 2 パケット目の `ping` が到着し、その滞在時間が再び 5 ms をわずかに超えていた場合、`codel_should_drop()` は `first_above_time != 0` かつ `now (t_0 + 200ms) > first_above_time (t_0 + 100ms)` と判定し、「200 ms 間ずっとキューが詰まり続けていた」と誤認して 2 パケット目の `ping` を即座にドロップしてしまいます。これが 2026 年 3 月のコミット `815980fe6dbb` で修正されたバグです。
+NAPI のポーリング周期や一時的なバーストによって、`ping` の 1 パケット目（時刻 $$t_0$$）のデキュー時滞在時間 `ldelay` がたまたま `target`（5 ms）を超えたとします。`codel_should_drop()` は `first_above_time = t_0 + 100ms` をセットして `false` を返し、1 パケット目は無事送信されます。直後に次のデキューでこの `ping` のバケットから `dequeue_func()` が呼ばれると、バケットは空（`skb == NULL`）なので `if (!skb)` に入ります。もしここで `first_above_time = 0` にリセットしないと、バケットは空のまま `first_above_time = t_0 + 100ms` を保持し続けます。200 ms 後（$$t_0 + 200\text{ms}$$）に 2 パケット目の `ping` が到着し、その滞在時間が再び 5 ms をわずかに超えていた場合、`codel_should_drop()` は `first_above_time != 0` かつ `now (t_0 + 200ms) > first_above_time (t_0 + 100ms)` と判定し、「200 ms 間ずっとキューが詰まり続けていた」と誤認して 2 パケット目の `ping` を即座にドロップしてしまいます。これが 2026 年 3 月のコミット `815980fe6dbb` で修正されたバグです。
 
 </details>
 
@@ -1994,8 +1994,8 @@ NAPI のポーリング周期や一時的なバーストによって、`ping` �
 ## 11. まとめ
 
 - **なぜ AQM が必要か**: 巨大な Tail-drop キューは、一時的なバーストを吸収する「良いキュー（Good Queue）」だけでなく、ロスベース TCP が作り出す定常的な滞留「悪いキュー（Standing Queue / Bufferbloat）」を許容してしまい、数百ミリ秒の遅延増大、複数フローの同時ドロップによる **TCP グローバル同期**、およびインタラクティブ通信の **HoL ブロッキング** を引き起こします。
-- **CoDel（RFC 8289）**: エンキュー時に 1024 ns 単位のタイムスタンプ `codel_set_enqueue_time()` を記録し、**デキュー時** に滞在時間 `ldelay` を測ります。`ldelay >= target`（5 ms）が `interval`（100 ms）連続したら `dropping` 状態に入り、固定小数点ニュートン・ラフソン法 `codel_Newton_step()` で更新する $1/\sqrt{\text{count}}$ を用いて $t_{\text{next}} = t + \text{interval}/\sqrt{\text{count}}$ の間隔で先頭ドロップ（または ECN CE マーク）を行います。
-- **FQ-CoDel（RFC 8290）**: 1024 個の SFQ ハッシュバケット（1 バケット 60 バイト $\le 1$ キャッシュライン）と、`new_flows` / `old_flows` の 2 本の DRR リストを組み合わせ、スパースなフローを常にバルクフローより優先します。各バケットが独立した CoDel 状態 `cvars` を持ち、全体上限超過時には `fq_codel_drop()` が 4 KB の `backlogs[]` 配列を走査して最大の Fat Flow から最大 64 パケットをバッチ廃棄します。
+- **CoDel（RFC 8289）**: エンキュー時に 1024 ns 単位のタイムスタンプ `codel_set_enqueue_time()` を記録し、**デキュー時** に滞在時間 `ldelay` を測ります。`ldelay >= target`（5 ms）が `interval`（100 ms）連続したら `dropping` 状態に入り、固定小数点ニュートン・ラフソン法 `codel_Newton_step()` で更新する $$1/\sqrt{\text{count}}$$ を用いて $$t_{\text{next}} = t + \text{interval}/\sqrt{\text{count}}$$ の間隔で先頭ドロップ（または ECN CE マーク）を行います。
+- **FQ-CoDel（RFC 8290）**: 1024 個の SFQ ハッシュバケット（1 バケット 60 バイト $$\le 1$$ キャッシュライン）と、`new_flows` / `old_flows` の 2 本の DRR リストを組み合わせ、スパースなフローを常にバルクフローより優先します。各バケットが独立した CoDel 状態 `cvars` を持ち、全体上限超過時には `fq_codel_drop()` が 4 KB の `backlogs[]` 配列を走査して最大の Fat Flow から最大 64 パケットをバッチ廃棄します。
 - **RED（Floyd & Jacobson 1993 / ARED 2001）**: エンキュー時に子 `bfifo` のバイトバックログから EWMA 平均キュー長 `qavg`（固定小数点 `Wlog` スケール）と `Stab[256]` によるアイドル減衰を計算し、`qth_min` と `qth_max` の間でキャッシュ乱数 `qR` を用いた除算なしの確率判定を行います。リンク速度に応じたパラメータ調整が難しいためホストの既定 Qdisc としては `fq_codel` に置き換えられましたが、スイッチ ASIC のハードウェアオフロード（WRED / `qevent`）では現在も使われています。
 - **NetEm（`sch_netem.c`）**: 単調増加するパケット用の単方向リスト `t_head` / `t_tail` と、ジッタで順序が逆転するパケット用の赤黒木 `t_root` を組み合わせたハイブリッド `tfifo` により、遅延・ジッタ（`tabledist()`）・3 種のロスモデル（ランダム、4 状態マルコフ、Gilbert-Elliott）・複製・破損・リオーダ・レート制限を高精度にエミュレートします。
 

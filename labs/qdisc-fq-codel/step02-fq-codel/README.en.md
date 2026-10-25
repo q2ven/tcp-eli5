@@ -204,16 +204,16 @@ if (sojourn < TARGET_NS) {
 The test script [`test.pkt`](test.pkt) demonstrates the real-world power of FQ-CoDel:
 
 1. **Flow A (Bulk Transfer)**:
-   - Socket 3 transmits 8 UDP packets (1,000 bytes each) at $t = 0$.
-   - Packet 1 departs immediately at $t = 0$. Flow A exhausts its credit ($1000 - 1028 \le 0$) and is demoted to `old_flows`, queuing the remaining 7 packets behind the 4 ms bottleneck rate.
+   - Socket 3 transmits 8 UDP packets (1,000 bytes each) at $$t = 0$$.
+   - Packet 1 departs immediately at $$t = 0$$. Flow A exhausts its credit ($$1000 - 1028 \le 0$$) and is demoted to `old_flows`, queuing the remaining 7 packets behind the 4 ms bottleneck rate.
 2. **Flow B (Sparse Interactive Traffic)**:
-   - While Flow A's queue is backlogged, socket 4 transmits a single 500-byte UDP packet at $t = 2\text{ ms}$.
+   - While Flow A's queue is backlogged, socket 4 transmits a single 500-byte UDP packet at $$t = 2\text{ ms}$$.
    - Because Flow B arrived from an idle state, it enters `new_flows`.
 3. **Sparse Flow Prioritization**:
-   - At the next bottleneck slot ($t = 4\text{ ms}$), FQ-CoDel checks `new_flows` first and **transmits Flow B's packet ahead of Flow A's queued packets**!
+   - At the next bottleneck slot ($$t = 4\text{ ms}$$), FQ-CoDel checks `new_flows` first and **transmits Flow B's packet ahead of Flow A's queued packets**!
 4. **Isolated CoDel Head-Drops**:
-   - Flow A continues transmitting packets P2 through P7 from $t = 8\text{ ms} \sim 28\text{ ms}$.
-   - At $t = 32\text{ ms}$, because Flow A's sojourn time exceeds `TARGET_NS (5 ms)` for over `INTERVAL_NS (20 ms)`, **Flow A's packet P8 is surgically head-dropped**.
+   - Flow A continues transmitting packets P2 through P7 from $$t = 8\text{ ms} \sim 28\text{ ms}$$.
+   - At $$t = 32\text{ ms}$$, because Flow A's sojourn time exceeds `TARGET_NS (5 ms)` for over `INTERVAL_NS (20 ms)`, **Flow A's packet P8 is surgically head-dropped**.
    - Sparse Flow B experiences zero packet loss and zero queuing delay!
 
 ### Running Tests

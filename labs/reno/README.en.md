@@ -39,7 +39,7 @@ Designed by Van Jacobson in the late 1980s, TCP Reno rests on a simple, powerful
 Why not increase by addition and also decrease by subtraction (AIAD)?
 Imagine two flows sharing a bottleneck link with a capacity of 30 packets: Flow A started earlier and holds `cwnd = 24`, whilst Flow B just joined with `cwnd = 6`.
 
-- If both flows increased by `+1` per RTT and subtracted `-5` on loss, the gap between them ($24 - 6 = 18$) would never shrink.
+- If both flows increased by `+1` per RTT and subtracted `-5` on loss, the gap between them ($$24 - 6 = 18$$) would never shrink.
 - With **Multiplicative Decrease (`× 1/2`)**, a packet loss cuts Flow A from `24 → 12` (giving up 12 packets), whilst Flow B only drops from `6 → 3` (giving up 3 packets). Their gap immediately halves from `18` to `9`!
 - Because both flows then grow at the exact same additive rate (`+1 / RTT`), repeating this cycle automatically drives them to converge to a **fair `15 : 15` split** of the bottleneck.
 
@@ -130,7 +130,7 @@ In Track 2, you will build **CUBIC**. Far from being a completely unrelated desi
 | **BPF Hooks Used** | `.init`, `.ssthresh`, `.cong_avoid`, `.set_state`, `.undo_cwnd` | **Identical** (plus `.cwnd_event` and `.pkts_acked` for HyStart) |
 | **Slow Start** | `+1` per ACKed packet (exponential) | **Identical to Reno** (plus HyStart early exit) |
 | **Loss Backoff (`.ssthresh`)** | Multiply by **`0.5`** (`cwnd / 2`) | Multiply by **`0.7`** (`cwnd * 717 / 1024`) |
-| **Congestion Avoidance (`.cong_avoid`)** | **Linear** (`+1` per RTT) | **Cubic polynomial curve** concave/convex around $W_{\max}$ |
+| **Congestion Avoidance (`.cong_avoid`)** | **Linear** (`+1` per RTT) | **Cubic polynomial curve** concave/convex around $$W_{\max}$$ |
 | **Undo (`.undo_cwnd`)** | `max(snd_cwnd, loss_cwnd)` | **Identical** (`max(snd_cwnd, loss_cwnd)`) |
 
 By completing the two steps in this Reno track first, you master both the BPF `tcp_congestion_ops` hook lifecycle and 80% of the foundation needed for CUBIC.
