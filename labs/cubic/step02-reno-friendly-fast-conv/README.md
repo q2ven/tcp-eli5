@@ -2,7 +2,7 @@
 
 ## 1. 学習ゴール
 
-このステップでは、Step 1 で実装した純粋な CUBIC の三次関数曲線（$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$）が実ネットワークで直面する 2 つの課題——「新しい競合フローが参入したときに帯域を譲るのが遅い問題」と「短 RTT・小ウィンドウ環境で従来の TCP Reno より遅くなる問題」——を解決する **Fast Convergence（高速収束）** と **Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）** を実装します。トラック全体の構成や各ステップの位置づけについては、[CUBIC トラック概要 (`../README.md`)](../README.md) を参照してください。
+このステップでは、Step 1 で実装した純粋な CUBIC の三次関数曲線（ $W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$）が実ネットワークで直面する 2 つの課題——「新しい競合フローが参入したときに帯域を譲るのが遅い問題」と「短 RTT・小ウィンドウ環境で従来の TCP Reno より遅くなる問題」——を解決する **Fast Convergence（高速収束）** と **Reno-friendly 領域（ $W_{\text{est}}$ / `tcp_cwnd`）** を実装します。トラック全体の構成や各ステップの位置づけについては、[CUBIC トラック概要 (`../README.md`)](../README.md) を参照してください。
 
 ---
 
@@ -21,7 +21,7 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 この仕組みは長距離・広帯域ネットワーク（LFN: Long Fat Network）で非常に高い性能を発揮しますが、実ネットワークでそのまま使うと以下の 2 つの問題が生じます。
 
 - **課題 1（新しいフローが参入したときの収束の遅さ）**: 既存の CUBIC フローが大きな $W_{\max}$ を維持しているボトルネックに新しいフローが参入すると、1 フローあたりの公平な帯域シェアは以前より小さくなります。しかし既存のフローは「以前の大きな $W_{\max}$」を目指して凹領域で急激にウィンドウを広げようとするため、帯域をなかなか譲らず、公平なシェアへ収束するまでに何度もパケットロスを繰り返してしまいます。
-- **課題 2（短 RTT・小 BDP 環境での TCP Reno に対する劣後）**: $W_{\text{cubic}}(t)$ は RTT の長さではなく「実時間 $t$（秒）」の関数であり、特にプラトー（$t \approx K$）付近では傾きがほぼゼロになります。そのため、RTT が短い環境（1 秒間に何十回も RTT が回る環境）や $W_{\max}$ が小さい環境では、「1 RTT ごとに確実にウィンドウを増やす」標準的な TCP Reno（AIMD）よりもウィンドウの成長が遅くなってしまいます。
+- **課題 2（短 RTT・小 BDP 環境での TCP Reno に対する劣後）**: $W_{\text{cubic}}(t)$ は RTT の長さではなく「実時間 $t$（秒）」の関数であり、特にプラトー（ $t \approx K$）付近では傾きがほぼゼロになります。そのため、RTT が短い環境（1 秒間に何十回も RTT が回る環境）や $W_{\max}$ が小さい環境では、「1 RTT ごとに確実にウィンドウを増やす」標準的な TCP Reno（AIMD）よりもウィンドウの成長が遅くなってしまいます。
 
 ### 2.2 アルゴリズム 1: Fast Convergence（高速収束）
 
@@ -29,7 +29,7 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 
 送信側は「新しい競合フローが参入して自分の使える帯域が減った」ことをどうすれば検知できるでしょうか？
 
-鍵になるのは、**今回のパケットロスが起きたときの `cwnd` と、前回のロス時に記録した `last_max_cwnd`（$W_{\max}$）の大小関係**です。
+鍵になるのは、**今回のパケットロスが起きたときの `cwnd` と、前回のロス時に記録した `last_max_cwnd`（ $W_{\max}$）の大小関係**です。
 
 - **$\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の最大ウィンドウ $W_{\max}$ まで無事に回復し、さらにその先（凸領域）を探索している途中でロスが起きています。つまりボトルネックの空き帯域は減っておらず、通常通り `last_max_cwnd = cwnd` と記録すれば十分です。
 - **$\text{cwnd} < \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の $W_{\max}$ に戻るよりも手前で再びパケットロスが起きています。これは「新しい競合フローが参入したため、自分が使える帯域の上限が前回の $W_{\max}$ より狭くなった」という強いシグナルです。
@@ -38,7 +38,7 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 
 $$W_{\max} = \text{cwnd} \times \frac{1 + \beta}{2}$$
 
-$\beta \approx 0.7$ のとき $\frac{1 + 0.7}{2} = 0.85$ となるため、$W_{\max}$ を `cwnd` の約 $85\%$ に先回りして下げることで、次のエポックではより低いウィンドウで早めにプラトーに入り、新規参入フローへ素早く帯域を譲ることができます。
+$\beta \approx 0.7$ のとき $\frac{1 + 0.7}{2} = 0.85$ となるため、 $W_{\max}$ を `cwnd` の約 $85\%$ に先回りして下げることで、次のエポックではより低いウィンドウで早めにプラトーに入り、新規参入フローへ素早く帯域を譲ることができます。
 
 ```text
 cwnd
@@ -55,7 +55,7 @@ cwnd
 
 #### 固定小数点での数式と具体例
 
-`starter.bpf.c` / `solution.bpf.c` では、浮動小数点を使わずに `BICTCP_BETA_SCALE = 1024` を分母とする固定小数点で $\beta$ を表しています（`beta = 717`、すなわち $717 / 1024 \approx 0.7002$）。したがって、$\frac{1 + \beta}{2}$ を掛ける整数演算は以下の式になります。
+`starter.bpf.c` / `solution.bpf.c` では、浮動小数点を使わずに `BICTCP_BETA_SCALE = 1024` を分母とする固定小数点で $\beta$ を表しています（`beta = 717`、すなわち $717 / 1024 \approx 0.7002$）。したがって、 $\frac{1 + \beta}{2}$ を掛ける整数演算は以下の式になります。
 
 $$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
@@ -69,7 +69,7 @@ $$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{
      - `last_max_cwnd = (14 * 1741) / 2048 = 24374 / 2048 = 11`（Fast Convergence がなければ `14`）
      - `ssthresh = (14 * 717) / 1024 = 9`
 
-### 2.3 アルゴリズム 2: Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）
+### 2.3 アルゴリズム 2: Reno-friendly 領域（ $W_{\text{est}}$ / `tcp_cwnd`）
 
 #### 直感とアイデア
 
@@ -81,7 +81,7 @@ $$W_{\text{target}} = \max\left(W_{\text{cubic}}(t),\, W_{\text{est}}\right)$$
 
 ここで非常に重要な疑問が生まれます。標準の TCP Reno は「ロス時に $\beta_{\text{reno}} = 0.5$ 倍に減らし、1 RTT ごとに $\alpha_{\text{reno}} = +1$ セグメント増やす」アルゴリズムです。では、CUBIC の $W_{\text{est}}$ も 1 RTT ごとに $+1$ 増やせばよいのでしょうか？
 
-答えは **No** です。なぜなら、CUBIC はロス時にウィンドウを $0.5$ 倍ではなく **$\beta \approx 0.7$ 倍にしか減らさない** からです。もし $0.7 W_{\max}$ という高い開始点からスタートして 1 RTT ごとに $+1$ ずつ増やしてしまうと、同じボトルネックを共有する標準 TCP Reno（$0.5 W_{\max}$ からスタートして 1 RTT ごとに $+1$）よりも常にウィンドウが大きくなり、Reno フローから帯域を奪ってしまいます。
+答えは **No** です。なぜなら、CUBIC はロス時にウィンドウを $0.5$ 倍ではなく **$\beta \approx 0.7$ 倍にしか減らさない** からです。もし $0.7 W_{\max}$ という高い開始点からスタートして 1 RTT ごとに $+1$ ずつ増やしてしまうと、同じボトルネックを共有する標準 TCP Reno（ $0.5 W_{\max}$ からスタートして 1 RTT ごとに $+1$）よりも常にウィンドウが大きくなり、Reno フローから帯域を奪ってしまいます。
 
 AIMD($\alpha, \beta$) フローが標準 TCP Reno($1, 0.5$) と **同じ平均ウィンドウ（公平なスループット）** になるための 1 RTT あたりの増加幅 $\alpha$ は、定常状態のノコギリ波の平均面積から次式で導かれます。
 
@@ -99,7 +99,7 @@ $$\frac{1}{\alpha} = \frac{1 + \beta}{3(1 - \beta)} = \frac{1741}{921} \approx 1
 
 1 RTT の間にはおよそ `cwnd` 個のセグメントが ACK されるため、`ca->tcp_cwnd` を $+1$ 増やすのに必要な累積 ACK セグメント数 `delta` は $\text{cwnd} \times \frac{1}{\alpha}$ 個です。
 
-カーネルおよび `starter.bpf.c` では、$\frac{1}{\alpha}$ を 8 倍（$= 2^3$ スケール）した整数定数 `beta_scale` をあらかじめ定義しています。
+カーネルおよび `starter.bpf.c` では、 $\frac{1}{\alpha}$ を 8 倍（ $= 2^3$ スケール）した整数定数 `beta_scale` をあらかじめ定義しています。
 
 ```c
 static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
@@ -133,8 +133,8 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
    最後に既存の `ca->cnt = max(ca->cnt, 2U);` によって、輻輳回避フェーズで少なくとも 2 ACK に 1 回の増加ペースを超えないよう下限を設定します。
 
 - **数値例（`test.pkt` のプラトー突破シナリオ）**:
-  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（$= \text{last}_{\max,\text{cwnd}}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
-  - `cwnd = 11` のプラトーでは、$t < K \approx 1.71\text{ s}$ の間、純粋な三次関数は `bic_target = 11 == cwnd` となるため `ca->cnt = 100 * 11 = 1100` を返し、1100 パケット ACK されるまで `cwnd` が増えない「ほぼ停止状態」になります。
+  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（ $= \text{last}_{\max,\text{cwnd}}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
+  - `cwnd = 11` のプラトーでは、 $t < K \approx 1.71\text{ s}$ の間、純粋な三次関数は `bic_target = 11 == cwnd` となるため `ca->cnt = 100 * 11 = 1100` を返し、1100 パケット ACK されるまで `cwnd` が増えない「ほぼ停止状態」になります。
   - 一方、Reno-friendly 領域では `cwnd = 11` のとき `delta = (11 * 15) >> 3 = 165 >> 3 = 20` です。11 パケットのフライトを 4 回（計 44 ACKs）送ると、`ack_cnt` が 20 を 2 回超えて `ca->tcp_cwnd` が `10 -> 11 -> 12` へと進みます。
   - `ca->tcp_cwnd (12) > cwnd (11)` となった瞬間、`max_cnt = 11 / (12 - 11) = 11` が計算され、`ca->cnt` は `1100` から `11` にクランプされます。その結果、プラトーの最中であっても 11 パケットの ACK で `cwnd` が `12` へと成長します。
 
@@ -146,10 +146,10 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
   カーネルの各 TCP ソケット（`struct inet_connection_sock`）には、輻輳制御アルゴリズム専用のプライベート領域 `icsk_ca_priv` が用意されています。`inet_csk_ca(sk)` ヘルパーはこれを `struct bpf_cubic4_ca *` にキャストして返します。`starter.bpf.c` ではすでに以下の全フィールドが定義されています。
   - `ca->cnt` (`__u32`): `snd_cwnd` を $+1$ 増やすのに必要な ACK セグメント数（小さいほど成長が速い）。
   - `ca->last_max_cwnd` (`__u32`): 前回のロス時点での最大ウィンドウ $W_{\max}$（Fast Convergence で調整する対象）。
-  - `ca->last_cwnd`, `ca->last_time` (`__u32`): 前回 `bictcp_update()` を実行したときの `cwnd` と時刻（$\mu\text{s}$）。`cwnd` が変わらない間、計算頻度を $1/32$ 秒に 1 回へ間引くために使われます。
+  - `ca->last_cwnd`, `ca->last_time` (`__u32`): 前回 `bictcp_update()` を実行したときの `cwnd` と時刻（ $\mu\text{s}$）。`cwnd` が変わらない間、計算頻度を $1/32$ 秒に 1 回へ間引くために使われます。
   - `ca->bic_origin_point`, `ca->bic_K` (`__u32`): 三次関数の原点ウィンドウ $W_{\max}$ と、そこに到達するまでの時間 $K$（単位は `1 / 1024` 秒）。
-  - `ca->delay_min` (`__u32`): 観測された最小 RTT（$\mu\text{s}$）。
-  - `ca->epoch_start` (`__u32`): 現在の輻輳回避エポックの開始時刻（$\mu\text{s}$）。ロス時に `0` にリセットされ、次の輻輳回避の最初の ACK で現在時刻がセットされます。
+  - `ca->delay_min` (`__u32`): 観測された最小 RTT（ $\mu\text{s}$）。
+  - `ca->epoch_start` (`__u32`): 現在の輻輳回避エポックの開始時刻（ $\mu\text{s}$）。ロス時に `0` にリセットされ、次の輻輳回避の最初の ACK で現在時刻がセットされます。
   - `ca->ack_cnt` (`__u32`): Reno-friendly 計算用に累積した ACK セグメント数。
   - `ca->tcp_cwnd` (`__u32`): Reno 相当の推定ウィンドウ $W_{\text{est}}$。
 - **`struct tcp_sock` の主要フィールド（`tcp_sk(sk)` で取得）**:
@@ -157,7 +157,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
   - `tp->snd_ssthresh` (`__u32`): スロースタート閾値（セグメント数）。
   - `tp->snd_cwnd_cnt` (`__u32`): `bpf_cubic4_cong_avoid_ai()` が `ca->cnt` に達するまで ACK 数を数えるカウンタ。
   - `tp->snd_cwnd_clamp` (`__u32`): `snd_cwnd` の上限値。
-  - `tp->tcp_mstamp` (`__u64` / `__u32`): パケット送受信時刻（$\mu\text{s}$、`bictcp_clock_us(sk)` が返す値）。
+  - `tp->tcp_mstamp` (`__u64` / `__u32`): パケット送受信時刻（ $\mu\text{s}$、`bictcp_clock_us(sk)` が返す値）。
 - **定義済みの定数（`starter.bpf.c` 先頭）**:
   - `BICTCP_BETA_SCALE` (`1024`)
   - `beta` (`717` $\approx 0.7 \times 1024$)
@@ -178,7 +178,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 - **判定条件**: ロス発生時の `cwnd` が前回の最大ウィンドウ `ca->last_max_cwnd` より小さいかどうか、すなわち `if (cwnd < ca->last_max_cwnd)` を判定します。
 - **更新式**:
-  - `cwnd < ca->last_max_cwnd` のときは、$\text{cwnd} \times \frac{1 + \beta}{2}$ を固定小数点定数 `BICTCP_BETA_SCALE`（1024）と `beta`（717）で表した整数演算を行います。
+  - `cwnd < ca->last_max_cwnd` のときは、 $\text{cwnd} \times \frac{1 + \beta}{2}$ を固定小数点定数 `BICTCP_BETA_SCALE`（1024）と `beta`（717）で表した整数演算を行います。
   - そうでないとき（`cwnd >= ca->last_max_cwnd`）は、通常通り `ca->last_max_cwnd = cwnd;` とします。
   ```c
   if (cwnd < ca->last_max_cwnd)
@@ -344,8 +344,8 @@ tcp_friendliness:
 - **冒頭の `ca->ack_cnt += acked;`**: 到着した ACK セグメント数を毎回加算します。
 - **エポック開始時（`ca->epoch_start == 0`）**: `ca->ack_cnt = acked;`、`ca->tcp_cwnd = cwnd;` として、Reno 推定ウィンドウ $W_{\text{est}}$ をエポック開始時点の `cwnd` からスタートさせます。また、Fast Convergence で引き下げられた `ca->last_max_cwnd` を使って `ca->bic_K` と `ca->bic_origin_point` を設定します。
 - **`tcp_friendliness:` ブロック**:
-  - `delta = (cwnd * beta_scale) >> 3;` で、`ca->tcp_cwnd` を 1 増やすのに必要な ACK 数（$\approx 1.875 \times \text{cwnd}$）を計算します。
-  - `ca->tcp_cwnd += ca->ack_cnt / delta;` と `ca->ack_cnt %= delta;` により、BPF 検証器に優しいループなしの形（$O(1)$）で `ca->tcp_cwnd` を進めます。
+  - `delta = (cwnd * beta_scale) >> 3;` で、`ca->tcp_cwnd` を 1 増やすのに必要な ACK 数（ $\approx 1.875 \times \text{cwnd}$）を計算します。
+  - `ca->tcp_cwnd += ca->ack_cnt / delta;` と `ca->ack_cnt %= delta;` により、BPF 検証器に優しいループなしの形（ $O(1)$）で `ca->tcp_cwnd` を進めます。
   - `ca->tcp_cwnd > cwnd` のとき、`max_cnt = cwnd / (ca->tcp_cwnd - cwnd)` を上限として `ca->cnt` をクランプします。これにより、三次関数がプラトーで `ca->cnt = 100 * cwnd` を出していても、`ca->tcp_cwnd` が追いついた時点で Reno 相当のペースでウィンドウが再び成長し始めます。
 
 ---

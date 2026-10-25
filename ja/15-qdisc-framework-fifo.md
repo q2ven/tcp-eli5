@@ -2476,7 +2476,7 @@ static inline u64 psched_l2t_ns(const struct psched_ratecfg *r,
 }
 ```
 
-設定時（`psched_ratecfg_precompute()`）に、1 秒（$10^9\text{ ns}$）あたりのバイト数 `rate_bytes_ps` から $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは**高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ**でナノ秒への変換を完了させています。
+設定時（`psched_ratecfg_precompute()`）に、1 秒（ $10^9\text{ ns}$）あたりのバイト数 `rate_bytes_ps` から $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは**高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ**でナノ秒への変換を完了させています。
 
 ---
 

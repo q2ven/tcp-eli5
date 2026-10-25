@@ -327,7 +327,7 @@ Because neither the Linux kernel nor BPF allows floating-point instructions, CUB
 | :--- | :--- | :--- |
 | `BICTCP_BETA_SCALE` | `1024` | Denominator for $\beta$ ($2^{10}$) |
 | `beta` | `717` | Multiplicative decrease factor $\beta = 717 / 1024 \approx 0.7002$ |
-| `BICTCP_HZ` | `10` | Time scale for $t$ and $K$: $1\text{ second} = 2^{10} = 1024\text{ units}$ (~$0.976\text{ ms}$ per unit) |
+| `BICTCP_HZ` | `10` | Time scale for $t$ and $K$: $1\text{ second} = 2^{10} = 1024\text{ units}$ ($\sim 0.976\text{ ms}$ per unit) |
 | `bic_scale` | `41` | Base scale factor (`cube_rtt_scale = bic_scale * 10 = 410`) |
 | `cube_rtt_scale` | `410` | $C \times 1024 = 0.4 \times 1024 \approx 410$ (so $C = 410 / 2^{10}$) |
 | `cube_factor` | `(1ULL << 40) / 410` ($= 2,681,735,677$) | Pre-scaled multiplier for $K$ in `BICTCP_HZ` units: $\frac{(2^{10})^3}{C} = \frac{2^{30}}{410 / 2^{10}} = \frac{2^{40}}{410}$ |
@@ -351,7 +351,7 @@ To compute the cubic root of a 64-bit integer $a$ without floating-point operati
    `shift = a >> (b * 3)` extracts the top 6 bits of $a$ into `[0, 63]`. Indexing the precomputed table `v[shift]` and scaling back by `<< b` gives a close initial estimate `x = (((__u32)v[shift] + 10) << b) >> 6`.
    (*Important BPF Verifier rule*: Even though `shift` is mathematically always in `[0, 63]`, the BPF verifier cannot prove the upper bound of a variable shift `a >> (b * 3)`. We must place an explicit `if (shift >= 64) return 0;` guard right before `v[shift]` so the verifier can prove the array access is in bounds.)
 3. **One Newton-Raphson iteration**:
-   Solving $f(x) = x^3 - a = 0$ via one step of $x_1 = \frac{1}{3}\left(2x_0 + \frac{a}{x_0^2}\right)$ refines the estimate to ~$0.195\%$ average error, using `x * (x - 1)` for the denominator and $341 / 1024 \approx 1/3$:
+   Solving $f(x) = x^3 - a = 0$ via one step of $x_1 = \frac{1}{3}\left(2x_0 + \frac{a}{x_0^2}\right)$ refines the estimate to $\sim 0.195\%$ average error, using `x * (x - 1)` for the denominator and $341 / 1024 \approx 1/3$:
    ```c
    x = (2 * x + (__u32)div64_u64(a, (__u64)x * (__u64)(x - 1)));
    x = ((x * 341) >> 10);
@@ -624,7 +624,7 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
    - **Why `starter.bpf.c` fails**: `bpf_cubic3_ssthresh()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) returns Reno's $0.5\times$ reduction (`10`), immediately failing line 42 (`assert tcpi_snd_ssthresh == 14`). Furthermore, its `bictcp_update()` leaves `ca->cnt = cwnd`, which would fail the subsequent concave and plateau assertions.
    - **Why `solution.bpf.c` passes**: `20 * 717 / 1024 = 14` satisfies `tcpi_snd_ssthresh == 14`, and the recovery ACK at line 46 exits Fast Recovery into `TCP_CA_Open` with `tcpi_snd_cwnd == 14` and $W_{\max} = 20$.
 3. **Flight 1 (Epoch start, Concave region, $t_{\text{elapsed}} = 0.0\text{ s}$)**:
-   Sending 14 segments and receiving the ACK initialises `bic_K = 2523` (~$2.46\text{ s}$), `bic_target = 15`, and `ca->cnt = 14`, advancing `tcpi_snd_cwnd` from `14` to `15`.
+   Sending 14 segments and receiving the ACK initialises `bic_K = 2523` ($\sim 2.46\text{ s}$), `bic_target = 15`, and `ca->cnt = 14`, advancing `tcpi_snd_cwnd` from `14` to `15`.
 4. **Flight 2 (Steep Concave climb, $t_{\text{elapsed}} = 0.6\text{ s}$)**:
    At $t_{\text{elapsed}} = 0.6\text{ s}$, `bic_target = 18` and `ca->cnt = 15 / (18 - 15) = 5`. ACKing 15 segments jumps `tcpi_snd_cwnd` by $+3$ in a single RTT to `18`.
 5. **Flight 3 (Reaching the origin $W_{\max} = 20$, $t_{\text{elapsed}} = 1.8\text{ s}$)**:

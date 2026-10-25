@@ -73,7 +73,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
    $$\text{epoch}_{\text{us}} = \text{tp}\to\text{delivered}_{\text{mstamp}} - \text{ca}\to\text{epoch}_{\text{mstamp}}$$
    $$\text{expected}_{\text{acked}} = (\text{ca}\to\text{max}_{\text{bw}} \times \text{epoch}_{\text{us}}) \gg 24$$
 2. **エポックのリセット判定**:
-   もしこれまでの累積 ACK 数 `ca->ack_epoch_acked` が期待値 `expected_acked` 以下に落ち着いた場合（`ca->ack_epoch_acked <= expected_acked`）、またはカウンタがオーバーフロー防止閾値 `BBR_ACK_EPOCH_ACKED_RESET_THRESH`（$2^{20}$ パケット）に達する場合は、過去の集約バーストが解消されたとみなして新しいエポックをゼロから開始します：
+   もしこれまでの累積 ACK 数 `ca->ack_epoch_acked` が期待値 `expected_acked` 以下に落ち着いた場合（`ca->ack_epoch_acked <= expected_acked`）、またはカウンタがオーバーフロー防止閾値 `BBR_ACK_EPOCH_ACKED_RESET_THRESH`（ $2^{20}$ パケット）に達する場合は、過去の集約バーストが解消されたとみなして新しいエポックをゼロから開始します：
    - `ca->ack_epoch_acked = 0`
    - `ca->epoch_mstamp = tp->delivered_mstamp`
    - `expected_acked = 0`

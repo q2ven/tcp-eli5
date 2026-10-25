@@ -75,7 +75,7 @@ $$d_{\text{FIFO}} = \frac{B}{C}$$
 
 2. **下位階層: バンド内の `new_flows` / `old_flows` による DRR (`fq_flow`)**
    各バンドは `new_flows` と `old_flows` の 2 つの単方向リストを持ちます。
-   - まだリストに繋がっていない（`detached` 状態の）フローにパケットが到着すると、`new_flows` の末尾に繋がれます。新規フローの初期クレジットは $c_f = Q_{\text{init}}$（`initial_quantum`、既定値 $10 \times \text{MTU}$）です。また、過去に空になってから `flow_refill_delay`（既定値 40 ms）以上経過していたフローは、$c_f \leftarrow \max(c_f, Q_{\text{flow}})$ に回復します。
+   - まだリストに繋がっていない（`detached` 状態の）フローにパケットが到着すると、`new_flows` の末尾に繋がれます。新規フローの初期クレジットは $c_f = Q_{\text{init}}$（`initial_quantum`、既定値 $10 \times \text{MTU}$）です。また、過去に空になってから `flow_refill_delay`（既定値 40 ms）以上経過していたフローは、 $c_f \leftarrow \max(c_f, Q_{\text{flow}})$ に回復します。
    - `fq_dequeue()` は常に **`new_flows` を先に**走査し、`new_flows` が空のときだけ `old_flows` を見ます。
    - フロー $f$ から長さ $L$ のパケットを送信すると
 
@@ -116,7 +116,7 @@ TCP ソケットは、次に送るパケットの最早出発時刻をナノ秒�
    で求まります。NIC のハードウェアペーシングオフロード幅を $H_{\text{offload}}$（通常は 0）、タイマーの許容スラック幅を $\delta_{\text{slack}}$（`timer_slack`）とすると、
 
    - $T_{\text{now}} + H_{\text{offload}} < T_{\text{next}}$ ならば、まだ出発時刻に達していないため、フロー $f$ を DRR リストから外して `q->delayed` 赤黒木へキー $T_{\text{next}}$ で挿入（スロットル）し、Qdisc 全体の最短遅延時刻 $T_{\min} = \min_{g \in \text{delayed}} T_{\text{flow}}(g)$ に向けて 1 つの `qdisc_watchdog` タイマーを $[T_{\min},\ T_{\min} + \delta_{\text{slack}}]$ の範囲でスケジュールします。
-   - $T_{\text{now}} + H_{\text{offload}} \ge T_{\text{next}}$ ならば、そのパケットをデキューして送信します。このとき、予定時刻 $T_{\text{next}}$ からの実際の遅延 $T_{\text{now}} - T_{\text{next}}$ が `ce_threshold`（$\theta_{\text{CE}}$）を超えていれば、
+   - $T_{\text{now}} + H_{\text{offload}} \ge T_{\text{next}}$ ならば、そのパケットをデキューして送信します。このとき、予定時刻 $T_{\text{next}}$ からの実際の遅延 $T_{\text{now}} - T_{\text{next}}$ が `ce_threshold`（ $\theta_{\text{CE}}$）を超えていれば、
 
      $$T_{\text{now}} - T_{\text{next}} - \theta_{\text{CE}} > 0$$
 
@@ -928,7 +928,7 @@ static int fq_enqueue(struct sk_buff *skb, struct Qdisc *sch,
   - `skb->tstamp != 0`（TCP または `SO_TXTIME`）なら `fq_skb_tstamp_to_mono(skb)` で `CLOCK_MONOTONIC` に揃え、`fq_packet_beyond_horizon()` で `now + q->horizon`（既定 10 秒）を超えていないか確認します。超えていた場合、`q->horizon_drop` が 1（既定値、`horizon_drop` ポリシー）なら `stat_horizon_drops++` して `QDISC_DROP_HORIZON_LIMIT` でドロップします（TCP の場合は `__tcp_transmit_skb()` がエラーを受け取らず、再送タイマー等で回復します）。0（`horizon_cap` ポリシー）なら `stat_horizon_caps++` し、時刻を `now + q->horizon` に丸めて `skb->tstamp` にも書き戻します。
 - **657〜677 行目（フローごとの上限と `new_flows` への追加）**:
   - `fq_classify()` でフロー `f` を得ます。fastpath（`&q->internal`）以外では、まず単一フローのキュー長 `f->qlen >= q->flow_plimit`（既定 100 パケット）を検査し、超えていれば `QDISC_DROP_FLOW_LIMIT` でドロップします。
-  - 次に `if (fq_flow_is_detached(f))` が **Sparse Flow 優先の核心**です。現在どの DRR リストにも載っておらずスロットルもされていない（`detached` 状態の）フローは、`fq_flow_add_tail(q, f, NEW_FLOW)` によってそのバンドの **`new_flows` の末尾**へ追加されます。さらに、前回空になった時刻 `f->age` から `q->flow_refill_delay`（既定 40 ms）以上経過していれば、`f->credit` を少なくとも `q->quantum`（$2 \times \text{MTU}$）まで回復させます。逆に 40 ms 未満で再びパケットが来た場合は前回の残りクレジットをそのまま使うため、短い休止を挟んでクレジットを不正に稼ぐことはできません。
+  - 次に `if (fq_flow_is_detached(f))` が **Sparse Flow 優先の核心**です。現在どの DRR リストにも載っておらずスロットルもされていない（`detached` 状態の）フローは、`fq_flow_add_tail(q, f, NEW_FLOW)` によってそのバンドの **`new_flows` の末尾**へ追加されます。さらに、前回空になった時刻 `f->age` から `q->flow_refill_delay`（既定 40 ms）以上経過していれば、`f->credit` を少なくとも `q->quantum`（ $2 \times \text{MTU}$）まで回復させます。逆に 40 ms 未満で再びパケットが来た場合は前回の残りクレジットをそのまま使うため、短い休止を挟んでクレジットを不正に稼ぐことはできません。
   - なお、ここで `f->age` を読んだ**後**に、681 行目の `flow_queue_add(f, skb)` が `f->tail = skb` を書き込んで `f->age` を上書きするため、680 行目に `/* Note: this overwrites f->age */` という注意書きがあります。
 - **683〜685 行目（スロットル中フローの起床時刻前倒し）**: スロットル中のフローに `f->time_next_packet` より早い EDT パケットが到着した場合（かつ Qdisc の `maxrate` 制限がない場合）、`fq_flow_adjust_timer()` で `q->delayed` 赤黒木の位置を調整します。
 
@@ -1461,7 +1461,7 @@ void tcp_update_pacing_rate(struct sock *sk)
 }
 ```
 
-- `srtt_us` は $1/8$ マイクロ秒単位（実 RTT [µs] $\times 8$）で格納されているため、分子に `<< 3`（$\times 8$）を掛けています。
+- `srtt_us` は $1/8$ マイクロ秒単位（実 RTT [µs] $\times 8$）で格納されているため、分子に `<< 3`（ $\times 8$）を掛けています。
 - `cwnd < ssthresh / 2`（slow start の前半）では 1 RTT で cwnd が 2 倍に成長するため、現在の $\text{cwnd} \times \text{MSS} / \text{RTT}$ の **200%**（`sysctl_tcp_pacing_ss_ratio`）に設定します。`cwnd >= ssthresh / 2`（slow start の後半および congestion avoidance）では **120%**（`sysctl_tcp_pacing_ca_ratio`）に落とし、slow start 終盤のオーバーシュートを和らげます。
 
 2. **BBR — `bbr_set_pacing_rate()`（[net/ipv4/tcp_bbr.c#L287](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_bbr.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n287)）**:
@@ -1600,7 +1600,7 @@ static int fq_init(struct Qdisc *sch, struct nlattr *opt,
   - `q->initial_quantum = 10 * mtu`（MTU 1500 なら 15140 バイト）: 新規フロー（IW10 相当）に与えられる初期クレジット。
   - `q->flow_refill_delay = 40 ms`: `detached` フローが `new_flows` に戻ったときにクレジットを `quantum` まで回復させる最小休止時間。
   - `q->band_flows[0..2].quantum`: $9 \times 65536 = 589824$, $3 \times 65536 = 196608$, $1 \times 65536 = 65536$（重み比 $9 : 3 : 1$）。
-  - `q->fq_trees_log = 10`（$2^{10} = 1024$ バケット）、`q->orphan_mask = 1023`。
+  - `q->fq_trees_log = 10`（ $2^{10} = 1024$ バケット）、`q->orphan_mask = 1023`。
   - `q->low_rate_threshold = 550000 / 8`（68,750 bytes/sec = 550 kbps）。
   - `q->timer_slack = 10 us`、`q->horizon = 10 s`、`q->horizon_drop = 1`。
   - `q->ce_threshold = 1000 * ~0U`（約 4294 秒＝既定では実質無効）。
@@ -1617,7 +1617,7 @@ static int fq_init(struct Qdisc *sch, struct nlattr *opt,
 | 1 フロー内のパケットキュー | 単一の FIFO キュー | 単調増加用の線形 FIFO（`head`/`tail`）と、順不同パケット用の赤黒木（`t_root`）のハイブリッド | TCP は $O(1)$ の線形リストで高速に処理しつつ、`SO_TXTIME` による順不同な EDT 指定にも対応するため（`eeb84aa0d0af`） |
 | 遅延パケットのスケジューラ構造 | Carousel 論文は階層型タイミングホイール（Timing Wheel）を使用 | フロー単位の赤黒木 `q->delayed` ＋ 単一の `qdisc_watchdog`（hrtimer）＋ `timer_slack`（既定 10 µs） | タイミングホイールは最大水平時間（Horizon）や粒度に制約があり空スロット走査も要るが、フロー単位の赤黒木なら任意のナノ秒時刻を扱え、`timer_slack` で割り込みもバッチ化できるため |
 | 優先度バンド | 原論文や初期の `sch_fq` は単一バンド（＋再送・優先用の `internal` キュー） | 3 バンド WRR（`band_flows[0..2]`、重み既定 $9:3:1$）＋ アイドル時の fastpath 専用となった `q->internal` | 高優先度クラス（AF4 等）を優先しつつベストエフォートの飢餓を防ぎ、また TCP 再送を別キューにすると逆にリオーダを起こすため `internal` の用途を変更（`90caf67b01fa`, `29f834aa326e`, `076433bd78d7`） |
-| 新規フローと継続フローの境界 | [RFC 8290 §4.2](https://www.rfc-editor.org/rfc/rfc8290#section-4.2): 新規フローに `quantum` を与え、`new_flows` で空になったら `old_flows` を経由して離脱 | 新規フローには `initial_quantum`（$10 \times \text{MTU}$）を与え、一度 `detached` になってから再開するときは `flow_refill_delay`（40 ms）経過後のみ `quantum`（$2 \times \text{MTU}$）まで回復 | TCP の IW10 を最初の 1 ラウンドで出し切れるようにしつつ、40 ms 未満の短い休止でクレジットを不正に回復する攻撃を防ぐため |
+| 新規フローと継続フローの境界 | [RFC 8290 §4.2](https://www.rfc-editor.org/rfc/rfc8290#section-4.2): 新規フローに `quantum` を与え、`new_flows` で空になったら `old_flows` を経由して離脱 | 新規フローには `initial_quantum`（ $10 \times \text{MTU}$）を与え、一度 `detached` になってから再開するときは `flow_refill_delay`（40 ms）経過後のみ `quantum`（ $2 \times \text{MTU}$）まで回復 | TCP の IW10 を最初の 1 ラウンドで出し切れるようにしつつ、40 ms 未満の短い休止でクレジットを不正に回復する攻撃を防ぐため |
 | EDT のジッタ補正 | 理想的には `wstamp += len / rate` | `credit = tcp_wstamp_ns - prior_wstamp` を計算し、`len_ns -= min(len_ns / 2, credit)` で最大半分まで短縮 | OS のスケジューリング遅延やソフト割り込み遅延が起きたときに、遅れがそのまま積み重なって目標レートを下回るのを防ぐため（`a7a2563064e9`） |
 | ECN マーキングの基準 | 瞬間キュー長または滞留時間（CoDel / RED / DCTCP のパケット数閾値） | デキュー時の EDT 遅延 `now - time_next_packet > ce_threshold` | ペーシングのために意図的に待っている時間（`time_next_packet - enqueue_time`）を輻輳と誤認せず、「予定時刻よりどれだけ遅れたか」だけを純粋な輻輳遅延として測れるため（`48872c11b772`） |
 
@@ -1858,7 +1858,7 @@ BBR は初期化時（`bbr_init()`）に `cmpxchg(&sk->sk_pacing_status, SK_PACI
 
 - 単一 FIFO キューはバルクフローと対話型フローの間で Head-of-Line (HoL) ブロッキングを起こし、また従来のトークンバケットやソケットごとのタイマーは百万フロー規模のペーシングにスケールしません。
 - `sch_fq` と **EDT (Earliest Departure Time)** は、「レート」ではなく**パケットごとの最早出発時刻 `skb->tstamp`** をインターフェースにすることで、公平キューイングとスケーラブルなペーシングを統合しました。
-- `sch_fq` のスケジューリングは 2 階層です。上位は **3 バンド WRR**（`band_flows[0..2]`、既定重み $9:3:1$）で優先度間の飢餓を防ぎ、下位は各バンド内の **`new_flows` / `old_flows` による Deficit Round Robin (DRR)** です。疎なフロー（SSH、DNS、ACK 等）は `new_flows` に入って `initial_quantum`（$10 \times \text{MTU}$）で優先的に処理され、継続するバルクフローは `old_flows` で `quantum`（$2 \times \text{MTU}$）ずつ公平に処理されます。
+- `sch_fq` のスケジューリングは 2 階層です。上位は **3 バンド WRR**（`band_flows[0..2]`、既定重み $9:3:1$）で優先度間の飢餓を防ぎ、下位は各バンド内の **`new_flows` / `old_flows` による Deficit Round Robin (DRR)** です。疎なフロー（SSH、DNS、ACK 等）は `new_flows` に入って `initial_quantum`（ $10 \times \text{MTU}$）で優先的に処理され、継続するバルクフローは `old_flows` で `quantum`（ $2 \times \text{MTU}$）ずつ公平に処理されます。
 - ローカルソケットのパケットは `skb->sk` ポインタで $O(\log N)$（ハッシュバケット内の赤黒木）で厳密にフロー分類され、フォワードパケット・SYN-ACK・非接続 UDP は `skb_get_hash(skb) & orphan_mask` と最下位ビット `1` の疑似ポインタで安全に分離されます。
 - 各 `struct fq_flow`（128 バイト＝2 キャッシュライン）は、単調増加する EDT パケット用の $O(1)$ 線形リスト（`head`/`tail`）と、順不同な EDT パケット用の赤黒木（`t_root`）のハイブリッドキューを持ちます。
 - デキュー時に `now + offload_horizon < time_next_packet` であれば、そのフローは `q->delayed` 赤黒木に移され、Qdisc 全体で 1 つの `qdisc_watchdog` hrtimer（`timer_slack` 既定 10 µs）が最短時刻に向けてセットされます。またデキュー時の遅延 `now - time_next_packet` が `ce_threshold` を超えていれば ECN CE マークが付与されます。

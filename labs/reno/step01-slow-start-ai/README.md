@@ -74,9 +74,9 @@ cwnd (segments)
 
 TCP Reno では、パケットロスを検知したとき、およびそのロス検知が誤り（パケットの順序逆転などによる Spurious Loss）だったと判明したときに以下のルールを適用します。
 
-- **Multiplicative Decrease（乗算的減少：`.ssthresh()`）**: パケットロスが起きたということは、現在の `cwnd` は経路容量を超えていたことを意味します。Reno は新しい `ssthresh` を現在の `cwnd` の半分（$\lfloor \text{cwnd} / 2 \rfloor$、ビットシフトで `snd_cwnd >> 1U`）に引き下げます。ただし RFC 5681 の規定により、ウィンドウが完全に詰まらないよう最小値 `2U` を下回らないようにします：
+- **Multiplicative Decrease（乗算的減少：`.ssthresh()`）**: パケットロスが起きたということは、現在の `cwnd` は経路容量を超えていたことを意味します。Reno は新しい `ssthresh` を現在の `cwnd` の半分（ $\lfloor \text{cwnd} / 2 \rfloor$、ビットシフトで `snd_cwnd >> 1U`）に引き下げます。ただし RFC 5681 の規定により、ウィンドウが完全に詰まらないよう最小値 `2U` を下回らないようにします：
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（$\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$）へウィンドウを復元します。
+- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（ $\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$）へウィンドウを復元します。
 
 ### 2.6 カーネルがすでに提供している構造体・フィールド・ヘルパー一覧
 

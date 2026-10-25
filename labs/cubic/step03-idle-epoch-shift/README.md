@@ -16,7 +16,7 @@ Step 2 までで、CUBIC の 3 次関数曲線・Fast Convergence・Reno-friendl
 
 従来の TCP Reno（AIMD）は、「到着した ACK の数」だけを数えて `snd_cwnd` を進めます。したがって、アプリケーションがデータを送らずにアイドル状態（ネットワーク上の未確認パケット数 `in_flight == 0`）になっている間は ACK も届かず、Reno の「時計」は自然に停止します。
 
-一方、CUBIC は輻輳回避（Congestion Avoidance）における目標ウィンドウ `bic_target`（$W_{\text{cubic}}(t)$）を、**現在のエポックが始まってからの実経過時間 $t$** の 3 次関数として計算します。
+一方、CUBIC は輻輳回避（Congestion Avoidance）における目標ウィンドウ `bic_target`（ $W_{\text{cubic}}(t)$）を、**現在のエポックが始まってからの実経過時間 $t$** の 3 次関数として計算します。
 
 $$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
@@ -46,7 +46,7 @@ $$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}})
 ```
 
 ここで重要なのは、**`ca->epoch_start = 0` にリセットして新しいエポックを始め直すのではなく、`ca->epoch_start += delta` でシフトする** という点です。
-CUBIC の凹領域（$t < K$）は「エポック開始直後が最も傾きが急で、プラトー（$W_{\max}$）に近づくほど傾きが緩やかになる」形をしています。もしアイドルからの再開のたびに `ca->epoch_start = 0` にリセットして $K$ を再計算してしまうと、すでに $W_{\max}$ 手前の平坦部まで達していたフローであっても、アイドルのたびに「ロス直後のような急勾配の立ち上がり」を最初からやり直すことになってしまいます。`ca->epoch_start += delta` で平行移動すれば、**3 次関数の曲線形状（`ca->bic_K` と `ca->bic_origin_point`）と曲線上の現在位置をそのまま保った状態** で時計だけを一時停止・再開できます。
+CUBIC の凹領域（ $t < K$）は「エポック開始直後が最も傾きが急で、プラトー（ $W_{\max}$）に近づくほど傾きが緩やかになる」形をしています。もしアイドルからの再開のたびに `ca->epoch_start = 0` にリセットして $K$ を再計算してしまうと、すでに $W_{\max}$ 手前の平坦部まで達していたフローであっても、アイドルのたびに「ロス直後のような急勾配の立ち上がり」を最初からやり直すことになってしまいます。`ca->epoch_start += delta` で平行移動すれば、**3 次関数の曲線形状（`ca->bic_K` と `ca->bic_origin_point`）と曲線上の現在位置をそのまま保った状態** で時計だけを一時停止・再開できます。
 
 ### 2.3 エッジケース 1：まだエポックが始まっていない場合（`ca->epoch_start == 0`）
 
@@ -63,14 +63,14 @@ CUBIC では、`ca->epoch_start == 0` を「現在アクティブな Congestion 
 次のタイムラインを考えてみましょう。
 
 1. 時刻 $T_0$ に、Fast Recovery 終了前の最後のデータパケットを送信します（この時点で `tp->lsndtime` $= T_0$）。
-2. 時刻 $T_1$（$T_1 > T_0$、たとえば 1 RTT 後）に累積 ACK が届いて Recovery を抜け、同じ ACK または直後の ACK で `bictcp_update()` が呼ばれて新エポックが開始されます（`ca->epoch_start` $= T_1$）。このときアプリケーションに送信待ちデータがなければパケットは送信されないため、`tp->lsndtime` は $T_0$ のまま更新されません。
+2. 時刻 $T_1$（ $T_1 > T_0$、たとえば 1 RTT 後）に累積 ACK が届いて Recovery を抜け、同じ ACK または直後の ACK で `bictcp_update()` が呼ばれて新エポックが開始されます（`ca->epoch_start` $= T_1$）。このときアプリケーションに送信待ちデータがなければパケットは送信されないため、`tp->lsndtime` は $T_0$ のまま更新されません。
 3. そのままアイドル状態が続き、時刻 $T_2$（`now` $= T_2$）にアプリケーションが新しいデータを送信します。
 
 このとき $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$ なので、`ca->epoch_start` に $\Delta_{\text{idle}}$ を足すと次のようになります。
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
-なんと、`ca->epoch_start` が現在時刻 `now`（$T_2$）よりも $T_1 - T_0$ だけ **未来の時刻** になってしまいます！
+なんと、`ca->epoch_start` が現在時刻 `now`（ $T_2$）よりも $T_1 - T_0$ だけ **未来の時刻** になってしまいます！
 
 もし `ca->epoch_start` が未来の時刻のまま同じ jiffy 内に ACK が届いて `bictcp_update()` が走ると、174 行目の経過時間計算で致命的なバグが起きます。
 
@@ -84,11 +84,11 @@ t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;
 
 ### 2.5 具体例（`test.pkt` の数値で計算）
 
-RTT = $20\text{ ms}$（$d_{\min} = 20{,}000\ \mu\text{s}$）、`cwnd = 20` でロスが起きて `last_max_cwnd` ($W_{\max}$) $= 20$、`ssthresh` $= 14$ になったケース（$K \approx 2.46\text{ s}$）を考えます。
+RTT = $20\text{ ms}$（ $d_{\min} = 20{,}000\ \mu\text{s}$）、`cwnd = 20` でロスが起きて `last_max_cwnd` ($W_{\max}$) $= 20$、`ssthresh` $= 14$ になったケース（ $K \approx 2.46\text{ s}$）を考えます。
 
-- Recovery 完了直後の Congestion Avoidance 開始時点で `cwnd` は $14 \to 15$ に成長し、さらに 1 RTT（$20\text{ ms}$）送受信した時点で経過時間は約 $40\text{ ms}$、`cwnd = 15` です。
+- Recovery 完了直後の Congestion Avoidance 開始時点で `cwnd` は $14 \to 15$ に成長し、さらに 1 RTT（ $20\text{ ms}$）送受信した時点で経過時間は約 $40\text{ ms}$、`cwnd = 15` です。
 - ここで **2.0 秒間アイドル** し、再開後に 15 セグメントを送信して $20\text{ ms}$ 後に ACK を受け取ります。
-  - **Epoch シフトあり（正常）**: 2.0 秒のアイドル分だけ `ca->epoch_start` が後ろへシフトされるため、ACK 到着時の実質経過時間 $t$ は約 $60\text{ ms}$ + $d_{\min}$ にとどまります。$t \ll K$ なので `bic_target` は $15$ のままで、`cwnd` は **$15$ を維持** します。
+  - **Epoch シフトあり（正常）**: 2.0 秒のアイドル分だけ `ca->epoch_start` が後ろへシフトされるため、ACK 到着時の実質経過時間 $t$ は約 $60\text{ ms}$ + $d_{\min}$ にとどまります。 $t \ll K$ なので `bic_target` は $15$ のままで、`cwnd` は **$15$ を維持** します。
   - **Epoch シフトなし（バグ）**: `ca->epoch_start` が古いままなので、ACK 到着時に $t \approx 2.06\text{ s}$ まで一気に進みます。すると $t$ が $K = 2.46\text{ s}$ に急接近するため `bic_target` が $W_{\max} = 20$ へ跳ね上がり、`ca->cnt = 15 / (20 - 15) = 3` となって、15 セグメントの ACK 一発で `cwnd` が **$15 \to 20$ へ急騰** してしまいます。
 
 ### 2.6 カーネルと `bpf_cc_helpers.h` が提供する構造体・フィールド・ヘルパー
@@ -156,7 +156,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 <summary>ヒントと答え</summary>
 
 1. **リセットではなくシフトする理由（セクション 2.2）**:
-   `ca->epoch_start = 0` にリセットすると、次の ACK で `bictcp_update()` が `ca->bic_K` を再計算して新しいエポックを最初からやり直してしまいます。すると、$W_{\max}$ 手前の緩やかなプラトー付近まで到達していたフローでも、アイドルを挟むたびにエポック初期の急勾配な増加を繰り返してしまいます。`ca->epoch_start += delta` でシフトすれば、3 次関数の曲線形状と現在位置を保ったままアイドル期間だけを時計から除外できます。
+   `ca->epoch_start = 0` にリセットすると、次の ACK で `bictcp_update()` が `ca->bic_K` を再計算して新しいエポックを最初からやり直してしまいます。すると、 $W_{\max}$ 手前の緩やかなプラトー付近まで到達していたフローでも、アイドルを挟むたびにエポック初期の急勾配な増加を繰り返してしまいます。`ca->epoch_start += delta` でシフトすれば、3 次関数の曲線形状と現在位置を保ったままアイドル期間だけを時計から除外できます。
 2. **`if (ca->epoch_start && delta > 0)` をチェックする理由（セクション 2.3）**:
    `ca->epoch_start == 0` は「まだ Congestion Avoidance エポックが始まっていない（Slow Start 中またはロス直後）」ことを示す番兵です。このときに `delta` を足して非ゼロにしてしまうと、`bictcp_update()` がエポック初期化（`ca->bic_K` と `ca->bic_origin_point` の設定）をスキップして壊れてしまいます。また、時刻の逆転や同一 jiffy での呼び出しを除外するため `delta > 0` も合わせて確認します。
 
@@ -169,7 +169,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 <details>
 <summary>ヒントと答え</summary>
 
-セクション 2.4 で見た通り、`tp->lsndtime` は **パケット送信時**（$T_0$）に記録されるのに対し、`ca->epoch_start` は **ACK 受信時**（$T_1 > T_0$）に記録されます。もし時刻 $T_0$ の送信後に追加送信がないまま時刻 $T_1$ の ACK でエポックが始まり、時刻 $T_2$（`now`）までアイドルだった場合、
+セクション 2.4 で見た通り、`tp->lsndtime` は **パケット送信時**（ $T_0$）に記録されるのに対し、`ca->epoch_start` は **ACK 受信時**（ $T_1 > T_0$）に記録されます。もし時刻 $T_0$ の送信後に追加送信がないまま時刻 $T_1$ の ACK でエポックが始まり、時刻 $T_2$（`now`）までアイドルだった場合、
 
 $$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
@@ -226,7 +226,7 @@ void BPF_PROG(bpf_cubic5_cwnd_event_tx_start, struct sock *sk)
 	t /= USEC_PER_SEC;
 ```
 
-- `tcp_jiffies32 - ca->epoch_start` からアイドル期間 `delta` が差し引かれた状態になるため、`t`（$1/1024$ 秒単位）には純粋にデータを送信していたアクティブな期間と最小 RTT `ca->delay_min` だけが反映されます。
+- `tcp_jiffies32 - ca->epoch_start` からアイドル期間 `delta` が差し引かれた状態になるため、`t`（ $1/1024$ 秒単位）には純粋にデータを送信していたアクティブな期間と最小 RTT `ca->delay_min` だけが反映されます。
 
 ### 4.3 `struct tcp_congestion_ops bpf_cubic5` への登録
 
@@ -265,7 +265,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 4. **アイドル前の Congestion Avoidance で 1 RTT 送信（48〜54 行目）**:
    - 15 セグメント（15,000 バイト）を送信して $20\text{ ms}$ 後に ACK を受け取り、`tcpi_snd_cwnd == 15` であることを確認します。この ACK でネットワーク上の未確認データはゼロ（`in_flight == 0`）になります。
 5. **2.0 秒間のアイドル後に 15 セグメントを送信・ACK（56〜67 行目）**:
-   - `+2.000` 秒間何も送らずに待機した後、`write(4, ..., 15000)` で 15 セグメントを送信し、$20\text{ ms}$ 後に ACK を受け取って `assert tcpi_snd_cwnd <= 15` を検証します。
+   - `+2.000` 秒間何も送らずに待機した後、`write(4, ..., 15000)` で 15 セグメントを送信し、 $20\text{ ms}$ 後に ACK を受け取って `assert tcpi_snd_cwnd <= 15` を検証します。
    - **`starter.bpf.c` が失敗する理由**: `bpf_cubic5_cwnd_event_tx_start()` が何もしないため、`ca->epoch_start` が 2 秒前のまま残ります。ACK 到着時に経過時間 `t` が一気に約 $2.06$ 秒まで進み、`bic_target` が `W_max = 20` に跳ね上がって `ca->cnt = 15 / (20 - 15) = 3` となるため、15 セグメントの ACK 一発で `tcpi_snd_cwnd` が **`20` 以上** に急騰し、`assert tcpi_snd_cwnd <= 15` で FAIL します。
    - **`solution.bpf.c` がパスする理由**: 2 秒後の最初のセグメント送信時に `bpf_cubic5_cwnd_event_tx_start()` が `ca->epoch_start` を 2 秒分シフトします。そのため ACK 到着時の `t` は約 $60\text{ ms}$ にとどまり、`bic_target = 15 <= cwnd (15)`（`ca->cnt = 100 * 15 = 1500`）となって `tcpi_snd_cwnd` は **`15` のまま**（`<= 15`）で PASS します。
 

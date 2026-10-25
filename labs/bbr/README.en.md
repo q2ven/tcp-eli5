@@ -148,7 +148,7 @@ Let us walk through each of the four modes in order:
 
 ### 2. `BBR_DRAIN` (Implemented in Step 3)
 
-- **Purpose**: Drain the excess queue (~$1.89 \times \text{BDP}$) that accumulated at the bottleneck router during the 3 plateau rounds of `BBR_STARTUP`.
+- **Purpose**: Drain the excess queue ($\sim 1.89 \times \text{BDP}$) that accumulated at the bottleneck router during the 3 plateau rounds of `BBR_STARTUP`.
 - **Behaviour**: Cuts `pacing_gain` to the multiplicative inverse of the startup gain, $\frac{\ln 2}{2} \approx 0.35\times$. Because packets are now injected at only 35% of `BtlBw`, the bottleneck queue drains at 65% of line rate.
 - **Exit condition**: As soon as the number of packets in flight (`tcp_packets_in_flight()`) drops to or below **$1.0 \times \text{BDP}$**, the excess queue has been cleared and BBR enters steady state (`BBR_PROBE_BW`).
 
