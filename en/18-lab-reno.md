@@ -1,6 +1,5 @@
-# 15. Hands-on (1): Building TCP Reno with BPF CC and packetdrill
+# 18. Hands-on (1): Building TCP Reno with BPF CC and packetdrill
 
-[日本語](README.md)
 
 In this track, you will build **TCP Reno (RFC 5681)** — the foundational algorithm from which modern TCP congestion control evolved — from scratch using Linux kernel BPF `struct_ops` (`struct tcp_congestion_ops`).
 
@@ -168,25 +167,25 @@ Ready? Head over to [`step01-slow-start-ai/README.en.md`](step01-slow-start-ai/R
 
 ## Step 1: Minimal BPF Congestion Control Skeleton + Slow Start & Reno AI
 
-### 1. Goal
+## 1. Goal
 
 In this step, you will implement the Linux kernel's pluggable congestion control interface (`struct tcp_congestion_ops`) using BPF `struct_ops`, building the foundation of all TCP congestion control algorithms — **TCP Reno (Slow Start, Additive Increase, and Multiplicative Decrease)** — completely from scratch. Rather than calling existing kernel `extern __ksym` helpers such as `tcp_slow_start()` or `tcp_cong_avoid_ai()`, you will write every line in pure BPF so you can see and verify how the congestion window evolves and transitions on every incoming ACK.
 
-- See the [Reno Track README](../README.en.md) ([Japanese](../README.md)) for the overall track structure and step list.
+- See the [Reno Track README](#) ([Japanese](#)) for the overall track structure and step list.
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
 Before looking at the design checkpoints or code, let's build a complete picture of how TCP Reno works from first principles and what data structures and hooks the Linux kernel already provides.
 
-#### 2.1 Why Does TCP Need Congestion Control?
+### 2.1 Why Does TCP Need Congestion Control?
 
 If a sender injects packets into the network without regard for available path capacity, router queues along the path overflow, packet loss cascades, and useful throughput collapses (*congestion collapse*). Yet a sender has no prior knowledge of how much spare capacity exists along an arbitrary Internet path.
 
 To solve this, a TCP sender maintains a self-imposed limit on the amount of unacknowledged (*in-flight*) data it may have in the network at any instant: the **congestion window (`cwnd`, measured in MSS segments)**. The sender dynamically adjusts `cwnd` using returning ACKs as feedback.
 
-#### 2.2 The Two Growth Phases of TCP Reno: Slow Start and Congestion Avoidance
+### 2.2 The Two Growth Phases of TCP Reno: Slow Start and Congestion Avoidance
 
 TCP Reno (RFC 5681) switches between two distinct window growth regimes separated by the **slow start threshold (`ssthresh`)**:
 
@@ -219,7 +218,7 @@ cwnd (segments)
      1. On each ACK in Congestion Avoidance, add `acked` to the numerator: `snd_cwnd_cnt += acked`.
      2. Whenever the numerator reaches or exceeds the denominator (`snd_cwnd_cnt >= snd_cwnd`), subtract `snd_cwnd` from `snd_cwnd_cnt` (`snd_cwnd_cnt -= snd_cwnd`) and increment `snd_cwnd` by `1`.
 
-#### 2.3 Concrete Numerical Trace (`cwnd = 10`, `ssthresh = 22`)
+### 2.3 Concrete Numerical Trace (`cwnd = 10`, `ssthresh = 22`)
 
 Let's trace the exact numbers tested by `test.pkt` in this step:
 
@@ -230,14 +229,14 @@ Let's trace the exact numbers tested by `test.pkt` in this step:
 | **Round 2**<br>(Boundary Crossing) | `cwnd = 20`<br>`ssthresh = 22`<br>`cnt = 0` | Send 20 segments; receive ACK for `acked = 20` segments | 1. Slow Start consumes `22 - 20 = 2` segments to reach `ssthresh` (`cwnd = 22`).<br>2. The leftover `acked = 20 - 2 = 18` segments fall through to Congestion Avoidance: `cnt = 0 + 18 = 18`.<br>3. Since `cnt (18) < cwnd (22)`, `cwnd` stays `22`. | `cwnd = 22`<br>`ssthresh = 22`<br>`cnt = 18` |
 | **Round 3**<br>(Reno AI) | `cwnd = 22`<br>`ssthresh = 22`<br>`cnt = 18` | Send 22 segments; receive ACK for `acked = 22` segments | `cwnd >= ssthresh`, so run Congestion Avoidance directly.<br>1. `cnt = 18 + 22 = 40`.<br>2. Since `cnt (40) >= cwnd (22)`, subtract `22` (`cnt = 18`) and increment `cwnd` from `22` to `23`. | `cwnd = 23`<br>`ssthresh = 22`<br>`cnt = 18` |
 
-#### 2.4 Cwnd Validation (Guarding Against Application-Limited Growth)
+### 2.4 Cwnd Validation (Guarding Against Application-Limited Growth)
 
 What happens if `cwnd = 10`, but the application only writes 1 segment per RTT?
 Because the sender never actually puts 10 segments in flight to test whether the network path can sustain them, growing `cwnd` to 11, 12, ... on every ACK would build up an artificially huge `cwnd`. If the application later writes a large burst of data, TCP would dump an untested flood of packets into the network all at once (see RFC 7661, Congestion Window Validation).
 
 Therefore, at the very beginning of `.cong_avoid()`, a congestion control algorithm must check whether transmission is genuinely limited by `cwnd` (i.e. the sender is actually filling the congestion window). If not, `.cong_avoid()` must return immediately without growing `cwnd`.
 
-#### 2.5 Multiplicative Decrease on Loss and Undoing Spurious Reductions
+### 2.5 Multiplicative Decrease on Loss and Undoing Spurious Reductions
 
 When packet loss is detected — or when a loss detection later turns out to be a false alarm — TCP Reno applies two rules:
 
@@ -245,11 +244,11 @@ When packet loss is detected — or when a loss detection later turns out to be 
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
 - **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$.
 
-#### 2.6 What the Kernel Already Provides (Structs, Fields, and Helpers)
+### 2.6 What the Kernel Already Provides (Structs, Fields, and Helpers)
 
 To design a BPF congestion control algorithm, you need to know which fields already live on the kernel's socket structures and which helpers are available.
 
-##### (A) Core `struct tcp_congestion_ops` Hooks Implemented in This Step
+#### (A) Core `struct tcp_congestion_ops` Hooks Implemented in This Step
 
 | Hook | Signature | When It Is Called & What It Does |
 | :--- | :--- | :--- |
@@ -258,7 +257,7 @@ To design a BPF congestion control algorithm, you need to know which fields alre
 | `.cong_avoid` | `void (*cong_avoid)(struct sock *sk, __u32 ack, __u32 acked)` | Called on every incoming ACK that acknowledges new data. `ack` is the ACK sequence number; `acked` is the number of newly acknowledged segments. |
 | `.undo_cwnd` | `__u32 (*undo_cwnd)(struct sock *sk)` | Called when loss recovery is detected to be spurious; returns the restored `snd_cwnd` value. |
 
-##### (B) Standard Fields Already Built into `struct tcp_sock` (`struct tcp_sock *tp = tcp_sk(sk)`)
+#### (B) Standard Fields Already Built into `struct tcp_sock` (`struct tcp_sock *tp = tcp_sk(sk)`)
 
 Every Linux TCP socket (`struct tcp_sock`) already has **all of Reno's state variables built right into the core socket struct**:
 
@@ -268,13 +267,13 @@ Every Linux TCP socket (`struct tcp_sock`) already has **all of Reno's state var
 - `tp->snd_cwnd_clamp` (`__u32`): Maximum allowed value for `tp->snd_cwnd` (always clamp increases using `min(new_cwnd, tp->snd_cwnd_clamp)`).
 - `tp->prior_cwnd` (`__u32`): Value of `snd_cwnd` automatically saved by the kernel right before entering loss recovery.
 
-##### (C) What Is the Per-Socket Private Area `icsk_ca_priv`?
+#### (C) What Is the Per-Socket Private Area `icsk_ca_priv`?
 
 - `struct inet_connection_sock` (the parent struct of `tcp_sock`) reserves a 104-byte scratch buffer (`icsk_ca_priv`), accessed via `inet_csk_ca(sk)`.
 - Complex congestion control algorithms such as CUBIC (which tracks cubic epoch start timestamps, `W_max`, and `bic_K`) or BBR (which tracks windowed max-bandwidth filters and state machines) define a custom C struct inside `icsk_ca_priv` because `struct tcp_sock` does not have dedicated fields for those algorithm-specific variables.
 - By contrast, **every variable required by TCP Reno (`snd_cwnd`, `snd_ssthresh`, `snd_cwnd_cnt`, and `prior_cwnd`) already exists directly on `struct tcp_sock`**.
 
-##### (D) Helper Functions Provided in `bpf_cc_helpers.h`
+#### (D) Helper Functions Provided in `bpf_cc_helpers.h`
 
 - `tcp_sk(sk)`: Casts `struct sock *sk` to `struct tcp_sock *tp`.
 - `tcp_is_cwnd_limited(sk)`: Returns `true` if transmission is currently limited by `snd_cwnd` (the pipe is full), or `false` if the socket is application-limited.
@@ -283,11 +282,11 @@ Every Linux TCP socket (`struct tcp_sock`) already has **all of Reno's state var
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Using what you just learned in Section 2, work through these four design questions to plan your implementation of the TODOs in `starter.bpf.c`. Every question can be answered directly from Section 2.
 
-#### Q1. State Design: Does TCP Reno need a custom private struct in `icsk_ca_priv`?
+### Q1. State Design: Does TCP Reno need a custom private struct in `icsk_ca_priv`?
 
 Review the standard `struct tcp_sock` fields in Section 2.6 (B) and the role of `icsk_ca_priv` in Section 2.6 (C). Do we need to define a custom struct for `inet_csk_ca(sk)` to implement Reno's Slow Start, Additive Increase, Multiplicative Decrease, and Undo?
 
@@ -305,7 +304,7 @@ Review the standard `struct tcp_sock` fields in Section 2.6 (B) and the role of 
 
 </details>
 
-#### Q2. Guard Condition: What must `bpf_reno1_cong_avoid()` check first before growing `snd_cwnd`?
+### Q2. Guard Condition: What must `bpf_reno1_cong_avoid()` check first before growing `snd_cwnd`?
 
 Based on Section 2.4 (Cwnd Validation) and the helpers in Section 2.6 (D), what check should appear at the very top of `bpf_reno1_cong_avoid(sk, ack, acked)` before any Slow Start or Additive Increase logic runs?
 
@@ -317,7 +316,7 @@ Based on Section 2.4 (Cwnd Validation) and the helpers in Section 2.6 (D), what 
 
 </details>
 
-#### Q3. Boundary Condition: How should the C code handle an ACK that crosses `tp->snd_ssthresh` during Slow Start?
+### Q3. Boundary Condition: How should the C code handle an ACK that crosses `tp->snd_ssthresh` during Slow Start?
 
 Translate Round 2 from Section 2.3 (`tp->snd_cwnd = 20`, `tp->snd_ssthresh = 22`, and an incoming ACK with `acked = 20`) into C code inside `if (tcp_in_slow_start(tp))`:
 1. How do you compute the new Slow Start window `cwnd` without exceeding `tp->snd_ssthresh`?
@@ -344,7 +343,7 @@ Translate Round 2 from Section 2.3 (`tp->snd_cwnd = 20`, `tp->snd_ssthresh = 22`
 
 </details>
 
-#### Q4. Integer-Only Additive Increase: How do we update `tp->snd_cwnd_cnt` and `tp->snd_cwnd` with the remaining `acked` segments?
+### Q4. Integer-Only Additive Increase: How do we update `tp->snd_cwnd_cnt` and `tp->snd_cwnd` with the remaining `acked` segments?
 
 Translate the integer Congestion Avoidance rule from Section 2.2 into C code (**TODO 4** in `starter.bpf.c`).
 
@@ -366,11 +365,11 @@ Translate the integer Congestion Avoidance rule from Section 2.2 into C code (**
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let's walk through each function in [`solution.bpf.c`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/solution.bpf.c).
 
-#### 4.1 `bpf_reno1_init()` — Initialising the Socket
+### 4.1 `bpf_reno1_init()` — Initialising the Socket
 
 ```c
 SEC("struct_ops")
@@ -386,7 +385,7 @@ void BPF_PROG(bpf_reno1_init, struct sock *sk)
 - Called when the TCP connection is established (or switched to `bpf_reno1` via `setsockopt(TCP_CONGESTION)`), resetting the Additive Increase counter `tp->snd_cwnd_cnt` to `0`.
 - Although Linux normally starts with an infinite `snd_ssthresh` (`TCP_INFINITE_SSTHRESH`), we initialise `tp->snd_ssthresh = 22` here so that `test.pkt` can deterministically test pure Slow Start (`10 -> 20`), the exact `snd_ssthresh` boundary transition with leftover `acked` credits (`20 -> 22`), and Reno Additive Increase (`22 -> 23`) in three consecutive RTTs without needing to induce packet loss first.
 
-#### 4.2 `bpf_reno1_ssthresh()` — Multiplicative Decrease Threshold (TODO 1)
+### 4.2 `bpf_reno1_ssthresh()` — Multiplicative Decrease Threshold (TODO 1)
 
 ```c
 SEC("struct_ops")
@@ -401,7 +400,7 @@ __u32 BPF_PROG(bpf_reno1_ssthresh, struct sock *sk)
 - Called upon entering loss recovery to calculate the new `snd_ssthresh`.
 - Halves `tp->snd_cwnd` via a right bit-shift (`tp->snd_cwnd >> 1U`) and enforces the RFC 5681 minimum of `2U` segments using `max(..., 2U)`.
 
-#### 4.3 `bpf_reno1_cong_avoid()` — Slow Start and Reno Additive Increase (TODOs 2–4)
+### 4.3 `bpf_reno1_cong_avoid()` — Slow Start and Reno Additive Increase (TODOs 2–4)
 
 ```c
 SEC("struct_ops")
@@ -433,7 +432,7 @@ void BPF_PROG(bpf_reno1_cong_avoid, struct sock *sk, __u32 ack, __u32 acked)
 - **TODO 3 (Slow Start and boundary handoff)**: While `tcp_in_slow_start(tp)` is true, grows `tp->snd_cwnd` up to `tp->snd_ssthresh`, subtracts the consumed growth (`cwnd - tp->snd_cwnd`) from `acked`, and returns early if `acked` reaches `0`. Any leftover `acked` segments fall through to Congestion Avoidance.
 - **TODO 4 (Reno Additive Increase)**: Accumulates `acked` in `tp->snd_cwnd_cnt`. Once `tp->snd_cwnd_cnt >= tp->snd_cwnd`, subtracts `tp->snd_cwnd` and increments `tp->snd_cwnd` by `1` (clamped at `tp->snd_cwnd_clamp`).
 
-#### 4.4 `bpf_reno1_undo_cwnd()` — Undoing a Spurious Window Reduction (TODO 5)
+### 4.4 `bpf_reno1_undo_cwnd()` — Undoing a Spurious Window Reduction (TODO 5)
 
 ```c
 SEC("struct_ops")
@@ -449,9 +448,9 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
-#### 5.1 Walkthrough of [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/test.pkt)
+### 5.1 Walkthrough of [`test.pkt`](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/reno/step01-slow-start-ai/test.pkt)
 
 `test.pkt` drives `bpf_reno1` through the exact three-round sequence traced in Section 2.3 and verifies `tcpi_snd_cwnd` after each ACK using Python assertions:
 
@@ -469,12 +468,12 @@ __u32 BPF_PROG(bpf_reno1_undo_cwnd, struct sock *sk)
    - `write(4, ..., 22000)` sends 22 segments (`30001:52001`), filling `cwnd = 22`.
    - Receiving `ack 52001` (`acked = 22`) raises `tp->snd_cwnd_cnt` to `18 + 22 = 40 >= 22`, incrementing `tcpi_snd_cwnd` from `22` to `23`.
 
-#### 5.2 Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
+### 5.2 Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - **Why `starter.bpf.c` fails**: In `starter.bpf.c`, `bpf_reno1_cong_avoid()` is a no-op stub. When `ack 10001` arrives in Round 1, `tp->snd_cwnd` remains stuck at its initial value of `10`, triggering the assertion failure on line 30 (`expected cwnd 20 after Slow Start, got 10`).
 - **Why `solution.bpf.c` passes**: With Slow Start, `snd_ssthresh` boundary credit handoff, and Reno Additive Increase implemented, `tcpi_snd_cwnd` reaches `20` in Round 1, `22` in Round 2, and `23` in Round 3, satisfying all assertions.
 
-#### 5.3 How to Run the Test
+### 5.3 How to Run the Test
 
 Run the following commands to see `starter` fail and `solution` (or your completed `starter`) pass:
 
@@ -567,7 +566,6 @@ struct tcp_congestion_ops bpf_reno1 = {
 };
 ```
 
-
 ### `labs/reno/step01-slow-start-ai/test.pkt` (packetdrill test)
 
 ```python
@@ -626,9 +624,8 @@ assert tcpi_snd_cwnd == 23, f"expected cwnd 23 after Reno AI, got {tcpi_snd_cwnd
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/reno/step01-slow-start-ai/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/reno/step01-slow-start-ai/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -719,21 +716,23 @@ struct tcp_congestion_ops bpf_reno1 = {
 
 </details>
 
+
+
 ---
 
 ## Step 2: Loss / Fast Recovery and DSACK Undo
 
-### 1. Goal
+## 1. Goal
 
-In Step 1 of the [Reno Track Overview (`../README.md`)](../README.md), we implemented Slow Start and Congestion Avoidance in an ideal network without packet loss. In real networks, however, **packet loss** due to router buffer overflows and **packet reordering** due to multi-path routing happen constantly. In this step, you will learn how TCP NewReno halves its window upon detecting packet loss (**Multiplicative Decrease**) and how it restores the window (**CWND Undo**) when a Duplicate SACK (**DSACK**) later proves that the loss detection was a false alarm (**spurious retransmission**) caused by packet reordering. You will implement and verify these mechanisms in `bpf_reno2`.
+In Step 1 of the [Reno Track Overview (`../README.md`)](#), we implemented Slow Start and Congestion Avoidance in an ideal network without packet loss. In real networks, however, **packet loss** due to router buffer overflows and **packet reordering** due to multi-path routing happen constantly. In this step, you will learn how TCP NewReno halves its window upon detecting packet loss (**Multiplicative Decrease**) and how it restores the window (**CWND Undo**) when a Duplicate SACK (**DSACK**) later proves that the loss detection was a false alarm (**spurious retransmission**) caused by packet reordering. You will implement and verify these mechanisms in `bpf_reno2`.
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
 Before looking at any code, let us build a complete mental model of what happens during packet loss and spurious retransmission, how TCP NewReno reacts, and how the Linux TCP core divides work with a BPF congestion control (CC) module.
 
-#### Why Does This Problem Happen, and What Is the Idea Behind the Algorithm?
+### Why Does This Problem Happen, and What Is the Idea Behind the Algorithm?
 
 In real networks, two distinct events cause segments to arrive out of order at the receiver:
 
@@ -744,9 +743,9 @@ When segments 2, 3, and 4 arrive before segment 1, the receiver sends three dupl
 
 What if segment 1 was only delayed by packet reordering? Shortly after the sender retransmits segment 1, both the delayed original segment 1 and the retransmitted copy arrive at the receiver. Because the network was not actually congested, halving the congestion window was an overreaction! Once the receiver informs the sender that the same segment arrived twice, the sender performs a **CWND Undo** to restore `snd_cwnd` back to its pre-loss size.
 
-#### Algorithm Rules and Mathematical Formulae
+### Algorithm Rules and Mathematical Formulae
 
-##### 1. Multiplicative Decrease on Loss Detection (RFC 5681)
+#### 1. Multiplicative Decrease on Loss Detection (RFC 5681)
 
 When entering **Fast Recovery (`TCP_CA_Recovery`)** on three duplicate ACKs or **Loss (`TCP_CA_Loss`)** on a Retransmission Timeout (RTO), NewReno sets the new slow start threshold (`snd_ssthresh`) to half of the current `snd_cwnd`, bounded below by 2 segments ([RFC 5681 §3.1](https://www.rfc-editor.org/rfc/rfc5681#section-3.1)):
 
@@ -756,7 +755,7 @@ At the exact same moment, NewReno saves the pre-loss window size into a per-sock
 
 $$\text{loss}_{\text{cwnd}} = \text{snd}_{\text{cwnd}}$$
 
-##### 2. Division of Labour Between the TCP Core (PRR) and `.ssthresh`
+#### 2. Division of Labour Between the TCP Core (PRR) and `.ssthresh`
 
 When three duplicate ACKs trigger `TCP_CA_Recovery`, the Linux TCP core calls `tcp_init_cwnd_reduction()`. It is essential to understand who modifies which field:
 
@@ -764,13 +763,13 @@ When three duplicate ACKs trigger `TCP_CA_Recovery`, the Linux TCP core calls `t
 - **Who actually reduces `snd_cwnd`?**: During Recovery, the TCP core uses **PRR (Proportional Rate Reduction, RFC 6937)** (`tcp_cwnd_reduction()`) to smoothly pace `tp->snd_cwnd` down towards `snd_ssthresh`, and `tcp_end_cwnd_reduction()` sets `tp->snd_cwnd = tp->snd_ssthresh` when exiting Recovery.
 - **Why this matters for saving `loss_cwnd`**: Because the TCP core has not yet reduced `tp->snd_cwnd` when it invokes `.ssthresh(sk)`, `tp->snd_cwnd` still holds the exact **pre-loss window size**. Therefore, `.ssthresh(sk)` is the exact place to record `ca->loss_cwnd = tp->snd_cwnd`.
 
-##### 3. Resetting Fractional Credit on RTO Timeout (`TCP_CA_Loss`)
+#### 3. Resetting Fractional Credit on RTO Timeout (`TCP_CA_Loss`)
 
 When packet loss is so severe that Fast Recovery cannot recover it and the Retransmission Timer (RTO) expires, the TCP core transitions the socket to `TCP_CA_Loss`, resets `tp->snd_cwnd = 1`, and restarts transmission from Slow Start.
 
 During the previous Congestion Avoidance phase (when the window was large), `tp->snd_cwnd_cnt` accumulated fractional ACK credits towards the next `+1` window increment. If those stale credits were left intact across an RTO, the socket would prematurely increment `snd_cwnd` as soon as it re-entered Congestion Avoidance. Therefore, upon transitioning to `TCP_CA_Loss`, the CC module must reset `tp->snd_cwnd_cnt = 0`.
 
-##### 4. Detecting Spurious Retransmissions via DSACK and Restoring with `.undo_cwnd`
+#### 4. Detecting Spurious Retransmissions via DSACK and Restoring with `.undo_cwnd`
 
 When both the original delayed packet and the retransmitted packet arrive at the receiver, the receiver reports the duplicate arrival using a **DSACK (Duplicate SACK, [RFC 2883](https://www.rfc-editor.org/rfc/rfc2883) / [RFC 3708](https://www.rfc-editor.org/rfc/rfc3708))** block—a SACK block whose sequence numbers lie *below* the cumulative ACK number (proving that a segment already covered by the cumulative ACK arrived a second time).
 
@@ -782,7 +781,7 @@ $$\text{cwnd}_{\text{undo}} = \max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{
 
 Why return $\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$ instead of simply returning $\text{loss}_{\text{cwnd}}$? Because during a spurious Recovery or Loss episode, incoming ACKs might have already grown `tp->snd_cwnd` past the initial `loss_cwnd` by the time the undo is triggered. Taking the maximum guarantees that undoing a window reduction never accidentally shrinks a window that has already grown larger. (Meanwhile, the TCP core automatically restores `snd_ssthresh` from `tp->prior_ssthresh`.)
 
-#### Concrete Numerical Example and Sequence Diagram (`snd_cwnd = 10`)
+### Concrete Numerical Example and Sequence Diagram (`snd_cwnd = 10`)
 
 Let us trace a concrete example matching `test.pkt`, starting with `snd_cwnd = 10` (1 segment = 1000 bytes). We send 10 segments (`1:10001`), where the first segment (`1:1001`) is delayed in the network while segments 2, 3, and 4 (`1001:4001`) arrive first:
 
@@ -820,11 +819,11 @@ sequenceDiagram
    - The TCP core detects the spurious retransmission and invokes `.undo_cwnd(sk)`.
    - `bpf_reno2` returns `max(5, 10) = 10`, restoring `snd_cwnd` to `10` as the socket returns to `TCP_CA_Open`.
 
-#### What the Kernel Already Provides (`struct tcp_sock`, `struct inet_connection_sock`, and `icsk_ca_priv`)
+### What the Kernel Already Provides (`struct tcp_sock`, `struct inet_connection_sock`, and `icsk_ca_priv`)
 
 Here is the complete inventory of kernel fields and helpers you will use in Step 2:
 
-##### 1. Fields in `struct tcp_sock` (accessed via `tcp_sk(sk)`)
+#### 1. Fields in `struct tcp_sock` (accessed via `tcp_sk(sk)`)
 
 | Field | Type | Access in BPF | Meaning |
 | :--- | :--- | :--- | :--- |
@@ -833,7 +832,7 @@ Here is the complete inventory of kernel fields and helpers you will use in Step
 | `tp->snd_cwnd_cnt` | `u32` | Read / Write | Fractional ACK credit counter for Congestion Avoidance. Must be reset to `0` on `TCP_CA_Loss`. |
 | `tp->snd_cwnd_clamp` | `u32` | Read-only | Maximum allowed `snd_cwnd`. |
 
-##### 2. Per-socket Private Storage: `icsk_ca_priv` and `inet_csk_ca(sk)`
+#### 2. Per-socket Private Storage: `icsk_ca_priv` and `inet_csk_ca(sk)`
 
 Notice what `struct tcp_sock` does **not** have: a dedicated field for the CC module to save `loss_cwnd` or custom counters like `loss_count`.
 
@@ -852,7 +851,7 @@ struct bpf_reno2_ca {
 };
 ```
 
-##### 3. Congestion States `enum tcp_ca_state` (passed as `u8 new_state` to `.set_state`)
+#### 3. Congestion States `enum tcp_ca_state` (passed as `u8 new_state` to `.set_state`)
 
 Just before the TCP core updates a socket's congestion state (`icsk_ca_state`), it calls `.set_state(sk, new_state)` with one of the following constants:
 
@@ -864,11 +863,11 @@ Just before the TCP core updates a socket's congestion state (`icsk_ca_state`), 
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Using the concepts from Section 2, think through the following four questions to design the TODOs in `starter.bpf.c`.
 
-#### Q1. How do we access per-socket custom state (`loss_cwnd` and `loss_count`) in BPF?
+### Q1. How do we access per-socket custom state (`loss_cwnd` and `loss_count`) in BPF?
 
 To restore `snd_cwnd` when a loss event turns out to be spurious, each socket needs its own `loss_cwnd` and `loss_count` without colliding with other sockets. Which helper function gives us access to the per-socket private area, and how is it initialised?
 
@@ -890,7 +889,7 @@ In each hook, `struct bpf_reno2_ca *ca = inet_csk_ca(sk);` gives direct read/wri
 
 </details>
 
-#### Q2. In `.ssthresh(sk)` (TODO 1), what should we save, what should we return, and do we modify `tp->snd_cwnd`?
+### Q2. In `.ssthresh(sk)` (TODO 1), what should we save, what should we return, and do we modify `tp->snd_cwnd`?
 
 When three duplicate ACKs trigger Fast Recovery (`TCP_CA_Recovery`), the TCP core calls `bpf_reno2_ssthresh()`. What should this function store into `ca->loss_cwnd`, what formula should it return, and should it overwrite `tp->snd_cwnd` directly?
 
@@ -906,7 +905,7 @@ Therefore, `bpf_reno2_ssthresh()` should not modify `tp->snd_cwnd`; it only need
 
 </details>
 
-#### Q3. In `.set_state(sk, new_state)` (TODO 2), why reset `tp->snd_cwnd_cnt` to `0` on `TCP_CA_Loss`?
+### Q3. In `.set_state(sk, new_state)` (TODO 2), why reset `tp->snd_cwnd_cnt` to `0` on `TCP_CA_Loss`?
 
 When an RTO fires and the TCP core calls `tcp_set_ca_state(sk, TCP_CA_Loss)`, why should `bpf_reno2_set_state()` reset `tp->snd_cwnd_cnt = 0` alongside incrementing `ca->loss_count++`?
 
@@ -919,7 +918,7 @@ Resetting `tp->snd_cwnd_cnt = 0` when `new_state == TCP_CA_Loss` discards those 
 
 </details>
 
-#### Q4. In `.undo_cwnd(sk)` (TODO 3), why return `max(tp->snd_cwnd, ca->loss_cwnd)` instead of just `ca->loss_cwnd`?
+### Q4. In `.undo_cwnd(sk)` (TODO 3), why return `max(tp->snd_cwnd, ca->loss_cwnd)` instead of just `ca->loss_cwnd`?
 
 When a DSACK proves that a retransmission was unnecessary, the TCP core calls `bpf_reno2_undo_cwnd()`. What edge case does `return max(tp->snd_cwnd, ca->loss_cwnd);` prevent compared to `return ca->loss_cwnd;`?
 
@@ -934,11 +933,11 @@ Returning `ca->loss_cwnd` unconditionally would paradoxically shrink `snd_cwnd` 
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let us walk through each function in `solution.bpf.c`.
 
-#### 1. Per-socket State `struct bpf_reno2_ca` and `bpf_reno2_init()`
+### 1. Per-socket State `struct bpf_reno2_ca` and `bpf_reno2_init()`
 
 ```c
 struct bpf_reno2_ca {
@@ -959,7 +958,7 @@ void BPF_PROG(bpf_reno2_init, struct sock *sk)
 - `inet_csk_ca(sk)` returns `(void *)inet_csk(sk)->icsk_ca_priv`.
 - `bpf_reno2_init()` is invoked when the connection reaches `ESTABLISHED` (or when switching CC via `setsockopt(TCP_CONGESTION)`) and initialises both `loss_cwnd` and `loss_count` to `0`.
 
-#### 2. Saving `snd_cwnd` and Halving `ssthresh`: `bpf_reno2_ssthresh()`
+### 2. Saving `snd_cwnd` and Halving `ssthresh`: `bpf_reno2_ssthresh()`
 
 ```c
 SEC("struct_ops")
@@ -977,7 +976,7 @@ u32 BPF_PROG(bpf_reno2_ssthresh, struct sock *sk)
 - The right shift `tp->snd_cwnd >> 1U` computes integer division by 2 ($\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$), and `max(..., 2U)` enforces the lower bound of 2 segments required by RFC 5681 §3.1.
 - Before returning, it saves the pre-reduction `tp->snd_cwnd` into `ca->loss_cwnd` so `bpf_reno2_undo_cwnd()` can restore it if the loss turns out to be spurious.
 
-#### 3. Handling Transition to `TCP_CA_Loss`: `bpf_reno2_set_state()`
+### 3. Handling Transition to `TCP_CA_Loss`: `bpf_reno2_set_state()`
 
 ```c
 SEC("struct_ops")
@@ -996,7 +995,7 @@ void BPF_PROG(bpf_reno2_set_state, struct sock *sk, u8 new_state)
 - Invoked by `tcp_set_ca_state()` right before updating `icsk_ca_state`.
 - When `new_state == TCP_CA_Loss`, we clear `tp->snd_cwnd_cnt = 0` to discard stale fractional credits and increment `ca->loss_count++`.
 
-#### 4. Undoing Window Reduction: `bpf_reno2_undo_cwnd()`
+### 4. Undoing Window Reduction: `bpf_reno2_undo_cwnd()`
 
 ```c
 SEC("struct_ops")
@@ -1013,15 +1012,15 @@ u32 BPF_PROG(bpf_reno2_undo_cwnd, struct sock *sk)
 - When DSACK or TCP timestamps prove that all retransmissions in the recovery episode were spurious, `tcp_undo_cwnd_reduction()` calls `bpf_reno2_undo_cwnd()`.
 - Returning `max(tp->snd_cwnd, ca->loss_cwnd)` restores the halved window back to the pre-loss `loss_cwnd`.
 
-#### 5. Window Growth (`bpf_reno2_cong_avoid()`) and `struct tcp_congestion_ops`
+### 5. Window Growth (`bpf_reno2_cong_avoid()`) and `struct tcp_congestion_ops`
 
 `bpf_reno2_cong_avoid()` is identical to Step 1 (exponential growth in Slow Start and `+1` per RTT linear growth via `snd_cwnd_cnt` in Congestion Avoidance). Finally, `struct tcp_congestion_ops bpf_reno2` registers `.init`, `.ssthresh`, `.set_state`, `.undo_cwnd`, and `.cong_avoid`.
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
-#### Walkthrough of `test.pkt`
+### Walkthrough of `test.pkt`
 
 `test.pkt` reproduces the exact **packet reordering → Fast Recovery → DSACK Undo** sequence illustrated in Section 2:
 
@@ -1036,7 +1035,7 @@ u32 BPF_PROG(bpf_reno2_undo_cwnd, struct sock *sk)
    - Both the delayed original `1:1001` and the remaining segments arrive at the peer, followed by the duplicate retransmission `1:1001`. The peer replies with a cumulative `ack 10001` containing a **DSACK block `<...,sack 1:1001>`**.
    - The kernel calls `tcp_try_undo_dsack()` → `bpf_reno2_undo_cwnd()`. Lines 39–40 assert that the socket has returned to `tcpi_ca_state == TCP_CA_Open` and that `tcpi_snd_cwnd` has been restored from `5` back to `>= 10` (`tcpi_snd_cwnd >= 10`).
 
-#### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
+### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - **Why `starter.bpf.c` fails**:
   - In `starter.bpf.c`, `bpf_reno2_ssthresh()` is unimplemented and simply returns `tp->snd_cwnd` (`10`), causing the assertion at line 32 (`assert tcpi_snd_ssthresh == 5`) to fail immediately.
@@ -1044,7 +1043,7 @@ u32 BPF_PROG(bpf_reno2_undo_cwnd, struct sock *sk)
 - **Why `solution.bpf.c` passes**:
   - `bpf_reno2_ssthresh()` saves `ca->loss_cwnd = 10` and returns `5` (passing line 32), and upon receiving the DSACK, `bpf_reno2_undo_cwnd()` returns `max(5, 10) = 10` (passing line 40).
 
-#### How to Run
+### How to Run
 
 ```sh
 ../../run_test.sh reno/step02-loss-undo starter
@@ -1159,7 +1158,6 @@ struct tcp_congestion_ops bpf_reno2 = {
 };
 ```
 
-
 ### `labs/reno/step02-loss-undo/test.pkt` (packetdrill test)
 
 ```python
@@ -1206,9 +1204,8 @@ assert tcpi_snd_cwnd >= 10, tcpi_snd_cwnd
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/reno/step02-loss-undo/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/reno/step02-loss-undo/solution.bpf.c</code></summary>
 
 ```c
 /* SPDX-License-Identifier: GPL-2.0 */
@@ -1303,5 +1300,3 @@ struct tcp_congestion_ops bpf_reno2 = {
 ```
 
 </details>
-
----

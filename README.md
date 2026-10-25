@@ -7,8 +7,8 @@ stack, based on **upstream net-next** at commit
 Linux カーネルの TCP スタックを、たとえ話とコードの両方から一歩ずつ
 たどる解説書です。
 
-- 日本語版: [ja/](ja/README.md)（BPF CC ハンズオン: [labs/README.md](labs/README.md)）
-- English: [en/](en/README.md) (BPF CC Hands-on Labs: [labs/README.en.md](labs/README.en.md))
+- 日本語版: [ja/](ja/README.md)（BPF CC / Qdisc ハンズオン: [labs/README.md](labs/README.md)）
+- English: [en/](en/README.md) (BPF CC & Qdisc Hands-on Labs: [labs/README.en.md](labs/README.en.md))
 
 ## GitBook
 

@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 1: Test BPF FQ Deficit Round Robin (DRR) and Sparse Flow Prioritization
+
+0.00 `tc qdisc replace dev tun0 root bpf_fq_drr`
++0.00 `ethtool -K tun0 tso off gso off`
+
+// Setup Flow A (fd 3)
++0.00 socket(..., SOCK_DGRAM, IPPROTO_UDP) = 3
++0.00 connect(3, ..., ...) = 0
+
+// Setup Flow B (fd 4)
++0.00 socket(..., SOCK_DGRAM, IPPROTO_UDP) = 4
++0.00 connect(4, ..., ...) = 0
+
+// Flow A sends 4 packets (1,000 bytes each) at t = 0
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
+
+// Packet 1 of Flow A departs immediately at t = 0 (credit drops 2000 -> 972 > 0)
++0.00 > udp (1000)
+
+// At +0.002, Packet 2 dequeues (credit drops 972 -> -56 <= 0, Flow A moves to fq_old_flows)
++0.002 > udp (1000)
+
+// At +0.002, sparse Flow B sends a 500-byte packet. It enters fq_new_flows!
++0.00 write(4, ..., 500) = 500
+
+// At next slot (+0.004), Flow B's 500-byte packet is dequeued BEFORE Flow A's remaining packets!
++0.002 > udp (500)
+
+// Then Flow A's remaining packets dequeue at +0.006 and +0.008
++0.002 > udp (1000)
++0.002 > udp (1000)

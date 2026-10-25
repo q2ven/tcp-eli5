@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 1: Test packet-limited FIFO (sch->limit = 4) and 2 ms watchdog rate pacing
+
+0.00 `tc qdisc replace dev tun0 root bpf_pfifo`
+0.00 `ethtool -K tun0 tso off gso off`
+
+// Establish a passive TCP connection.
+// MSS = 1012 with 12-byte TCP Timestamps option -> tp->mss_cache == 1000 bytes.
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.01 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 110 ecr 100>
++0.00 accept(3, ..., ...) = 4
+
+// write(4, ..., 6000) bursts 6 segments while cwnd = 10:
+// - Packet 1 (1:1001) dequeues immediately at +0.00, scheduling next_tx_ns = now + 2ms.
+// - Packets 2..5 (1001:2001, 2001:3001, 3001:4001, 4001:5001) enter the 4-packet FIFO.
+// - Packet 6 (5001:6001) exceeds sch->limit = 4 and is tail-dropped!
+// - Watchdog timer fires every 2 ms (+0.002) to dequeue Packets 2..5.
++0.00 write(4, ..., 6000) = 6000
++0.00 > . 1:1001(1000) ack 1
++0.002 > . 1001:2001(1000) ack 1
++0.002 > . 2001:3001(1000) ack 1
++0.002 > . 3001:4001(1000) ack 1
++0.002 > . 4001:5001(1000) ack 1
+
+// Verify that bpf_pfifo recorded at least 1 tail drop
++0.01 `tc -s qdisc show dev tun0 | grep -q "dropped [1-9]"`

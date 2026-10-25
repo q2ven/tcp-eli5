@@ -1,4 +1,4 @@
-# 17. ハンズオン (3): BPF CC と packetdrill で作る TCP BBR
+# 20. ハンズオン (3): BPF CC と packetdrill で作る TCP BBR
 
 トラック 1（Reno）とトラック 2（CUBIC）では、「パケットロスが起きるまで `cwnd` を増やし続け、ロスが起きたら `cwnd` を減らす」という **ロスベース（Loss-Based）輻輳制御** を実装しました。1980 年代の Van Jacobson による設計以来、約 30 年間にわたりインターネットを支えてきたアプローチです。
 
@@ -294,17 +294,17 @@ for step in bbr/step0*; do ./run_test.sh "$step" solution; done
 
 ## Step 1: `.cong_control` フックと Delivery Rate からの Pacing Rate 計算
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-このステップでは、BPF `struct_ops`（`struct tcp_congestion_ops`）を用いて、BBR（Bottleneck Bandwidth and Round-trip propagation time）の最も基本的な仕組みである **配送レート（Delivery Rate）に基づくペーシングレート（Pacing Rate）制御** を実装します。従来のロスベース輻輳制御（Reno / CUBIC）が用いる `.cong_avoid` フックと BBR が用いる `.cong_control` フックの違いを理解し、カーネルが計測した `struct rate_sample` から送信レート `sk->sk_pacing_rate` を動的に更新できるようになることがゴールです（BBR トラック全体の構成は [../README.md](../README.md) を参照してください）。
+このステップでは、BPF `struct_ops`（`struct tcp_congestion_ops`）を用いて、BBR（Bottleneck Bandwidth and Round-trip propagation time）の最も基本的な仕組みである **配送レート（Delivery Rate）に基づくペーシングレート（Pacing Rate）制御** を実装します。従来のロスベース輻輳制御（Reno / CUBIC）が用いる `.cong_avoid` フックと BBR が用いる `.cong_control` フックの違いを理解し、カーネルが計測した `struct rate_sample` から送信レート `sk->sk_pacing_rate` を動的に更新できるようになることがゴールです（BBR トラック全体の構成は [../README.md](#) を参照してください）。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
 コードを書いたり設計の問いを考えたりする前に、まず「なぜ BBR はペーシングレートを制御するのか」「どのように配送レートから送信レートを計算するのか」「カーネルはどの構造体フィールドを提供してくれるのか」を基礎から整理しましょう。
 
-#### なぜ `cwnd` だけでは不十分なのか？（ペーシングの直感）
+### なぜ `cwnd` だけでは不十分なのか？（ペーシングの直感）
 
 Reno や CUBIC のような従来のロスベース輻輳制御は、「ネットワーク内に同時に存在できる未確認パケット数の上限」である **輻輳ウィンドウ（`snd_cwnd`）** だけを制御します。しかし、`snd_cwnd` による制御には 2 つの構造的な弱点があります。
 
@@ -326,17 +326,17 @@ flowchart LR
     end
 ```
 
-#### 配送レート（Delivery Rate）と STARTUP ゲインの計算式
+### 配送レート（Delivery Rate）と STARTUP ゲインの計算式
 
 ACK が到着するたびに、Linux カーネルは「直近の観測区間 `interval_us`（マイクロ秒）の間に、何個のセグメント `delivered` が相手に届いたか」を計測します。1 セグメントあたりのペイロードサイズを `mss_cache`（バイト）、1 秒を `USEC_PER_SEC = 1,000,000` マイクロ秒とすると、瞬間配送レート $\text{bw}$（bytes/sec）は次の式で求まります。
 
 $$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
-##### なぜ整数演算では「先に掛けてから割る」のか？
+#### なぜ整数演算では「先に掛けてから割る」のか？
 
 C 言語（および BPF）の整数除算では小数点以下が切り捨てられます。もし先に `delivered / interval_us` を計算すると、たとえば `delivered = 10`、`interval_us = 10000` のとき `10 / 10000 = 0` に潰れてしまいます。そのため、必ず **分子（`delivered * mss_cache * USEC_PER_SEC`）を 64 ビット符号なし整数（`__u64`）で先に掛け算してから、`div64_u64()` で `interval_us` で割る** 必要があります。
 
-##### 固定小数点によるゲイン（`BBR_HIGH_GAIN`）の適用
+#### 固定小数点によるゲイン（`BBR_HIGH_GAIN`）の適用
 
 コネクション開始直後の **STARTUP フェーズ**（Reno のスロースタートに相当）では、回線の最大帯域を素早く探索するため、計測された配送レートよりも高いレートで送信します。BBR の理論値は、1 RTT ごとに送信レートを 2 倍にするゲイン $2 / \ln(2) \approx 2.885$ です。
 
@@ -344,7 +344,7 @@ C 言語（および BPF）の整数除算では小数点以下が切り捨て�
 
 $$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
-##### コネクション確立時（`.init`）の初期ペーシングレート
+#### コネクション確立時（`.init`）の初期ペーシングレート
 
 3-way ハンドシェイクが完了した直後（`.init` フックが呼ばれた時点）では、まだデータパケットに対する ACK が一度も返ってきていないため、`rate_sample` が存在しません。最初のウィンドウ分（`snd_cwnd = 10` セグメント）がバースト送信されるのを防ぐため、`.init` では初期 `snd_cwnd` とハンドシェイクの RTT（`rtt_us`）から初期帯域を推定し、`BBR_HIGH_GAIN` を掛けて初期 `sk_pacing_rate` を設定します。
 
@@ -352,7 +352,7 @@ $$\text{init}_{\text{bw}} = \frac{\text{snd}_{\text{cwnd}} \times \text{mss}_{\t
 
 $$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_{\text{HIGH,GAIN}}) \gg \text{BBR}_{\text{SCALE}}$$
 
-#### 具体的な数値例（`test.pkt` のシナリオ）
+### 具体的な数値例（`test.pkt` のシナリオ）
 
 具体的な数値で計算の流れを確認しましょう（`mss_cache = 1000` バイトとします）。
 
@@ -365,7 +365,7 @@ $$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_
    - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$（1.0 MB/s）
    - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$（約 2.82 MB/s）
 
-#### カーネルが提供する構造体とフィールド（BPF から使える部品）
+### カーネルが提供する構造体とフィールド（BPF から使える部品）
 
 このステップを実装するにあたり、Linux カーネルおよび `bpf_cc_helpers.h` が最初から用意しているフックと構造体フィールドは以下の通りです。
 
@@ -391,11 +391,11 @@ $$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の解説を踏まえて、`starter.bpf.c` の TODO を埋めるための 4 つの設計クエスチョンを考えてみましょう。
 
-#### Q1. BBR ではどのフックを使い、ソケットごとのプライベート構造体（`icsk_ca_priv`）は必要でしょうか？
+### Q1. BBR ではどのフックを使い、ソケットごとのプライベート構造体（`icsk_ca_priv`）は必要でしょうか？
 
 Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1` ではどのフックを実装すべきでしょうか？また、Step 1 の仕様（直近の `rate_sample` から瞬間レートを計算して `sk->sk_pacing_rate` に書き込む）において、`icsk_ca_priv` に独自の構造体を定義する必要はあるでしょうか？
 
@@ -407,7 +407,7 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 
 </details>
 
-#### Q2. `.init(sk)` で内部ペーシングを有効化し、ゼロ除算を避けて初期レートを設定するにはどう書きますか？
+### Q2. `.init(sk)` で内部ペーシングを有効化し、ゼロ除算を避けて初期レートを設定するにはどう書きますか？
 
 コネクション確立時に呼ばれる `bpf_bbr1_init()` では、(1) TCP スタックの内部ペーシングを有効化し、(2) `tp->srtt_us` からマイクロ秒単位の初期 RTT を取り出して初期 `sk->sk_pacing_rate` を設定します。`tp->srtt_us` が `0` の場合や非常に小さい場合、どう扱うべきでしょうか？
 
@@ -419,7 +419,7 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 
 </details>
 
-#### Q3. `bpf_bbr1_cong_control()` で無効な `rate_sample` を弾く条件式はどうなりますか？
+### Q3. `bpf_bbr1_cong_control()` で無効な `rate_sample` を弾く条件式はどうなりますか？
 
 すべての ACK で有効な配送レートが計測できるわけではありません（たとえば新しいデータを ACK していないパケットなど）。`const struct rate_sample *rs` のどのフィールドをチェックして早期 `return` すべきでしょうか？
 
@@ -436,7 +436,7 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 
 </details>
 
-#### Q4. `rs` から瞬間配送レート（bytes/sec）を求め、`BBR_HIGH_GAIN` を掛けて `sk->sk_pacing_rate` を更新する C コードはどう書きますか？
+### Q4. `rs` から瞬間配送レート（bytes/sec）を求め、`BBR_HIGH_GAIN` を掛けて `sk->sk_pacing_rate` を更新する C コードはどう書きますか？
 
 有効な `rs` が得られた後、`rs->delivered`、`tp->mss_cache`、`USEC_PER_SEC`、`rs->interval_us`、`BBR_HIGH_GAIN`、`BBR_SCALE` を使って `sk->sk_pacing_rate` を計算する手順を組み立ててみましょう。
 
@@ -458,11 +458,11 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) の各パートを順番に解説します。
 
-#### 1. 固定小数点マクロの定義
+### 1. 固定小数点マクロの定義
 
 ```c
 #define BBR_SCALE	10
@@ -473,7 +473,7 @@ Reno や CUBIC では `.cong_avoid` を使いましたが、今回の `bpf_bbr1`
 - `BBR_SCALE = 10`（`BBR_UNIT = 1024`）を固定小数点の基準（`1.0x`）とします。
 - `BBR_HIGH_GAIN = 2885` は STARTUP フェーズのペーシングゲインを表します。任意のレート `rate` に対して `(rate * BBR_HIGH_GAIN) >> BBR_SCALE` を計算することで、浮動小数点を使わずに約 `2.817` 倍（`2885 / 1024`）のレート乗算を行います。
 
-#### 2. `bpf_bbr1_init()` — ペーシングの有効化と初期レート設定
+### 2. `bpf_bbr1_init()` — ペーシングの有効化と初期レート設定
 
 ```c
 SEC("struct_ops")
@@ -500,7 +500,7 @@ void BPF_PROG(bpf_bbr1_init, struct sock *sk)
 - `tp->snd_cwnd * tp->mss_cache * USEC_PER_SEC` を `rtt_us` で割って初期帯域幅（bytes/sec）を求め、`BBR_HIGH_GAIN` を掛けて `sk->sk_pacing_rate` に設定します。
 - `sk->sk_pacing_status = SK_PACING_NEEDED` により、ソケットの内部ペーシングを有効化します。
 
-#### 3. `bpf_bbr1_cong_control()` — `rate_sample` からのペーシングレート更新
+### 3. `bpf_bbr1_cong_control()` — `rate_sample` からのペーシングレート更新
 
 ```c
 SEC("struct_ops")
@@ -531,7 +531,7 @@ void BPF_PROG(bpf_bbr1_cong_control, struct sock *sk, __u32 ack, int flag,
 - 配送されたバイト数 `(__u64)rs->delivered * tp->mss_cache` に `USEC_PER_SEC` を掛け、`div64_u64()` で `rs->interval_us` で割ることで瞬間配送レート（bytes/sec）を算出します。
 - `(rate * BBR_HIGH_GAIN) >> BBR_SCALE` で STARTUP ゲインを適用し、`sk->sk_pacing_rate` を更新します。
 
-#### 4. `bpf_bbr1_ssthresh()` と `bpf_bbr1_undo_cwnd()`
+### 4. `bpf_bbr1_ssthresh()` と `bpf_bbr1_undo_cwnd()`
 
 ```c
 SEC("struct_ops")
@@ -551,7 +551,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/test.pkt) は以下のパケットシーケンスで `bpf_bbr1` の動作を検証します。
 
@@ -575,7 +575,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
    - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/starter.bpf.c) では `bpf_bbr1_cong_control()` が未実装（空）であるため、`tcpi_pacing_rate` が初期値 `281,738 B/s` のまま変化せず、32 行目の `assert tcpi_pacing_rate > 500000` で失敗します。
    - [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) では `1,000,000 * 2885 >> 10 = 2,817,382 B/s`（約 2.82 MB/s）に更新されるため、32〜33 行目のアサート（`2000000 < tcpi_pacing_rate < 3500000`）をすべてパスします。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 以下のコマンドで `starter`（失敗を確認）と `solution`（テスト通過を確認）を実行できます。
 
@@ -585,7 +585,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
 ```
 
 
-### `labs/bbr/step01-pacing-rate/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step01-pacing-rate/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -662,8 +662,7 @@ struct tcp_congestion_ops bpf_bbr1 = {
 };
 ```
 
-
-### `labs/bbr/step01-pacing-rate/test.pkt`（packetdrill テスト）
+### `labs/bbr/step01-pacing-rate/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -701,7 +700,6 @@ assert tcpi_pacing_rate > 500000, f"expected pacing_rate > 500000, got {tcpi_pac
 assert 2000000 < tcpi_pacing_rate < 3500000, f"expected pacing_rate ~2.82MB/s, got {tcpi_pacing_rate}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step01-pacing-rate/solution.bpf.c</code></summary>
@@ -790,21 +788,23 @@ struct tcp_congestion_ops bpf_bbr1 = {
 
 </details>
 
+
+
 ---
 
 ## Step 2: BtlBw (最大帯域フィルタ) と RTprop (最小 RTT フィルタ) による BDP 計算
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
 Step 1 では、直近の ACK から得られた配送レート（`rs->delivered / rs->interval_us`）を使って毎回 `sk_pacing_rate` を上書きしました。しかし実際のネットワークでは、ルータのキューにパケットが溜まれば RTT は一時的に膨らみ、アプリケーションの送信が一時停止すれば配送レートは本来の回線容量よりはるかに低い値になります。このステップでは、BBR のネットワーク経路モデルの 2 本柱である **RTprop（往復伝播遅延: 最小 RTT フィルタ）** と **BtlBw（ボトルネック帯域幅: 最大帯域フィルタ）** をソケットのプライベート領域（`icsk_ca_priv`）で追跡し、両者の積である **BDP（帯域遅延積: Bandwidth-Delay Product）** から `snd_cwnd` と `sk_pacing_rate` を決定する仕組みを実装します（トラック全体の概要は [../README.md](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/README.md) を参照してください）。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
 コードの設計に入る前に、BBR がどのようにして「ノイズの混じった毎回の ACK サンプル」から「経路の真の物理特性（伝播遅延とボトルネック帯域）」を抽出するのか、そしてカーネルがどのデータ構造を提供しているのかを整理しましょう。
 
-#### なぜ「最新のサンプルで毎回上書き」してはいけないのか？
+### なぜ「最新のサンプルで毎回上書き」してはいけないのか？
 
 TCP 送信側が ACK を受け取るたびに観測できるのは、その時点の **瞬間的な RTT（`rs->rtt_us`）** と **瞬間的な配送レート（`rs->delivered / rs->interval_us`）** です。しかし、これらをそのまま経路の特性として上書きすると 2 つの深刻な問題が起きます。
 
@@ -817,7 +817,7 @@ TCP 送信側が ACK を受け取るたびに観測できるのは、その時�
    逆に、ある区間で観測される配送レート $\text{bw}_t = \text{delivered} / \Delta t$ は、物理的なボトルネックリンク容量（$\text{BtlBw}$）を絶対に超えることはできません（$\text{bw}_t \le \text{BtlBw}$）。パケットはボトルネックリンクが送り出せる速度以上では受信側に届かないからです。
    一方で、送信側がパイプ（経路）を満たすほど十分なデータを送っていないとき、配送レートは簡単に $\text{BtlBw}$ を下回ります。したがって、ボトルネック帯域 $\text{BtlBw}$ を推定するには、観測された配送レートの **最大値（max-filter）** を取る必要があります。
 
-#### App-Limited（アプリケーション制限）サンプルの不変条件
+### App-Limited（アプリケーション制限）サンプルの不変条件
 
 特に注意が必要なのが、Web サーバのレスポンス間や対話型通信のように、アプリケーションが一時的に少ししかデータを書き込まない **App-Limited（アプリケーション制限）** 状態です。
 
@@ -848,7 +848,7 @@ pkts/s|   |             * (無視して保持!)         |   |
       +---+-------------+----------> 時間         +---+-------------+----------> 時間
 ```
 
-#### BDP（帯域遅延積）の固定小数点計算と `snd_cwnd`
+### BDP（帯域遅延積）の固定小数点計算と `snd_cwnd`
 
 最小 RTT（`ca->min_rtt_us`）と最大帯域（`ca->max_bw`）が求まれば、パイプをちょうど 100% 満たすのに必要なインフライトパケット数である **BDP（Bandwidth-Delay Product: 帯域遅延積）** が計算できます。
 
@@ -874,7 +874,7 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
 4. 算出された `bdp` に対し、受信側の遅延 ACK（Delayed ACK）や TSO/GSO 送信の量子化誤差を吸収するためのマージンとして `4` パケットを加え、最小ターゲット `BBR_CWND_MIN_TARGET`（`4U`）との最大値を `tp->snd_cwnd` に設定します。
    $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
 
-#### パケットタイムド・ラウンド（`round_cnt`）の数え方
+### パケットタイムド・ラウンド（`round_cnt`）の数え方
 
 後のステップ（Step 3 の Startup 終了判定や Step 4 の ProbeBW ゲインサイクル）では、「何ラウンドトリップ（RTT）経過したか」を時計の秒数ではなく **パケットの往復回数（Packet-timed Round Trip）** で数えます。このステップでその土台も一緒に実装します。
 
@@ -883,7 +883,7 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
 3. したがって、到着した ACK の `rs->prior_delivered` が `ca->next_rtt_delivered` 以上になった瞬間（32 ビット符号なし整数のラップアラウンドを考慮して `!before(rs->prior_delivered, ca->next_rtt_delivered)` が真になった瞬間）、「このラウンドが始まった後に送信されたパケットが 1 往復して ACK された＝**1 ラウンドが完了した**」と判定できます。
 4. 1 ラウンド完了したら `ca->round_cnt++` でカウンタを 1 増やし、次のラウンドの終了境界を現在の `ca->next_rtt_delivered = tp->delivered` に更新します。
 
-#### 具体例（`test.pkt` の数値で計算してみよう）
+### 具体例（`test.pkt` の数値で計算してみよう）
 
 MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に起きたときの計算を追ってみましょう。
 
@@ -902,7 +902,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
   - **BtlBw フィルタ**: 今回の $\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$（$40\text{ pkts/s}$）ですが、`rs->is_app_limited == 1` かつ `bw < ca->max_bw` なので無視され、`ca->max_bw = 16777` が維持されます。
   - その結果、Phase 2 の後も `tp->snd_cwnd == 14` と `sk_pacing_rate`（約 $990\text{ KB/s}$）が崩れずに保たれます。
 
-#### カーネルが提供するフィールドとヘルパー（このステップで使うもの）
+### カーネルが提供するフィールドとヘルパー（このステップで使うもの）
 
 コードを書く前に、カーネル（および [bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h)）がすでに用意している構造体フィールドとヘルパー関数を確認しておきましょう。
 
@@ -931,11 +931,11 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) の TODO を埋めるための設計を 4 つの問いで確認しましょう。すべての答えはセクション 2 の内容から導き出せます。
 
-#### Q1. 初回サンプル（`ca->min_rtt_us == 0`）も考慮した `RTprop` 最小値フィルタの条件式はどう書くべきでしょうか？
+### Q1. 初回サンプル（`ca->min_rtt_us == 0`）も考慮した `RTprop` 最小値フィルタの条件式はどう書くべきでしょうか？
 
 `bpf_bbr2_init()` では `ca->min_rtt_us = 0;` に初期化されています。もし `bpf_bbr2_cong_control()` で単純に `if (rs->rtt_us > 0 && rs->rtt_us < ca->min_rtt_us)` とだけ書いてしまうと、何が起きるでしょうか？また、型比較（`rs->rtt_us` は符号付き `__s32`、`ca->min_rtt_us` は符号なし `__u32`）も含めて正しい条件式はどうなりますか？
 
@@ -951,7 +951,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 </details>
 
-#### Q2. `starter.bpf.c` の TODO 2 で `ca->max_bw` を更新する C コードはどう書くべきでしょうか？
+### Q2. `starter.bpf.c` の TODO 2 で `ca->max_bw` を更新する C コードはどう書くべきでしょうか？
 
 [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) では `ca->max_bw = bw;` と無条件に上書きしています。セクション 2 で学んだ「App-Limited サンプルの不変条件」と「最大値フィルタ」の両方を満たすには、この部分をどのような `if` 文に書き換えればよいでしょうか？
 
@@ -969,7 +969,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 </details>
 
-#### Q3. パケットタイムド・ラウンド（`ca->round_cnt`）はいつ、どのように進めますか？
+### Q3. パケットタイムド・ラウンド（`ca->round_cnt`）はいつ、どのように進めますか？
 
 `bpf_bbr2_init()` で `ca->next_rtt_delivered = tp->delivered;` と初期化したあと、`bpf_bbr2_cong_control()` で有効な配送サンプル（`rs->delivered > 0 && rs->interval_us > 0`）が届いたときに 1 ラウンドの完了を判定して次のラウンドを開始するコードはどうなりますか？
 
@@ -987,7 +987,7 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 </details>
 
-#### Q4. `bbr_bdp()` が未初期化時のガードと切り上げ除算（ceil）を行っているのはなぜですか？
+### Q4. `bbr_bdp()` が未初期化時のガードと切り上げ除算（ceil）を行っているのはなぜですか？
 
 `bbr_bdp()` の実装を見ると、先頭で `if (!ca->min_rtt_us || !bw) return 10U;` をチェックし、後半で `(((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT` を計算しています。この 2 つの処理がそれぞれ防いでいるエッジケースは何でしょうか？
 
@@ -1001,11 +1001,11 @@ MSS = $1000\text{ Bytes}$ の経路で、以下の 2 つのフェーズが順に
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) の各関数と固定小数点演算の流れを順に解説します。
 
-#### 1. スケール定数とソケット状態構造体 `struct bpf_bbr2_ca`
+### 1. スケール定数とソケット状態構造体 `struct bpf_bbr2_ca`
 
 ```c
 #define BW_SCALE 24
@@ -1026,7 +1026,7 @@ struct bpf_bbr2_ca {
 - `BW_UNIT`（`1 << 24`）は帯域（$\text{packets}/\mu\text{s}$）のスケール、`BBR_UNIT`（`1 << 8`）はゲインのスケールです。
 - `struct bpf_bbr2_ca` は `inet_csk_ca(sk)` を通じて各ソケットの `icsk_ca_priv` 内に配置されます。
 
-#### 2. ペーシングレート変換ヘルパー `bbr_rate_bytes_per_sec()` と `bbr_set_pacing_rate()`
+### 2. ペーシングレート変換ヘルパー `bbr_rate_bytes_per_sec()` と `bbr_set_pacing_rate()`
 
 ```c
 static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate, int gain)
@@ -1045,7 +1045,7 @@ static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate,
 - これに `mss`（Bytes/packet）と `gain`（`>> BBR_SCALE`）、さらに 1 秒あたりのマイクロ秒数 `USEC_PER_SEC` から 1% のペーシングマージン（`BBR_PACING_MARGIN_PCT = 1U`）を差し引いた係数（$990,000$）を掛け、最後に `>> BW_SCALE` でスケールを戻すことで、1 秒あたりのバイト数（`Bytes/sec`）に変換します。
 - `bbr_set_pacing_rate()` はこの値を `sk->sk_max_pacing_rate` でクランプした上で `sk->sk_pacing_rate` に書き込みます。
 
-#### 3. BDP 計算ヘルパー `bbr_bdp()`
+### 3. BDP 計算ヘルパー `bbr_bdp()`
 
 ```c
 static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
@@ -1063,7 +1063,7 @@ static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
 
 - `ca->min_rtt_us` または `bw` が未計測（`0`）の間は `10U` を返し、両方揃っている場合は `w = (__u64)bw * ca->min_rtt_us` に `gain` を適用して `BW_UNIT` で切り上げ除算した BDP パケット数を返します。
 
-#### 4. 初期化 `bpf_bbr2_init()` と ACK ごとの更新 `bpf_bbr2_cong_control()`
+### 4. 初期化 `bpf_bbr2_init()` と ACK ごとの更新 `bpf_bbr2_cong_control()`
 
 ```c
 SEC("struct_ops")
@@ -1127,11 +1127,11 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/test.pkt) は、高帯域バーストのあとに「App-Limited かつ RTT が膨張した低レートサンプル」を入力し、フィルタの有無による挙動の差を検証します。
 
-#### `test.pkt` のパケットトレース解説
+### `test.pkt` のパケットトレース解説
 
 1. **3-way ハンドシェイク（14〜17 行目、RTT = $10\text{ ms}$, ペイロード MSS = $1000\text{ Bytes}$）**:
    - 時刻 `0.00` に SYN / SYN-ACK を交換し、`+0.01`（$10\text{ ms}$ 後）に ACK が到着してコネクションが確立されます。TCP タイムスタンプオプション（12 バイト）込みで `mss 1012` が指定されているため、ペイロード 1 セグメントあたりちょうど $1000\text{ Bytes}$ になります。
@@ -1145,7 +1145,7 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
    - **なぜ `starter.bpf.c` は失敗するのか**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) は毎回 `ca->min_rtt_us = rs->rtt_us` と `ca->max_bw = bw` をそのまま上書きしてしまうため、Phase 2 の ACK で `max_bw` が $1/25$（$40\text{ pkts/s}$）に崩壊し、`tcpi_snd_cwnd` が `5`（$\text{BDP } 1 + 4$）、`tcpi_pacing_rate` が約 $39.6\text{ KB/s}$ に落ちて 44〜45 行目のアサートに失敗します。
    - **なぜ `solution.bpf.c` はパスするのか**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) では最小値フィルタが `min_rtt_us = 10000` を守り、App-Limited ガード付き最大値フィルタが `max_bw = 1000 pkts/s` を守るため、Phase 2 の後も `tcpi_snd_cwnd == 14` と `tcpi_pacing_rate`（約 $990\text{ KB/s}$）が維持されてテストをパスします。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 以下のコマンドで、`starter` の失敗と `solution` の成功を確認できます。
 
@@ -1155,7 +1155,7 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 ```
 
 
-### `labs/bbr/step02-btlbw-rtprop/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step02-btlbw-rtprop/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1309,8 +1309,7 @@ struct tcp_congestion_ops bpf_bbr2 = {
 };
 ```
 
-
-### `labs/bbr/step02-btlbw-rtprop/test.pkt`（packetdrill テスト）
+### `labs/bbr/step02-btlbw-rtprop/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -1360,7 +1359,6 @@ assert tcpi_snd_cwnd == 14, f"expected cwnd 14 to be preserved, got {tcpi_snd_cw
 assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s to be preserved, got {tcpi_pacing_rate}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
@@ -1517,19 +1515,21 @@ struct tcp_congestion_ops bpf_bbr2 = {
 
 </details>
 
+
+
 ---
 
 ## Step 3: STARTUP から DRAIN・PROBE_BW への状態遷移（満杯パイプ検出）
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-このステップでは、BBR のステートマシンにおける初期状態 **`BBR_STARTUP`（指数的な帯域探索）** から **`BBR_DRAIN`（STARTUP で溜まった過剰キューの排出）**、そして定常状態である **`BBR_PROBE_BW`（推定ボトルネック帯域での巡航）** への状態遷移を実装します。パケットロスに頼らずに「ボトルネックのパイプが満杯になった（Full Pipe）」ことを検出する `bbr_check_full_bw_reached()`、キューを排出して巡航モードへ移る `bbr_check_drain()`、および各モードのゲインを切り替える `bbr_update_gains()` を完成させましょう（BBR トラック全体の構成は [../README.md](../README.md) を参照してください）。
+このステップでは、BBR のステートマシンにおける初期状態 **`BBR_STARTUP`（指数的な帯域探索）** から **`BBR_DRAIN`（STARTUP で溜まった過剰キューの排出）**、そして定常状態である **`BBR_PROBE_BW`（推定ボトルネック帯域での巡航）** への状態遷移を実装します。パケットロスに頼らずに「ボトルネックのパイプが満杯になった（Full Pipe）」ことを検出する `bbr_check_full_bw_reached()`、キューを排出して巡航モードへ移る `bbr_check_drain()`、および各モードのゲインを切り替える `bbr_update_gains()` を完成させましょう（BBR トラック全体の構成は [../README.md](#) を参照してください）。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
-#### なぜロスを待たずに「パイプ満杯」を検出できるのか？
+### なぜロスを待たずに「パイプ満杯」を検出できるのか？
 
 TCP コネクションが開始された直後、送信側はボトルネックリンクの帯域（`BtlBw`）が 1 Mbps なのか 10 Gbps なのか全く分かりません。そのため、最初は送信レートを毎ラウンド（1 RTT ごと）倍増させて、利用可能な帯域を素早く探索する必要があります。
 
@@ -1551,7 +1551,7 @@ Reno や CUBIC のような**ロスベース（Loss-based）**の輻輳制御で
 
 $$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{\text{bw,thresh}}}{2^{\text{BBR}_{\text{SCALE}}}} = \left(\text{full}_{\text{bw}} \times 320\right) \gg 8$$
 
-#### 時計を使わずに「パケット数」で 1 ラウンド（1 RTT）を数える仕組み
+### 時計を使わずに「パケット数」で 1 ラウンド（1 RTT）を数える仕組み
 
 「3 ラウンド連続で帯域が 25% 伸びなかった」と判定するには、1 ラウンド（1 往復）の区切りを正確に知る必要があります。BBR はタイマーや時刻ではなく、**累積配送パケット数（`tp->delivered`）** を使った「パケット時間（Packet-timed round trip）」でラウンドを数えます。
 
@@ -1560,7 +1560,7 @@ $$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{
 3. 1 RTT 後、そのパケットに対する ACK が届くと、カーネルは保存されていたスナップショット値を `rs->prior_delivered` に入れて `.cong_control()` に渡します。
 4. したがって、`rs->prior_delivered >= ca->next_rtt_delivered`（32 ビット整数のラップアラウンドを考慮して `!before(rs->prior_delivered, ca->next_rtt_delivered)`）が成り立った瞬間、「このラウンド開始以降に送信されたパケットが 1 往復して ACK された＝**1 ラウンドが完了した**」と分かります。その時点で `ca->next_rtt_delivered = tp->delivered` に進め、`ca->round_cnt++`、`ca->round_start = 1` をセットします。
 
-#### なぜ `BBR_STARTUP` の直後に `BBR_DRAIN` を挟むのか？
+### なぜ `BBR_STARTUP` の直後に `BBR_DRAIN` を挟むのか？
 
 `BBR_STARTUP` では `pacing_gain` と `cwnd_gain` を `bbr_high_gain`（約 `2.89x`）に設定し、さらに帯域の頭打ちを確認するまで 3 ラウンド様子を見ます。そのため、`full_bw_reached = 1` と判定された時点では、ネットワーク内のインフライトデータ量は最大で約 `2.89x BDP` まで膨らんでいます。パイプ自体の容量は `1.0x BDP` なので、残りの**約 `1.89x BDP` はボトルネックルータのキューに滞留している過剰パケット**です。
 
@@ -1590,7 +1590,7 @@ flowchart LR
 - **`bbr_set_pacing_rate()`**: パイプが満杯になる前（`!ca->full_bw_reached`）は、一時的に小さなレートサンプルが出ても加速が止まらないよう `rate > sk->sk_pacing_rate` のときだけ `sk->sk_pacing_rate` を更新（単調増加）します。`ca->full_bw_reached == 1` になった後は、`BBR_DRAIN`（`0.35x`）や `BBR_PROBE_BW`（`1.0x`）の低いレートへ引き下げられるよう、無条件で `sk->sk_pacing_rate = rate` を設定します。
 - **`bbr_set_cwnd()`**: `ca->full_bw_reached == 1` になった後は、`cwnd = min(cwnd + acked, target_cwnd)` によって `target_cwnd`（`BBR_PROBE_BW` では `2.0x BDP`、最小値 `BBR_CWND_MIN_TARGET = 4`）へ収束させます。
 
-#### 具体例で追う数値トレース（`BtlBw = 100 KB/s` 固定の経路）
+### 具体例で追う数値トレース（`BtlBw = 100 KB/s` 固定の経路）
 
 ボトルネック帯域が常に `100 KB/s`（`MSS = 1000` バイト、`RTT = 10 ms`、1 ラウンドあたり 1 パケット＝`bw = 1677`）である経路を考えます。
 
@@ -1608,7 +1608,7 @@ flowchart LR
    - 3 回連続で `ca->max_bw (1677) < bw_thresh (2096)` となったため、`++ca->full_bw_cnt` が `3` に達し、**`ca->full_bw_reached = 1`** がセットされます！
    - `bbr_check_drain()` が `BBR_STARTUP` から `BBR_DRAIN` へ遷移させ、`tp->snd_ssthresh` に `1.0x BDP` を設定します。さらにその時点で `tcp_packets_in_flight(tp) <= BDP` であれば、同じ ACK 処理の中で即座に `BBR_PROBE_BW`（`pacing_gain = 1.0x`、`cwnd_gain = 2.0x`）へ遷移し、ペーシングレートは約 `99 KB/s`（`100 KB/s` から 1% マージンを引いた値）へ引き下げられます。
 
-#### カーネルが提供する構造体フィールドと `icsk_ca_priv`
+### カーネルが提供する構造体フィールドと `icsk_ca_priv`
 
 BPF 輻輳制御プログラムを書くにあたり、カーネルが管理しているフィールドと、BPF 側で独自に保持するプライベート構造体（`icsk_ca_priv`）の役割を整理しておきましょう。
 
@@ -1648,11 +1648,11 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) の 3 つの TODO を実装する前に、以下の設計上の問いを考えてみましょう。
 
-#### Q1. `bbr_check_full_bw_reached()` はどのような条件のときに早期リターン（スキップ）すべきでしょうか？
+### Q1. `bbr_check_full_bw_reached()` はどのような条件のときに早期リターン（スキップ）すべきでしょうか？
 
 `bbr_check_full_bw_reached()` は ACK ごとに `.cong_control()` から毎回呼び出されます。しかし、すべての ACK で `ca->full_bw_cnt` を進めてしまうと、1 RTT の間に何十回もカウンタが増えて一瞬で `BBR_STARTUP` が終わってしまいます。`ca->full_bw_reached`、`ca->round_start`、`rs->is_app_limited` の 3 つのフラグを使って、どのようなときに何もせず `return` すべきでしょうか？また、判定を行う場合はどのように `bw_thresh` を計算して `ca->full_bw` と `ca->full_bw_cnt` を更新すべきでしょうか？
 
@@ -1671,7 +1671,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 </details>
 
-#### Q2. `bbr_check_drain()` で `BBR_STARTUP -> BBR_DRAIN` と `BBR_DRAIN -> BBR_PROBE_BW` の 2 つの判定を `else if` ではなく独立した 2 つの `if` 文で書くのはなぜでしょうか？
+### Q2. `bbr_check_drain()` で `BBR_STARTUP -> BBR_DRAIN` と `BBR_DRAIN -> BBR_PROBE_BW` の 2 つの判定を `else if` ではなく独立した 2 つの `if` 文で書くのはなぜでしょうか？
 
 `bbr_check_drain()` では、(1) `BBR_STARTUP` から `BBR_DRAIN` への遷移と、(2) `BBR_DRAIN` から `BBR_PROBE_BW` への遷移の 2 つを実装します。もしこれを `if (...) { ... } else if (...) { ... }` で書いてしまうと、受信ウィンドウ制限などでインフライトパケット数が最初から `1.0x BDP` 以下だった場合に何が起きるでしょうか？
 
@@ -1685,7 +1685,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 </details>
 
-#### Q3. `bbr_update_gains()` では、3 つのモードそれぞれに対して `pacing_gain` と `cwnd_gain` にどの定数を設定すべきでしょうか？
+### Q3. `bbr_update_gains()` では、3 つのモードそれぞれに対して `pacing_gain` と `cwnd_gain` にどの定数を設定すべきでしょうか？
 
 `BBR_STARTUP`、`BBR_DRAIN`、`BBR_PROBE_BW` の 3 モードにおいて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) の先頭で定義されている定数（`bbr_high_gain`、`bbr_drain_gain`、`BBR_UNIT`、`bbr_cwnd_gain`）をどのように割り当てればよいでしょうか？特に `BBR_DRAIN` の `cwnd_gain` と `BBR_PROBE_BW` の `cwnd_gain` に注意して整理してみましょう。
 
@@ -1706,11 +1706,11 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/solution.bpf.c) の各関数と固定小数点演算の流れを解説します。
 
-#### 1. スケール定数と各モードのゲイン定義
+### 1. スケール定数と各モードのゲイン定義
 
 - `BW_SCALE = 24`（`BW_UNIT = 1 << 24`）: 配送レート `bw`（packets / $\mu\text{s}$）を整数で保持するためのスケールです。
 - `BBR_SCALE = 8`（`BBR_UNIT = 1 << 8 = 256`）: ゲインやしきい値の `1.0x` を表す固定小数点スケールです。
@@ -1720,7 +1720,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
   - `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320`（$1.25\text{x}$）
   - `bbr_full_bw_cnt = 3U`
 
-#### 2. ラウンド計数と最大帯域の更新: `bbr_update_bw()`
+### 2. ラウンド計数と最大帯域の更新: `bbr_update_bw()`
 
 `bbr_update_bw()` は ACK ごとに呼ばれ、まず `ca->round_start = 0` にクリアした上で、有効なレートサンプル（`rs->delivered > 0 && rs->interval_us > 0`）に対して以下の処理を行います。
 
@@ -1729,7 +1729,7 @@ BPF 輻輳制御プログラムを書くにあたり、カーネルが管理し�
 2. **配送レートの計算と `ca->max_bw` の更新**:
    `bw = div64_u64((__u64)rs->delivered * BW_UNIT, (__u64)rs->interval_us)` を計算し、アプリケーション制限でない（`!rs->is_app_limited`）か、あるいは既存の `ca->max_bw` 以上であれば `ca->max_bw` を更新します。
 
-#### 3. 満杯パイプ検出: `bbr_check_full_bw_reached()`
+### 3. 満杯パイプ検出: `bbr_check_full_bw_reached()`
 
 ```c
 static __always_inline void bbr_check_full_bw_reached(struct sock *sk,
@@ -1756,7 +1756,7 @@ static __always_inline void bbr_check_full_bw_reached(struct sock *sk,
 - ラウンドが完了した瞬間（`ca->round_start == 1`）かつ非アプリ制限（`!rs->is_app_limited`）のときだけ評価します。
 - `ca->full_bw` の 1.25 倍である `bw_thresh` と `ca->max_bw` を比較し、25% 以上の成長が見られなくなったラウンドが 3 回連続したら `ca->full_bw_reached = 1` を立てます。
 
-#### 4. `BBR_DRAIN` と `BBR_PROBE_BW` への状態遷移: `bbr_check_drain()` と `bbr_update_gains()`
+### 4. `BBR_DRAIN` と `BBR_PROBE_BW` への状態遷移: `bbr_check_drain()` と `bbr_update_gains()`
 
 ```c
 static __always_inline void bbr_check_drain(struct sock *sk)
@@ -1781,7 +1781,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt) は、一定帯域（1 セグメント / 10 ms = `100 KB/s`）の経路でパケットを送り、3 ラウンド連続で帯域成長が頭打ちになった後に `BBR_STARTUP` を抜ける様子を検証します。
 
@@ -1802,7 +1802,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
      - `starter.bpf.c` では TODO 部分が空欄のため、Round 4 でも `ca->full_bw_reached` が `0` のまま `BBR_STARTUP` に留まり、`tcpi_pacing_rate` が約 `286 KB/s` のまま下がらず 56 行目の `assert 90000 < tcpi_pacing_rate < 110000` で失敗します。
      - `solution.bpf.c`（または TODO 実装後の `starter.bpf.c`）では、Round 4 で `BBR_PROBE_BW` に遷移するため、`tcpi_pacing_rate` が約 `99 KB/s`（`90000 < tcpi_pacing_rate < 110000`）に下がり、`1 <= tcpi_snd_ssthresh <= 4`、そして `tcpi_snd_cwnd == 4`（`BBR_CWND_MIN_TARGET = 4`）となってすべてのアサーションにパスします。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 以下のコマンドで、`starter` が失敗することと `solution` がパスすることを確認できます。
 
@@ -1812,7 +1812,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 ```
 
 
-### `labs/bbr/step03-startup-drain/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step03-startup-drain/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2069,8 +2069,7 @@ struct tcp_congestion_ops bpf_bbr3 = {
 };
 ```
 
-
-### `labs/bbr/step03-startup-drain/test.pkt`（packetdrill テスト）
+### `labs/bbr/step03-startup-drain/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2133,7 +2132,6 @@ assert 1 <= tcpi_snd_ssthresh <= 4, f"Round 4 exited STARTUP: expected ssthresh 
 assert tcpi_snd_cwnd == 4, f"Round 4 PROBE_BW: expected cwnd == 4, got {tcpi_snd_cwnd}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step03-startup-drain/solution.bpf.c</code></summary>
@@ -2409,19 +2407,21 @@ struct tcp_congestion_ops bpf_bbr3 = {
 
 </details>
 
+
+
 ---
 
 ## Step 4: PROBE_BW の 8 相ゲインサイクル（帯域探索とキュー排出）
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-[Step 3](../step03-startup-drain/README.md) では、接続開始時に `2.89x` の高ゲインでボトルネック帯域を素早く見つける `BBR_STARTUP` と、その過程で膨らんだ過剰キューを排出する `BBR_DRAIN` を実装しました。このステップでは、キュー排出後に移行する定常状態モード **`BBR_PROBE_BW`** の核心である **8 相ペーシングゲインサイクル（`bbr_pacing_gain[]`）** と、各フェーズの遷移判定ロジック（`bbr_is_next_cycle_phase()`、`bbr_advance_cycle_phase()`、`bbr_update_cycle_phase()`、`bbr_update_gains()`）を実装します。BBR トラック全体の構成については [BBR トラック概要 (`../README.md`)](../README.md) を参照してください。
+[Step 3](../step03-startup-drain/README.md) では、接続開始時に `2.89x` の高ゲインでボトルネック帯域を素早く見つける `BBR_STARTUP` と、その過程で膨らんだ過剰キューを排出する `BBR_DRAIN` を実装しました。このステップでは、キュー排出後に移行する定常状態モード **`BBR_PROBE_BW`** の核心である **8 相ペーシングゲインサイクル（`bbr_pacing_gain[]`）** と、各フェーズの遷移判定ロジック（`bbr_is_next_cycle_phase()`、`bbr_advance_cycle_phase()`、`bbr_update_cycle_phase()`、`bbr_update_gains()`）を実装します。BBR トラック全体の構成については [BBR トラック概要 (`../README.md`)](#) を参照してください。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
-#### なぜ定常状態でずっと `1.0x` のレートで送り続けてはいけないのか？
+### なぜ定常状態でずっと `1.0x` のレートで送り続けてはいけないのか？
 
 `BBR_STARTUP` と `BBR_DRAIN` を経て `BBR_PROBE_BW` に入った時点では、その時点の最大ボトルネック帯域 `ca->max_bw`（BtlBw）と最小 RTT `ca->min_rtt_us`（RTprop）が求まっており、インフライトパケット数もちょうどのパイプ容量（`1.0x BDP`）に落ち着いています。
 
@@ -2432,7 +2432,7 @@ struct tcp_congestion_ops bpf_bbr3 = {
 2. **帯域が増えていなかった場合に発生する過剰キュー**:
    逆に、空いている帯域があるか確かめるために `1.25x`（+25%）のレートで 1 RTT の間送信したとします。もしボトルネック帯域が実際には増えていなかった場合、余分に送り込んだ `0.25x BDP` 分のパケットはボトルネックルータのバッファにキューとして溜まります。これをそのまま放置して `1.0x` の送信に戻ると、溜まった `0.25x BDP` のキューはいつまでも消えず、RTT が膨らんだままになり、次の探索のたびにキューが積み重なって最終的にパケットロス（バッファブロート）を引き起こします。
 
-#### BBRv1 の解決策：8 相ペーシングゲインサイクル（`CYCLE_LEN = 8`）
+### BBRv1 の解決策：8 相ペーシングゲインサイクル（`CYCLE_LEN = 8`）
 
 このジレンマを解決するため、BBRv1 の `BBR_PROBE_BW` は **8 つのフェーズ（Phase 0 〜 Phase 7）** を 1 サイクルとして循環します。各フェーズの基本期間は約 1 最小 RTT（`ca->min_rtt_us`）です。
 
@@ -2457,7 +2457,7 @@ flowchart LR
 > **複数フロー間の脱同期化（ランダム開始インデックス）と本演習の初期値**
 > 実際の Linux カーネルの BBRv1 では、`BBR_DRAIN` から `BBR_PROBE_BW` へ入る際に `cycle_idx` を Phase 2〜7（巡航フェーズ）の中からランダムに選択します。これは、同じボトルネックを共有する複数の BBR フローが同時に Phase 0（`1.25x`）に入って一斉にバッファを溢れさせる現象（同期問題）を防ぐためです。一方、本演習の `starter.bpf.c` / `solution.bpf.c` では、`test.pkt` で `BBR_DRAIN` 直後から Phase 0 → Phase 1 → Phase 2 の遷移を決定論的に検証できるよう、`bbr_check_drain()` にて `ca->cycle_idx = 0` から開始しています。
 
-#### 各フェーズの終了条件（`bbr_is_next_cycle_phase()` の 3 分岐）
+### 各フェーズの終了条件（`bbr_is_next_cycle_phase()` の 3 分岐）
 
 「いつ現在のフェーズを終了して次の `cycle_idx` へ進むか」は、フェーズの役割によって異なります。まず、フェーズ開始時刻 `ca->cycle_mstamp` からの経過時間が最小 RTT（`ca->min_rtt_us`）を超えたかどうかを表す基本フラグ `is_full_length` を定義します。
 
@@ -2492,7 +2492,7 @@ bool is_full_length = (tp->tcp_mstamp - ca->cycle_mstamp) > ca->min_rtt_us;
      Phase 1 の目的は「Phase 0 で溜まった過剰キューを抜き、インフライト量を `1.0x BDP` に戻すこと」だけです。もし Phase 0 で実際に帯域が増えていてキューが全く溜まっていなかった場合や、1 RTT 経つ前に素早くキューが抜けて `rs->prior_in_flight <= bbr_inflight(sk, ca->max_bw, BBR_UNIT)`（`1.0x BDP` 以下）になった場合、それ以上 `0.75x` の低速ペーシングを続けるとパイプが空になり、帯域を無駄にしてしまいます。
    - したがって、1 RTT が経過する前であっても、インフライト量が `1.0x BDP` 以下まで下がった瞬間に即座に Phase 1 を切り上げて Phase 2（`1.0x` 巡航）へ移行します。
 
-#### フェーズの進行処理（`bbr_advance_cycle_phase()`）
+### フェーズの進行処理（`bbr_advance_cycle_phase()`）
 
 フェーズ終了条件が満たされたら、インデックス `ca->cycle_idx` を 1 つ進め、長さ `CYCLE_LEN`（`8`）でラップアラウンドさせるとともに、新しいフェーズの開始時刻として現在の `tp->tcp_mstamp` を記録します。`CYCLE_LEN` は 2 のべき乗（`8`）なので、剰余 `% 8` はビット論理積 `& (CYCLE_LEN - 1)`（`& 7`）で高速に計算できます。
 
@@ -2501,7 +2501,7 @@ ca->cycle_idx = (ca->cycle_idx + 1) & (CYCLE_LEN - 1);
 ca->cycle_mstamp = tp->tcp_mstamp;
 ```
 
-#### 具体的な数値例（`test.pkt` のシナリオ）
+### 具体的な数値例（`test.pkt` のシナリオ）
 
 `test.pkt` の設定値を用いて、具体的な数値で計算してみましょう。
 - `MSS = 1000` バイト
@@ -2517,19 +2517,19 @@ ca->cycle_mstamp = tp->tcp_mstamp;
   - **Phase 1（`3/4 = 0.75x`）**: `100,000 * 0.75 * 0.99` ≒ **`74,250 B/s`（約 74 KB/s）**
   - **Phase 2..7（`1.0x`）**: `100,000 * 1.00 * 0.99` ≒ **`99,000 B/s`（約 99 KB/s）**
 
-#### カーネルと `starter.bpf.c` が提供する構造体フィールドとヘルパ関数
+### カーネルと `starter.bpf.c` が提供する構造体フィールドとヘルパ関数
 
 セクション 3 の設計チェックポイントに進む前に、このステップで使用する構造体フィールドと既存のヘルパ関数を整理しておきます。
 
-##### 1. `struct tcp_sock *tp = tcp_sk(sk)`（カーネルが管理する TCP ソケット状態）
+#### 1. `struct tcp_sock *tp = tcp_sk(sk)`（カーネルが管理する TCP ソケット状態）
 - `tp->tcp_mstamp` (`__u64`): カーネルがパケット送受信のたびに更新する現在時刻（マイクロ秒単位）。現在のフェーズの経過時間 `tp->tcp_mstamp - ca->cycle_mstamp` の計算と、次フェーズ開始時刻 `ca->cycle_mstamp` の記録に使用します。
 - `tp->snd_cwnd` (`__u32`): 現在の輻輳ウィンドウ（パケット数）。
 
-##### 2. `const struct rate_sample *rs`（ACK ごとにカーネルから `.cong_control` に渡される計測サンプル）
+#### 2. `const struct rate_sample *rs`（ACK ごとにカーネルから `.cong_control` に渡される計測サンプル）
 - `rs->prior_in_flight` (`__u32`): この ACK が処理される直前にネットワーク上にあったインフライトパケット数。Phase 0 で `1.25x BDP` に到達したか、および Phase 1 で `1.0x BDP` 以下まで抜けたかを判定するために使用します。
 - `rs->losses` (`__u32`): この ACK によって新たにロスと判定されたパケット数。Phase 0 でロス発生時に探索を終了するために参照します。
 
-##### 3. `struct bbr_ca *ca = inet_csk_ca(sk)`（`icsk_ca_priv` 内の BBR 固有状態）
+#### 3. `struct bbr_ca *ca = inet_csk_ca(sk)`（`icsk_ca_priv` 内の BBR 固有状態）
 各 TCP ソケット（`struct inet_connection_sock`）には、輻輳制御アルゴリズムが自由に使えるプライベートメモリ領域 `icsk_ca_priv` が用意されており、`inet_csk_ca(sk)` で `struct bbr_ca *` としてアクセスします。`starter.bpf.c` では以下のフィールドが定義・初期化済みです。
 - `ca->mode` (`__u32`): 現在のモード（`BBR_STARTUP`、`BBR_DRAIN`、`BBR_PROBE_BW`）。`bbr_check_drain()` でキュー排出が完了すると `ca->mode = BBR_PROBE_BW` に遷移し、同時に `ca->cycle_idx = 0`、`ca->cycle_mstamp = tp->tcp_mstamp` に初期化されます。
 - `ca->cycle_idx` (`__u32`): 現在の `BBR_PROBE_BW` フェーズ番号（`0` 〜 `7`）。
@@ -2538,18 +2538,18 @@ ca->cycle_mstamp = tp->tcp_mstamp;
 - `ca->max_bw` (`__u32`): 推定ボトルネック帯域（`BW_SCALE = 24` の固定小数点、`pkts/us << 24`）。
 - `ca->pacing_gain` / `ca->cwnd_gain` (`__u32`): 現在のペーシングゲインと cwnd ゲイン（`BBR_SCALE = 8`、`BBR_UNIT = 256` が `1.0x`）。
 
-##### 4. `starter.bpf.c` に実装済みのヘルパ関数・定数
+#### 4. `starter.bpf.c` に実装済みのヘルパ関数・定数
 - `CYCLE_LEN` (`8`)、`BBR_UNIT` (`256`)、`bbr_cwnd_gain` (`BBR_UNIT * 2`)
 - `bbr_pacing_gain[8]`: `{ BBR_UNIT * 5 / 4, BBR_UNIT * 3 / 4, BBR_UNIT, ... }` の 8 要素配列。
 - `bbr_inflight(sk, bw, gain)`: 指定された帯域 `bw` とゲイン `gain` に対する目標インフライトパケット数（`gain * BDP` の切り上げ値）を返します。
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、`starter.bpf.c` の 4 つの TODO をどのように実装すべきか考えてみましょう。
 
-#### Q1. 巡航フェーズ（Phases 2..7）の終了条件はどう書くべきでしょうか？（TODO 1 前半）
+### Q1. 巡航フェーズ（Phases 2..7）の終了条件はどう書くべきでしょうか？（TODO 1 前半）
 
 `bbr_is_next_cycle_phase(struct sock *sk, const struct rate_sample *rs)` において、まずフェーズ開始からの経過時間が最小 RTT を超えたかを表すブール値 `is_full_length` を定義し、巡航フェーズ（`ca->pacing_gain == BBR_UNIT`）の終了判定を行うには、どのフィールドをどう比較すればよいでしょうか？
 
@@ -2565,7 +2565,7 @@ ca->cycle_mstamp = tp->tcp_mstamp;
 
 </details>
 
-#### Q2. 探索フェーズ（Phase 0: `1.25x`）と排出フェーズ（Phase 1: `0.75x`）では、なぜ論理演算子（`&&` と `||`）や `bbr_inflight()` に渡すゲイン引数が異なるのでしょうか？（TODO 1 後半）
+### Q2. 探索フェーズ（Phase 0: `1.25x`）と排出フェーズ（Phase 1: `0.75x`）では、なぜ論理演算子（`&&` と `||`）や `bbr_inflight()` に渡すゲイン引数が異なるのでしょうか？（TODO 1 後半）
 
 `ca->pacing_gain > BBR_UNIT`（Phase 0）と `ca->pacing_gain < BBR_UNIT`（Phase 1）それぞれの `return` 文を組み立てる際、`is_full_length` と `rs->prior_in_flight` の比較をどのように組み合わせ、また `bbr_inflight(sk, ca->max_bw, ...)` の第 3 引数には何を渡すべきでしょうか？
 
@@ -2591,7 +2591,7 @@ ca->cycle_mstamp = tp->tcp_mstamp;
 
 </details>
 
-#### Q3. フェーズを進める `bbr_advance_cycle_phase()` と `bbr_update_cycle_phase()` では何を更新する必要がありますか？（TODO 2・TODO 3）
+### Q3. フェーズを進める `bbr_advance_cycle_phase()` と `bbr_update_cycle_phase()` では何を更新する必要がありますか？（TODO 2・TODO 3）
 
 `bbr_is_next_cycle_phase(sk, rs)` が `true` を返したとき、`struct bbr_ca` のどのフィールドを更新しなければ、次の ACK でも同じフェーズにとどまったり、次のフェーズが即座に終了してしまったりするでしょうか？
 
@@ -2605,7 +2605,7 @@ ca->cycle_mstamp = tp->tcp_mstamp;
 
 </details>
 
-#### Q4. `bbr_update_gains()` と `bpf_bbr4_main()` の呼び出し順序はどう連携していますか？（TODO 4）
+### Q4. `bbr_update_gains()` と `bpf_bbr4_main()` の呼び出し順序はどう連携していますか？（TODO 4）
 
 `bbr_update_gains()` の `case BBR_PROBE_BW:` で `bbr_pacing_gain[]` を参照する際、BPF ベリファイアが配列の境界外アクセスと判定しないようにするにはインデックスをどうマスクすべきでしょうか？また、`bpf_bbr4_main()` の中で `bbr_update_cycle_phase()`、`bbr_check_drain()`、`bbr_update_gains()` がこの順序で並んでいることにはどんな意味があるでしょうか？
 
@@ -2623,11 +2623,11 @@ ca->cycle_mstamp = tp->tcp_mstamp;
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 `solution.bpf.c` における各関数の実装を順番に確認します。
 
-#### 1. `bbr_pacing_gain[]` 配列の定義
+### 1. `bbr_pacing_gain[]` 配列の定義
 
 定常状態（`BBR_PROBE_BW`）で循環する 8 相のゲインテーブルです。
 
@@ -2650,7 +2650,7 @@ static const int bbr_pacing_gain[] = {
 - インデックス `1` が `BBR_UNIT * 3 / 4`（`192` = `0.75x`、排出フェーズ）
 - インデックス `2..7` が `BBR_UNIT`（`256` = `1.0x`、巡航フェーズ × 6）
 
-#### 2. `bbr_is_next_cycle_phase()` — フェーズ終了条件の判定（TODO 1）
+### 2. `bbr_is_next_cycle_phase()` — フェーズ終了条件の判定（TODO 1）
 
 ```c
 static __always_inline bool bbr_is_next_cycle_phase(struct sock *sk,
@@ -2678,7 +2678,7 @@ static __always_inline bool bbr_is_next_cycle_phase(struct sock *sk,
 - `ca->pacing_gain > BBR_UNIT`: 探索フェーズ（Phase 0）では、`is_full_length` に加えて、`rs->losses` が非ゼロであるか、または `rs->prior_in_flight` が `bbr_inflight(sk, ca->max_bw, ca->pacing_gain)`（`1.25x BDP`）以上に達していることを要求します。
 - `ca->pacing_gain < BBR_UNIT`: 排出フェーズ（Phase 1）では、`is_full_length` に達したか、あるいは `rs->prior_in_flight` が `bbr_inflight(sk, ca->max_bw, BBR_UNIT)`（`1.0x BDP`）以下に下がった時点で次フェーズへ進みます。
 
-#### 3. `bbr_advance_cycle_phase()` と `bbr_update_cycle_phase()` — フェーズの進行（TODO 2・TODO 3）
+### 3. `bbr_advance_cycle_phase()` と `bbr_update_cycle_phase()` — フェーズの進行（TODO 2・TODO 3）
 
 ```c
 static __always_inline void bbr_advance_cycle_phase(struct sock *sk)
@@ -2703,7 +2703,7 @@ static __always_inline void bbr_update_cycle_phase(struct sock *sk,
 - `bbr_advance_cycle_phase()` は `ca->cycle_idx` をインクリメントして `& (CYCLE_LEN - 1)` で `0..7` に丸め、`ca->cycle_mstamp` を現在の `tp->tcp_mstamp` に更新します。
 - `bbr_update_cycle_phase()` は `ca->mode == BBR_PROBE_BW` のときにのみ `bbr_is_next_cycle_phase(sk, rs)` を評価し、`true` ならフェーズを進めます。
 
-#### 4. `bbr_update_gains()` — 現在のフェーズに応じたゲイン設定（TODO 4）
+### 4. `bbr_update_gains()` — 現在のフェーズに応じたゲイン設定（TODO 4）
 
 ```c
 static __always_inline void bbr_update_gains(struct sock *sk)
@@ -2733,9 +2733,9 @@ static __always_inline void bbr_update_gains(struct sock *sk)
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### `test.pkt` のパケットトレースとアサーションの解説
+### `test.pkt` のパケットトレースとアサーションの解説
 
 `test.pkt` は、ボトルネック帯域 100 KB/s（`MSS = 1000` バイト、`min_rtt_us = 10 ms`、`1.0x BDP = 1` パケット）の経路において、`BBR_STARTUP` を抜けて `BBR_PROBE_BW` に入った後の **Phase 0（`1.25x`）→ Phase 1（`0.75x`）→ Phase 2（`1.0x`）** の遷移を順番に検証します。
 
@@ -2764,14 +2764,14 @@ static __always_inline void bbr_update_gains(struct sock *sk)
    assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expected ~99KB/s, got {tcpi_pacing_rate}"
    ```
 
-#### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
+### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
 
 - **`starter.bpf.c` が失敗する理由**:
   `starter.bpf.c` では `bbr_update_gains()` の `BBR_PROBE_BW` ケースで `ca->pacing_gain = BBR_UNIT`（`1.0x`）がハードコードされており、さらに `bbr_is_next_cycle_phase()` が常に `false` を返します。そのため、53 行目で `BBR_PROBE_BW` に入った直後の `tcpi_pacing_rate` が Phase 0 の `~123,750 B/s`（`1.25x`）にならず `~99,000 B/s`（`1.0x`）のままとなり、55 行目の `assert 115000 < tcpi_pacing_rate < 135000` で即座に失敗します。
 - **`solution.bpf.c` がパスする理由**:
   `bbr_update_gains()` が `bbr_pacing_gain[ca->cycle_idx & 7]` を参照し、`bbr_is_next_cycle_phase()`・`bbr_advance_cycle_phase()`・`bbr_update_cycle_phase()` が各フェーズの終了条件を正しく判定して `cycle_idx` を `0` → `1` → `2` と進めるため、すべてのアサーションをパスします。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 リポジトリの `labs/bbr/step04-probe-bw` ディレクトリから、以下のコマンドで `starter`（失敗の確認）と `solution`（成功の確認）を実行できます。
 
@@ -2781,7 +2781,7 @@ static __always_inline void bbr_update_gains(struct sock *sk)
 ```
 
 
-### `labs/bbr/step04-probe-bw/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step04-probe-bw/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3151,8 +3151,7 @@ struct tcp_congestion_ops bpf_bbr4 = {
 };
 ```
 
-
-### `labs/bbr/step04-probe-bw/test.pkt`（packetdrill テスト）
+### `labs/bbr/step04-probe-bw/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3236,7 +3235,6 @@ assert 65000 < tcpi_pacing_rate < 85000, f"PROBE_BW Phase 1 (3/4 gain): expected
 assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expected ~99KB/s, got {tcpi_pacing_rate}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step04-probe-bw/solution.bpf.c</code></summary>
@@ -3596,19 +3594,21 @@ struct tcp_congestion_ops bpf_bbr4 = {
 
 </details>
 
+
+
 ---
 
 ## BBRv1 Step 5: PROBE_RTT への遷移と最小パイプサイズへのクランプ（cwnd = 4）
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-本ステップでは、BBRv1 の 4 つ目の状態である `BBR_PROBE_RTT` を BPF で実装し、ボトルネックに常時滞留するキュー（standing queue）や経路変化によって陳腐化した最小 RTT（`min_rtt_us`）を定期的に再計測する仕組みを完成させます。具体的には、最小 RTT フィルタの有効期限（`BBR_MIN_RTT_WIN_US`）の満了判定、突入前の輻輳ウィンドウを `ca->prior_cwnd` に退避して `snd_cwnd` を最小パイプサイズ（`BBR_MIN_PIPE_CWND = 4`）へクランプする処理、そして「インフライト数が 4 パケット以下に落ちてから 200 ms 以上、かつ 1 ラウンド往復完了」を待って元のモードとウィンドウサイズへ復帰する一連のステートマシンを実装します（トラック全体の概要は [../README.md](../README.md) を参照してください）。
+本ステップでは、BBRv1 の 4 つ目の状態である `BBR_PROBE_RTT` を BPF で実装し、ボトルネックに常時滞留するキュー（standing queue）や経路変化によって陳腐化した最小 RTT（`min_rtt_us`）を定期的に再計測する仕組みを完成させます。具体的には、最小 RTT フィルタの有効期限（`BBR_MIN_RTT_WIN_US`）の満了判定、突入前の輻輳ウィンドウを `ca->prior_cwnd` に退避して `snd_cwnd` を最小パイプサイズ（`BBR_MIN_PIPE_CWND = 4`）へクランプする処理、そして「インフライト数が 4 パケット以下に落ちてから 200 ms 以上、かつ 1 ラウンド往復完了」を待って元のモードとウィンドウサイズへ復帰する一連のステートマシンを実装します（トラック全体の概要は [../README.md](#) を参照してください）。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
-#### なぜ `BBR_PROBE_BW` だけでは真の最小 RTT（RTprop）を見失うのか？
+### なぜ `BBR_PROBE_BW` だけでは真の最小 RTT（RTprop）を見失うのか？
 
 BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \times \text{RTprop}$）を推定するために、直近の最大配送レート `max_bw`（$\approx \text{BtlBw}$）と直近の最小 RTT `min_rtt_us`（$\approx \text{RTprop}$）という 2 つの独立した推定量を維持しています。しかし、物理的な往復伝播遅延（$\text{RTprop}$）は「ボトルネックのバッファが完全に空（キュー遅延 $= 0$）の瞬間」にしか観測できません。
 
@@ -3619,7 +3619,7 @@ BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \
 2. **経路変更による真の RTprop の増大**:
    ルーティングの切り替えなどで物理的な経路が長くなり、実際の最小 RTT が例えば `10 ms` から `15 ms` に増えたとします。もし `min_rtt_us` を「接続開始からの単純な最小値」として保持し続けると、過去の古い `10 ms` が永遠に残り続け、新しい `15 ms` に更新されません。
 
-#### `BBR_PROBE_RTT` の基本アイデアと数理モデル
+### `BBR_PROBE_RTT` の基本アイデアと数理モデル
 
 この問題を解決するため、BBR は最小 RTT フィルタに **有効期限ウィンドウ `BBR_MIN_RTT_WIN_US`**（Linux カーネル `net/ipv4/tcp_bbr.c` では 10 秒、本ラボでは `packetdrill` の実行時間を短縮するため **2 秒**）を設けます。
 
@@ -3630,7 +3630,7 @@ BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \
   $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
   フィルタ失効時、受信側の遅延 ACK タイマーによる水増しサンプルでない限り（`!rs->is_ack_delayed`）、現在の `rs->rtt_us`（たとえ以前の `min_rtt_us` より大きくても）で `ca->min_rtt_us` と `ca->min_rtt_stamp` を上書きし、`BBR_PROBE_RTT` モードへ遷移します。
 
-#### なぜ `cwnd = 4` に絞り、「200 ms かつ 1 ラウンド」待つのか？
+### なぜ `cwnd = 4` に絞り、「200 ms かつ 1 ラウンド」待つのか？
 
 `BBR_PROBE_RTT` に入ると、BBR は現在の輻輳ウィンドウを `ca->prior_cwnd` に退避した上で、`pacing_gain = 1.0`（`BBR_UNIT`）、`cwnd_gain = 1.0`（`BBR_UNIT`）に設定し、輻輳ウィンドウ `tp->snd_cwnd` を最小パイプサイズ **`BBR_MIN_PIPE_CWND = 4` パケット**に強制クランプします。
 
@@ -3672,7 +3672,7 @@ BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \
   ・bbr_reset_mode() で BBR_STARTUP または BBR_PROBE_BW へ復帰
 ```
 
-#### 具体例（`test.pkt` の数値で追うタイムライン）
+### 具体例（`test.pkt` の数値で追うタイムライン）
 
 1. **`t = 0.010 s`（接続確立）**: 初期 RTT サンプル `10 ms`（`10,000 us`）を観測し、`ca->min_rtt_us = 10000`、`ca->min_rtt_stamp = t_0` に記録されます。初期 `snd_cwnd` は `10` です。
 2. **`t = 0.020 s`（データ 10 パケット送信・ACK 受信）**: `BBR_STARTUP` 中に 10 パケットが ACK され、`snd_cwnd` は `10 + 10 = 20` に成長します。RTT は `10 ms`（`< 10 ms` ではない）なので `min_rtt_stamp` は `t_0` のままです。
@@ -3686,7 +3686,7 @@ BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \
    - 新たな 1 パケットの往復により `ca->round_start = 1` となり、`ca->probe_rtt_round_done = 1` になります。
    - `tp->tcp_mstamp > ca->probe_rtt_done_stamp`（250 ms > 200 ms）も満たされているため `bbr_check_probe_rtt_done()` が実行され、`tp->snd_cwnd` は `max(4, 20) = 20` に復元され、元のモードへ戻ります。
 
-#### カーネルがすでに提供している構造体フィールドとヘルパー
+### カーネルがすでに提供している構造体フィールドとヘルパー
 
 BPF プログラムで Step 5 を実装するにあたり、カーネル側（`struct tcp_sock`、`struct rate_sample`、`struct inet_connection_sock`）および `bpf_cc_helpers.h` が提供する要素は以下の通りです。
 
@@ -3708,11 +3708,11 @@ BPF プログラムで Step 5 を実装するにあたり、カーネル側（`s
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、`starter.bpf.c` の TODO を実装する前に以下の 4 つの設計ポイントを確認しましょう。
 
-#### Q1. `bbr_update_min_rtt()` で `min_rtt_us` を更新する 2 つの条件は何か？
+### Q1. `bbr_update_min_rtt()` で `min_rtt_us` を更新する 2 つの条件は何か？
 `rs->rtt_us >= 0`（有効な RTT サンプル）であるとき、`ca->min_rtt_us` と `ca->min_rtt_stamp` を更新すべき条件式はどう書くべきでしょうか？ また、なぜ `<=` ではなく `<` を使い、フィルタ失効時には `!rs->is_ack_delayed` をチェックするのでしょうか？
 
 <details>
@@ -3738,7 +3738,7 @@ if (rs->rtt_us >= 0 &&
 
 ---
 
-#### Q2. `filter_expired` 時に `BBR_PROBE_RTT` へ遷移する際、なぜ `probe_rtt_done_stamp` をすぐには設定せず `0` にリセットするのか？
+### Q2. `filter_expired` 時に `BBR_PROBE_RTT` へ遷移する際、なぜ `probe_rtt_done_stamp` をすぐには設定せず `0` にリセットするのか？
 `filter_expired && ca->mode != BBR_PROBE_RTT` が成立した瞬間、すぐに `ca->probe_rtt_done_stamp = tp->tcp_mstamp + BBR_PROBE_RTT_MODE_US` としないのはなぜでしょうか？
 
 <details>
@@ -3754,7 +3754,7 @@ if (rs->rtt_us >= 0 &&
 
 ---
 
-#### Q3. `BBR_PROBE_RTT` 滞在中に `tp->app_limited` を設定し、`probe_rtt_round_done` と `probe_rtt_done_stamp` の両方を待つにはどう実装するか？
+### Q3. `BBR_PROBE_RTT` 滞在中に `tp->app_limited` を設定し、`probe_rtt_round_done` と `probe_rtt_done_stamp` の両方を待つにはどう実装するか？
 `ca->mode == BBR_PROBE_RTT` のブロック内で、毎回の ACK ごとに行うべき処理と、`bbr_check_probe_rtt_done()` を呼ぶタイミングを整理してみましょう。
 
 <details>
@@ -3778,7 +3778,7 @@ if (rs->rtt_us >= 0 &&
 
 ---
 
-#### Q4. `bbr_set_cwnd()` のどこで `BBR_MIN_PIPE_CWND` へのクランプを行うべきか？
+### Q4. `bbr_set_cwnd()` のどこで `BBR_MIN_PIPE_CWND` へのクランプを行うべきか？
 `bbr_set_cwnd()` には `if (!acked) goto done;` という分岐や、`target_cwnd` に向かって `cwnd` を増減させる処理があります。`BBR_PROBE_RTT` のウィンドウ制限（4 パケット）は関数のどの位置に書くべきでしょうか？
 
 <details>
@@ -3800,11 +3800,11 @@ done:
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 `solution.bpf.c` における各関数と固定小数点演算・状態遷移の実装を詳しく見ていきます。
 
-#### 1. 定数定義と固定小数点スケール
+### 1. 定数定義と固定小数点スケール
 
 ```c
 #define BW_SCALE		24
@@ -3822,7 +3822,7 @@ done:
 - `bbr_bdp()` では `w = (__u64)bw * ca->min_rtt_us` に `gain` を掛けて `BBR_SCALE` と `BW_SCALE` で右シフト（切り上げ補正 `+ BW_UNIT - 1` 付き）することで BDP パケット数を算出します。
 - `BBR_MIN_RTT_WIN_US` は `2ULL * USEC_PER_SEC`（2,000,000 マイクロ秒 = 2 秒）、`BBR_PROBE_RTT_MODE_US` は `200ULL * USEC_PER_MSEC`（200,000 マイクロ秒 = 200 ミリ秒）です。
 
-#### 2. `bbr_save_cwnd()` と `bbr_reset_mode()`
+### 2. `bbr_save_cwnd()` と `bbr_reset_mode()`
 
 ```c
 static __always_inline void bbr_save_cwnd(struct sock *sk)
@@ -3854,7 +3854,7 @@ static __always_inline void bbr_reset_mode(struct sock *sk)
 - `bbr_save_cwnd()` は `BBR_PROBE_RTT` 突入時（およびロス検知時の `bpf_bbr5_ssthresh()`）に呼ばれ、`BBR_PROBE_RTT` 以外のモードであれば現在の `tp->snd_cwnd` をそのまま `ca->prior_cwnd` に保存し、すでに `BBR_PROBE_RTT` 中であれば `max(ca->prior_cwnd, tp->snd_cwnd)` で小さい値 (4) による上書きを防ぎます。
 - `bbr_reset_mode()` は `BBR_PROBE_RTT` 完了時に呼ばれ、`ca->full_bw_reached` に応じて `BBR_STARTUP` または `BBR_PROBE_BW` に復帰させます。
 
-#### 3. `bbr_check_probe_rtt_done()` と `bbr_update_min_rtt()`
+### 3. `bbr_check_probe_rtt_done()` と `bbr_update_min_rtt()`
 
 ```c
 static __always_inline void bbr_check_probe_rtt_done(struct sock *sk)
@@ -3912,7 +3912,7 @@ static __always_inline void bbr_update_min_rtt(struct sock *sk, const struct rat
 - `ca->probe_rtt_done_stamp` をセットしたまさにその ACK では `if (!ca->probe_rtt_done_stamp && ...)` の分岐に入り、次の ACK 以降で `else if (ca->probe_rtt_done_stamp)` の分岐に入って `ca->round_start` による 1 ラウンド完了と `bbr_check_probe_rtt_done()` が判定されます。
 - `bbr_check_probe_rtt_done()` で `tp->snd_cwnd` を `ca->prior_cwnd` に復元し `bbr_reset_mode()` で `ca->mode` を戻すため、直後に呼ばれる `bbr_update_gains()` と `bbr_set_cwnd()` でもクランプは解除され、復元された `snd_cwnd` が維持されます。
 
-#### 4. `bbr_update_gains()` と `bbr_set_cwnd()`
+### 4. `bbr_update_gains()` と `bbr_set_cwnd()`
 
 ```c
 static __always_inline void bbr_update_gains(struct sock *sk)
@@ -3957,9 +3957,9 @@ done:
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### `test.pkt` のパケットトレースと検証内容
+### `test.pkt` のパケットトレースと検証内容
 
 `test.pkt` は以下の 3 段階で `BBR_PROBE_RTT` の突入・クランプ・脱出を検証します。
 
@@ -4005,12 +4005,12 @@ done:
    - `BBR_PROBE_RTT_MODE_US`（200 ms）を超える `+0.250` 秒待機後に 1 セグメントを送信し、`RTT = 10 ms` で ACK を受け取ります。
    - これにより「200 ms 経過」と「インフライト $\le 4$ での 1 ラウンド完了」の両方が満たされて `BBR_PROBE_RTT` を脱出し、`prior_cwnd`（20）が復元された上でこの ACK の 1 セグメント分が加算され、`tcpi_snd_cwnd >= 20` となることをアサートします。
 
-#### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
+### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
 
 - `starter.bpf.c` では `bbr_update_min_rtt()` 内の `filter_expired` 判定と `BBR_PROBE_RTT` への状態遷移、および `bbr_set_cwnd()` 末尾の `BBR_MIN_PIPE_CWND` クランプが未実装（TODO）となっています。そのため、`+2.100 s` 経過後も `BBR_STARTUP` のまま `snd_cwnd` が `21` に増えてしまい、33 行目の `assert tcpi_snd_cwnd == 4` で失敗します。
 - `solution.bpf.c`（または TODO をすべて実装した `starter.bpf.c`）では、2.1 秒後のフィルタ失効で `snd_cwnd` が `4` にクランプされ、さらに 0.25 秒後の ACK で `prior_cwnd`（20）以上に復元されるため、すべてのアサートをパスします。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 以下のコマンドで `starter`（失敗の確認）と `solution`（パスの確認）を実行できます。
 
@@ -4020,7 +4020,7 @@ done:
 ```
 
 
-### `labs/bbr/step05-probe-rtt/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step05-probe-rtt/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4427,8 +4427,7 @@ struct tcp_congestion_ops bpf_bbr5 = {
 };
 ```
 
-
-### `labs/bbr/step05-probe-rtt/test.pkt`（packetdrill テスト）
+### `labs/bbr/step05-probe-rtt/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -4477,7 +4476,6 @@ assert tcpi_snd_cwnd == 4, f"expected cwnd == 4 in PROBE_RTT, got {tcpi_snd_cwnd
 assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step05-probe-rtt/solution.bpf.c</code></summary>
@@ -4908,23 +4906,25 @@ struct tcp_congestion_ops bpf_bbr5 = {
 
 </details>
 
+
+
 ---
 
 ## BBRv1 Step 6: Loss 時の cwnd 保存・復元と ACK 集約 (`extra_acked`) 補償
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
 この最終ステップでは、BBRv1 の **パケットロス発生時の応答（Packet Conservation と `prior_cwnd` の保存・復元）** と、Wi-Fi や LRO/GRO 環境で頻発する **ACK 集約（ACK Aggregation）への適応（`extra_acked`）** を実装し、全 6 ステップの BPF BBRv1 を完成させます。Reno や CUBIC のようなロスベース輻輳制御とは異なり、BBR がなぜロス時に `snd_cwnd` を半減させないのか、またバースト状に返ってくる ACK に対してどのようにウィンドウを下支えするのかを数式とコードの両面から学びます。
 
-- トラック全体の構成と各ステップの一覧については、[../README.md](../README.md) を参照してください。
+- トラック全体の構成と各ステップの一覧については、[../README.md](#) を参照してください。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
 コードの設計に入る前に、BBRv1 が扱う 2 つの重要な仕組みと、Linux カーネルが提供するデータ構造・コールバックの仕様を基礎から整理します。
 
-#### 2.1 なぜ BBR はロスで `cwnd` を半減させず、どう振る舞うのか？
+### 2.1 なぜ BBR はロスで `cwnd` を半減させず、どう振る舞うのか？
 
 Reno や CUBIC などの従来アルゴリズムは、「パケットロス＝ボトルネックのバッファ溢れ（輻輳）」とみなして、ロス検出のたびに `snd_cwnd` を 50% や 30% 削減します。しかし現代のネットワーク（浅いバッファのスイッチや無線リンクなど）では、回線帯域を使い切っていなくても一時的なバーストやランダムロスでパケットが欠損することがあります。
 
@@ -4943,7 +4943,7 @@ BBR はネットワークの物理容量を **最大帯域（`max_bw` = BtlBw）
    欠損パケットの再送が完了し、状態が `TCP_CA_Recovery` 以上から `TCP_CA_Open` などの通常状態（`< TCP_CA_Recovery`）に戻った瞬間（または誤検知による `.undo_cwnd` 呼び出し時）、BBR は退避しておいた `ca->prior_cwnd` を使って即座に元のウィンドウ規模へ復元します：
    $$\text{cwnd} = \max(\text{cwnd}, \text{ca}\to\text{prior}_{\text{cwnd}})$$
 
-##### 具体例（数値トレース）
+#### 具体例（数値トレース）
 
 - 通常状態（`TCP_CA_Open`）で `snd_cwnd = 20` のときに 4 パケット送信し、先頭 1 パケットがドロップ、後続 3 パケットが SACK されて Fast Recovery（`TCP_CA_Recovery`）に突入したとします。
 - Recovery 突入直前に呼ばれる `.ssthresh` フックで `bbr_save_cwnd()` が走り、`ca->prior_cwnd = 20` が退避されます（`snd_ssthresh` 自体は変更しません）。
@@ -4952,15 +4952,15 @@ BBR はネットワークの物理容量を **最大帯域（`max_bw` = BtlBw）
 
 ---
 
-#### 2.2 ACK 集約（ACK Aggregation）と `extra_acked` の仕組み
+### 2.2 ACK 集約（ACK Aggregation）と `extra_acked` の仕組み
 
-##### なぜ問題が起きるのか（直感）
+#### なぜ問題が起きるのか（直感）
 
 Wi-Fi のフレームアグリゲーション、モバイル回線、あるいは受信側 NIC の GRO/LRO（Generic/Large Receive Offload）環境では、本来なら一定間隔で滑らかに返ってくるはずの ACK がネットワーク途中でまとめられ、**「しばらく ACK が全く来ない無音期間のあと、数十パケット分の ACK が一気にドッと届く」** という現象（ACK 集約）が頻繁に発生します。
 
 もし `target_cwnd` を純粋な $\text{BDP} \times \text{cwnd}_{\text{gain}}$ だけに制限していると、ACK が途絶えている無音期間中にインフライト数が `snd_cwnd` の上限に達してしまい、ペーシングタイマーが送信可能であっても **cwnd 制限によって送信がストップ（パイプが枯渇）** してしまいます。
 
-##### アルゴリズムのアイデアと数式
+#### アルゴリズムのアイデアと数式
 
 そこで BBR は、「もし `max_bw` の速度で滑らかに ACK が返ってきていたとしたら、エポック開始からの経過時間 `epoch_us` の間に本来届いているはずの期待 ACK 数（`expected_acked`）」を計算し、**実際に届いた累積 ACK 数（`ack_epoch_acked`）がそれをどれだけ上回ってバースト到着したか（`extra_acked`）** を計測します。
 
@@ -5002,7 +5002,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
 
 ---
 
-#### 2.3 カーネルが提供する構造体フィールドとコールバック
+### 2.3 カーネルが提供する構造体フィールドとコールバック
 
 このステップを実装するにあたり、カーネル側からすでに提供されているフィールドとヘルパーは以下の通りです。
 
@@ -5033,11 +5033,11 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c) の `TODO` を埋めるための設計を 4 つの問いで確認しましょう。
 
-#### Q1. `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` では、いつ・どのように `ca->prior_cwnd` を保存すべきでしょうか？
+### Q1. `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` では、いつ・どのように `ca->prior_cwnd` を保存すべきでしょうか？
 
 カーネルが Fast Recovery に入る直前に `bpf_bbr6_ssthresh()` が呼ばれ、また `BBR_PROBE_RTT` に入る直前にも `bbr_save_cwnd()` が呼ばれます。もし `BBR_PROBE_RTT` 中（`snd_cwnd == 4`）にパケットロスが発生して `bbr_save_cwnd()` が再び呼ばれた場合、単純に `ca->prior_cwnd = tp->snd_cwnd` と代入すると何が起きてしまうでしょうか？どのような条件分岐にすべきか考えてみましょう。
 
@@ -5054,7 +5054,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
 
 ---
 
-#### Q2. `bbr_set_cwnd_to_recover_or_restore()` で Recovery 突入・維持・脱出をどう実装しますか？
+### Q2. `bbr_set_cwnd_to_recover_or_restore()` で Recovery 突入・維持・脱出をどう実装しますか？
 
 ACK ごとに呼ばれる `bbr_set_cwnd_to_recover_or_restore(sk, rs, acked, &cwnd)` では、現在の状態 `state = inet_csk(sk)->icsk_ca_state` と前回の状態 `prev_state = ca->prev_ca_state` を比較します。
 1. `rs->losses > 0` のとき
@@ -5085,7 +5085,7 @@ ACK ごとに呼ばれる `bbr_set_cwnd_to_recover_or_restore(sk, rs, acked, &cw
 
 ---
 
-#### Q3. なぜ RTO 発生時は `bpf_bbr6_set_state()` で `TCP_CA_Loss` を記録する必要があるのでしょうか？
+### Q3. なぜ RTO 発生時は `bpf_bbr6_set_state()` で `TCP_CA_Loss` を記録する必要があるのでしょうか？
 
 Fast Recovery（`TCP_CA_Recovery`）は `.cong_control` 内の `bbr_set_cwnd_to_recover_or_restore()` だけで遷移を検出できますが、RTO タイムアウト（`TCP_CA_Loss`）は `bpf_bbr6_set_state()` でも処理を行います。もし `bpf_bbr6_set_state()` が空のままだったら、RTO から回復したときにどのような不具合が起きるでしょうか？
 
@@ -5102,7 +5102,7 @@ Fast Recovery（`TCP_CA_Recovery`）は `.cong_control` 内の `bbr_set_cwnd_to_
 
 ---
 
-#### Q4. `bbr_update_ack_aggregation()` と `bbr_set_cwnd()` で `extra_acked` を計算・適用する際のガード条件と上限は何ですか？
+### Q4. `bbr_update_ack_aggregation()` と `bbr_set_cwnd()` で `extra_acked` を計算・適用する際のガード条件と上限は何ですか？
 
 セクション 2.2 の数式を `bbr_update_ack_aggregation(sk, rs)` と `bbr_set_cwnd()` に実装するとき、
 1. どのような `rate_sample` のときは計算をスキップすべきですか？
@@ -5124,11 +5124,11 @@ Fast Recovery（`TCP_CA_Recovery`）は `.cong_control` 内の `bbr_set_cwnd_to_
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c) の各関数と固定小数点演算の詳細を解説します。
 
-#### 4.1 `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` / `bpf_bbr6_undo_cwnd()` / `bpf_bbr6_set_state()`
+### 4.1 `bbr_save_cwnd()` と `bpf_bbr6_ssthresh()` / `bpf_bbr6_undo_cwnd()` / `bpf_bbr6_set_state()`
 
 ```c
 static __always_inline void bbr_save_cwnd(struct sock *sk)
@@ -5147,7 +5147,7 @@ static __always_inline void bbr_save_cwnd(struct sock *sk)
 - `bpf_bbr6_undo_cwnd()` は `ca->full_bw = 0; ca->full_bw_cnt = 0;` をリセットしたうえで `max(tp->snd_cwnd, ca->prior_cwnd)` を返します。
 - `bpf_bbr6_set_state()` は `new_state == TCP_CA_Loss` のときに `ca->prev_ca_state = TCP_CA_Loss`、`ca->full_bw = 0`、`ca->round_start = 1` を設定します。
 
-#### 4.2 `bbr_set_cwnd_to_recover_or_restore()` — パケット保存則と `prior_cwnd` 復元
+### 4.2 `bbr_set_cwnd_to_recover_or_restore()` — パケット保存則と `prior_cwnd` 復元
 
 ```c
 static __always_inline bool bbr_set_cwnd_to_recover_or_restore(
@@ -5185,7 +5185,7 @@ static __always_inline bool bbr_set_cwnd_to_recover_or_restore(
 - 1 ラウンドが経過すると `bbr_update_bw()` 内の `!before(rs->prior_delivered, ca->next_rtt_delivered)` ブロックで `ca->packet_conservation = 0` にクリアされ、Recovery の第 2 ラウンド以降は通常の BDP ベース制御に戻ります。
 - Recovery が完了して `state < TCP_CA_Recovery` に戻ると、`cwnd = max(cwnd, ca->prior_cwnd)` で退避ウィンドウが復元されます。
 
-#### 4.3 `bbr_update_ack_aggregation()` と `bbr_set_cwnd()` — ACK 集約の推定と補償
+### 4.3 `bbr_update_ack_aggregation()` と `bbr_set_cwnd()` — ACK 集約の推定と補償
 
 ```c
 static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
@@ -5229,9 +5229,9 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### `test.pkt` のパケットトレースと検証内容
+### `test.pkt` のパケットトレースと検証内容
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/test.pkt) は、ロス発生時のパケット保存則と Recovery 脱出後の `prior_cwnd` 復元を以下の順序で検証します。
 
@@ -5248,12 +5248,12 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
    - `+0.010` 秒後に全 14,000 B を確認する累積 ACK（`ack 14001`）が到着し、`TCP_CA_Recovery` から `TCP_CA_Open` に復帰します。
    - `bbr_set_cwnd_to_recover_or_restore()` が `ca->prior_cwnd`（20）を復元するため、`tcpi_snd_cwnd >= 20` であることを検証します。
 
-#### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
+### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` はパスするのか？
 
 - [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c) では、`bbr_set_cwnd_to_recover_or_restore()` がプレースホルダとして Reno 風のウィンドウ半減（`cwnd = max(cwnd >> 1U, 2U)`）を行うようになっており、パケット保存則も `prior_cwnd` の復元も未実装です。そのため行 42 の `assert tcpi_snd_cwnd == 1`（および Recovery 脱出後の `assert tcpi_snd_cwnd >= 20`）で失敗します。
 - [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c) では、Recovery 第 1 ラウンドのパケット保存則（`cwnd == 1`）と脱出時の `prior_cwnd` 復元（`cwnd >= 20`）が正しく動作するため、すべてのアサートをパスします。
 
-#### 実行コマンド
+### 実行コマンド
 
 ```sh
 ../../run_test.sh bbr/step06-loss-ack-aggregation starter
@@ -5261,7 +5261,7 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 ```
 
 
-### `labs/bbr/step06-loss-ack-aggregation/starter.bpf.c`（穴埋めスケルトン）
+### `labs/bbr/step06-loss-ack-aggregation/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -5784,8 +5784,7 @@ struct tcp_congestion_ops bpf_bbr6 = {
 };
 ```
 
-
-### `labs/bbr/step06-loss-ack-aggregation/test.pkt`（packetdrill テスト）
+### `labs/bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -5841,7 +5840,6 @@ assert tcpi_ca_state == TCP_CA_Open, f"expected CA_Open, got {tcpi_ca_state}"
 assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
@@ -6369,5 +6367,3 @@ struct tcp_congestion_ops bpf_bbr6 = {
 ```
 
 </details>
-
----

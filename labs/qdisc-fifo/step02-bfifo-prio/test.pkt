@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 2: Test 2-band priority + byte-limited FIFO
+
+0.00 `tc qdisc replace dev tun0 root bpf_bfifo`
+0.00 `ethtool -K tun0 tso off gso off`
+
+// Setup Flow A listener (fd 3)
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 3
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 setsockopt(3, SOL_SOCKET, SO_REUSEPORT, [1], 4) = 0
++0.00 bind(3, ..., ...) = 0
++0.00 listen(3, 1) = 0
+
+// Handshake Flow A
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.01 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 110 ecr 100>
++0.00 accept(3, ..., ...) = 4
+
+// Setup Flow B listener (fd 5)
++0.00 socket(..., SOCK_STREAM, IPPROTO_TCP) = 5
++0.00 setsockopt(5, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0.00 setsockopt(5, SOL_SOCKET, SO_REUSEPORT, [1], 4) = 0
++0.00 bind(5, ..., ...) = 0
++0.00 listen(5, 1) = 0
+
+// Handshake Flow B
++0.00 < S 0:0(0) win 32792 <mss 1012,sackOK,TS val 100 ecr 0,nop,wscale 7>
++0.00 > S. 0:0(0) ack 1 <mss 1460,sackOK,TS val 100 ecr 100,nop,wscale 7>
++0.01 < . 1:1(0) ack 1 win 257 <nop,nop,TS val 110 ecr 100>
++0.00 accept(5, ..., ...) = 6
++0.00 setsockopt(6, SOL_SOCKET, SO_PRIORITY, [7], 4) = 0
+
+// Flow A bursts 5000 bytes (5 segments):
+// - Segment 1 (1:1001) dequeues immediately at t = 0.
+// - Segments 2, 3, 4 (1001:2001, 2001:3001, 3001:4001) queue into q_normal.
+// - Segment 5 (4001:5001) exceeds BYTE_LIMIT = 3500 and is dropped.
++0.00 write(4, ..., 5000) = 5000
+
+// Flow B sends 500 bytes (1 segment) with SO_PRIORITY = 7:
+// Enqueued into q_prio, bypassing BYTE_LIMIT.
++0.00 write(6, ..., 500) = 500
+
+// Segment 1 of Flow A departs immediately at +0.00:
++0.00 > . 1:1001(1000) ack 1
+
+// At +0.004 (4 ms later), Flow B's high-priority packet is dequeued BEFORE Flow A's queued segments!
++0.004 > P. 1:501(500) ack 1
+
+// Subsequent dequeue cycles serve Flow A's remaining segments from q_normal:
++0.004 > . 1001:2001(1000) ack 1
++0.004 > . 2001:3001(1000) ack 1
++0.004 > . 3001:4001(1000) ack 1
+
+// Verify that Segment 5 was tail-dropped by bpf_bfifo
++0.01 `tc -s qdisc show dev tun0 | grep -q "dropped [1-9]"`

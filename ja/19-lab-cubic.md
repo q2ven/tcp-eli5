@@ -1,4 +1,4 @@
-# 16. ハンズオン (2): BPF CC と packetdrill で作る TCP CUBIC
+# 19. ハンズオン (2): BPF CC と packetdrill で作る TCP CUBIC
 
 トラック 1（TCP Reno）では、輻輳制御の原点である **Slow Start（指数関数的増加）** と **AIMD（Additive Increase / Multiplicative Decrease：1 RTT ごとに $+1$ 増やし、ロスで半分に減らす）**、そして誤検知から窓を復元する **Loss Undo** を BPF でゼロから実装しました。
 
@@ -243,17 +243,17 @@ flowchart TD
 
 ## Step 1: 固定小数点の立方根と W_cubic(t) 曲線（凹領域・プラトー・凸領域）
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-このステップでは、Linux カーネルのデフォルト輻輳制御アルゴリズムである **TCP CUBIC**（[net/ipv4/tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c)）の心臓部である **乗法的減少（$\beta \approx 0.7$）**、**固定小数点の立方根 `cubic_root()`**、および **3 次関数ウィンドウ成長曲線 $W_{\text{cubic}}(t)$** を BPF `struct_ops`（`bpf_cubic3`）としてゼロから実装します。トラック全体の構成や背景については [CUBIC トラック概要 (`../README.md`)](../README.md) もあわせて参照してください。
+このステップでは、Linux カーネルのデフォルト輻輳制御アルゴリズムである **TCP CUBIC**（[net/ipv4/tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c)）の心臓部である **乗法的減少（$\beta \approx 0.7$）**、**固定小数点の立方根 `cubic_root()`**、および **3 次関数ウィンドウ成長曲線 $W_{\text{cubic}}(t)$** を BPF `struct_ops`（`bpf_cubic3`）としてゼロから実装します。トラック全体の構成や背景については [CUBIC トラック概要 (`../README.md`)](#) もあわせて参照してください。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
 設計チェックポイントやコードに進む前に、**「なぜ Reno では高帯域ネットワークを使い切れないのか」「CUBIC はどのような数式と固定小数点演算で動くのか」「カーネルの `struct tcp_sock` とソケット固有領域 `icsk_ca_priv` に何が用意されているのか」** を一から整理します。
 
-#### 2.1 なぜ TCP Reno では不十分なのか？（Long Fat Network の問題）
+### 2.1 なぜ TCP Reno では不十分なのか？（Long Fat Network の問題）
 
 TCP Reno（AIMD）は、パケットロス発生時に `snd_cwnd` を半分（$0.5$ 倍）に減らし、その後は **1 RTT あたり $+1$ セグメント** ずつ直線的にウィンドウを回復させます。
 
@@ -262,7 +262,7 @@ TCP Reno（AIMD）は、パケットロス発生時に `snd_cwnd` を半分（$0
 - たった 1 パケットのロスでウィンドウが半分の $41,666$ に落ちると、元の $83,333$ に戻るまでに **41,666 RTT ＝ 約 69 分** もかかってしまいます。
 - また、Reno は「1 RTT ごとに $+1$」増えるため、RTT が短いフローほど急速にウィンドウを広げ、RTT が長いフローが帯域を奪われる **RTT 不公平性（RTT unfairness）** という弱点も抱えています。
 
-#### 2.2 CUBIC の基本アイデア：実時間 $t$ の 3 次関数で $W_{\max}$ を目指す
+### 2.2 CUBIC の基本アイデア：実時間 $t$ の 3 次関数で $W_{\max}$ を目指す
 
 CUBIC は、Reno の問題を次の 2 つのアイデアで解決します。
 
@@ -300,7 +300,7 @@ cwnd_epoch (14) +     *       最初は一気に駆け上がり、W_max に近�
 - **(2) プラトー（Plateau, $t \approx K$）**: 前回ロスが起きた $W_{\max}$ に到達すると、$|t - K| \approx 0$ となって 3 次関数の傾きがほぼ $0$ になります。ここでしばらく水平に留まることで、リンク容量ギリギリを安全に維持します。
 - **(3) 凸領域（Convex / Max-Probing region, $t > K$）**: $W_{\max}$ でロスが起きなければ「ネットワークの空き帯域が増えた」と判断し、$W_{\text{cubic}}(t) = W_{\max} + C(t - K)^3$ で最初はゆっくり、徐々に加速しながら未知の帯域を探索（Probing）します。
 
-#### 2.3 「1 RTT 先の目標ウィンドウ」から増加インターバル `ca->cnt` への変換
+### 2.3 「1 RTT 先の目標ウィンドウ」から増加インターバル `ca->cnt` への変換
 
 カーネルの輻輳回避処理は、「`ca->cnt` 個のセグメントが ACK されるごとに `snd_cwnd` を $+1$ する」という汎用カウンタ関数 `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` で動いています。では、連続関数の $W_{\text{cubic}}(t)$ をどのように `ca->cnt` に変換するのでしょうか？
 
@@ -316,7 +316,7 @@ cwnd_epoch (14) +     *       最初は一気に駆け上がり、W_max に近�
    - **過去のロス履歴がない初期エポック（`last_max_cwnd == 0` かつ `ca->cnt > 20`）**:
      まだ一度もロスを経験していない場合は `ca->cnt = 20` で頭打ちにし、最後に `ca->cnt = max(ca->cnt, 2U)` で最小値 `2`（2 ACK ごとに最大 $+1$）にクランプします。
 
-#### 2.4 カーネル／BPF での固定小数点演算と整数立方根 `cubic_root()`
+### 2.4 カーネル／BPF での固定小数点演算と整数立方根 `cubic_root()`
 
 Linux カーネルや BPF プログラムでは浮動小数点（`float` / `double`）が使えないため、すべての小数を **2 のべき乗（1024）を分母とする固定小数点整数** で表現します。
 
@@ -340,7 +340,7 @@ Linux カーネルや BPF プログラムでは浮動小数点（`float` / `doub
   （$C = 410 / 2^{10}$ と $\text{offs}^3$ の時間スケール $(2^{10})^3 = 2^{30}$ の合計 $40$ ビット分を右シフトで戻します。）
   $t < \text{bic}_{K}$（凹領域）なら `bic_target = bic_origin_point - delta`、$t \ge \text{bic}_{K}$（凸領域）なら `bic_target = bic_origin_point + delta` となります。
 
-##### 固定小数点の立方根 `cubic_root(__u64 a)` の仕組み
+#### 固定小数点の立方根 `cubic_root(__u64 a)` の仕組み
 
 整数 $a$ の立方根 $\lfloor \sqrt[3]{a} \rfloor$ を高速に求めるため、[tcp_cubic.c](file:///usr/local/google/home/kuniyu/kernel/tcp-eli5-src/net/ipv4/tcp_cubic.c) と同じ 3 ステップのアルゴリズムを使います。
 1. **ビット幅を 3 で割る（指数部の計算）**:
@@ -355,7 +355,7 @@ Linux カーネルや BPF プログラムでは浮動小数点（`float` / `doub
    x = ((x * 341) >> 10);
    ```
 
-#### 2.5 具体的な数値例（`test.pkt` のパラメータでの追跡）
+### 2.5 具体的な数値例（`test.pkt` のパラメータでの追跡）
 
 RTT = $100\text{ ms}$（`delay_min = 100,000` usec）の接続で、`cwnd = 20` のときにパケットロスが発生したケースを実際に計算してみましょう。
 
@@ -375,7 +375,7 @@ RTT = $100\text{ ms}$（`delay_min = 100,000` usec）の接続で、`cwnd = 20` 
 | **Flight 4** | $2.1\text{ s}$ | $2252$ ($2.2\text{ s}$) | $271$ | $0$ | プラトー：$20 \le \text{cwnd}$ | $100 \times 20 = 2000$ | $20 \to 20$（水平維持） |
 | **Flight 5** | $4.0\text{ s}$ | $4198$ ($4.1\text{ s}$) | $1675$ | $1$ | 凸領域：$20 + 1 = 21$ | $20 / (21 - 20) = 20$ | $20 \to 21$（再加速） |
 
-#### 2.6 カーネルが提供するフィールドとソケット固有領域 `icsk_ca_priv`
+### 2.6 カーネルが提供するフィールドとソケット固有領域 `icsk_ca_priv`
 
 BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意されている構造体フィールド**と、**私たちが `icsk_ca_priv`（`struct bpf_cubic3_ca`）に独自定義して管理するフィールド**は以下の通りです。
 
@@ -401,11 +401,11 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の仕組みを踏まえて、[starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/starter.bpf.c) の 3 つの `TODO` を書く前に以下の 4 つの設計の問いを考えてみましょう。
 
-#### Q1. なぜ `bic_K` は ACK のたびではなく `ca->epoch_start == 0` のときだけ計算するのか？
+### Q1. なぜ `bic_K` は ACK のたびではなく `ca->epoch_start == 0` のときだけ計算するのか？
 
 `bictcp_update()` は輻輳回避中に ACK が届くたびに呼ばれますが、`cubic_root()` を使った `ca->bic_K` の計算は `if (ca->epoch_start == 0)` のブロック内で 1 回しか行いません。なぜ毎回計算しなくてよいのでしょうか？また、`ca->epoch_start` はどのタイミングで `0` にリセットされるでしょうか？
 
@@ -419,7 +419,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 </details>
 
-#### Q2. なぜ経過時間 `t` を計算するときに `ca->delay_min`（最小 RTT）を足すのか？
+### Q2. なぜ経過時間 `t` を計算するときに `ca->delay_min`（最小 RTT）を足すのか？
 
 `bictcp_update()` では、経過時間 `t` を `now_us - ca->epoch_start` ではなく `(now_us - ca->epoch_start) + ca->delay_min` として計算します。もし `ca->delay_min` を足さなかった場合、エポック開始直後の Flight 1（`now_us == ca->epoch_start`）で `bic_target` と `ca->cnt` はどうなってしまうでしょうか？
 
@@ -434,7 +434,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 </details>
 
-#### Q3. 符号なし整数（`__u64`）だけで凹領域（$t < K$）と凸領域（$t \ge K$）の両方を安全に計算するには？
+### Q3. 符号なし整数（`__u64`）だけで凹領域（$t < K$）と凸領域（$t \ge K$）の両方を安全に計算するには？
 
 数式 $W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$ では、$t < K$ のとき $(t - K)^3$ が負になり、$t > K$ のとき正になります。`t` と `ca->bic_K` が符号なし整数であるとき、アンダーフローを起こさずに `bic_target` を求めるにはどう条件分岐を組めばよいでしょうか？
 
@@ -455,7 +455,7 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 </details>
 
-#### Q4. `cubic_root()` で `v[shift]` を参照する直前に `if (shift >= 64) return 0;` が必要な理由は？
+### Q4. `cubic_root()` で `v[shift]` を参照する直前に `if (shift >= 64) return 0;` が必要な理由は？
 
 `cubic_root(__u64 a)` では、`b = fls64(a); b = ((b * 84) >> 8) - 1; shift = (a >> (b * 3));` によって $a$ の上位 6 ビットを抽出します。アルゴリズム上は `shift` は必ず `0` 以上 `63` 以下になりますが、境界チェックを書かずに `v[shift]` にアクセスすると BPF プログラムのロードが失敗します。なぜでしょうか？
 
@@ -472,11 +472,11 @@ BPF で CUBIC を実装するにあたり、**カーネル側ですでに用意�
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/solution.bpf.c) の各関数と固定小数点式の実装を順番に見ていきましょう。
 
-#### 4.1 `cubic_root(__u64 a)` — テーブル参照とニュートン法による整数立方根（TODO 1）
+### 4.1 `cubic_root(__u64 a)` — テーブル参照とニュートン法による整数立方根（TODO 1）
 
 ```c
 static __always_inline __u32 cubic_root(__u64 a)
@@ -512,7 +512,7 @@ static __always_inline __u32 cubic_root(__u64 a)
 - **Verifier ガードと初期推定値**: `if (shift >= 64) return 0;` で BPF 検証器に境界を保証したうえで、`v[shift]` を参照し `<< b` で元のスケールに戻して初期近似値 `x` を得ます。
 - **ニュートン＝ラフソン反復**: `div64_u64(a, (__u64)x * (__u64)(x - 1))` で $a / x^2$ を計算し、`2 * x` と足して `* 341 >> 10`（$\approx \div 3$）することで、1 回の反復で高精度な立方根に収束させます。
 
-#### 4.2 `bictcp_update()` — $W_{\text{cubic}}(t)$ 曲線と `ca->cnt` の算出（TODO 2）
+### 4.2 `bictcp_update()` — $W_{\text{cubic}}(t)$ 曲線と `ca->cnt` の算出（TODO 2）
 
 ```c
 static __always_inline void bictcp_update(struct sock *sk, __u32 cwnd, __u32 acked)
@@ -580,7 +580,7 @@ out:
 - **3 次曲線の評価**: `(now_us - ca->epoch_start) + ca->delay_min` を `BICTCP_HZ` 単位の `t` に変換し、`offs = |t - ca->bic_K|` から `delta` を計算して凹領域（`bic_origin_point - delta`）または凸領域（`bic_origin_point + delta`）の `bic_target` を得ます。
 - **`ca->cnt` の決定**: `bic_target > cwnd` なら `cwnd / (bic_target - cwnd)`、プラトー（`bic_target <= cwnd`）なら `100 * cwnd` とし、最後に `max(ca->cnt, 2U)` で下限を保証します。
 
-#### 4.3 `bpf_cubic3_ssthresh()` — $\beta \approx 0.7$ の乗法的減少（TODO 3）
+### 4.3 `bpf_cubic3_ssthresh()` — $\beta \approx 0.7$ の乗法的減少（TODO 3）
 
 ```c
 SEC("struct_ops")
@@ -599,7 +599,7 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 - パケットロス検知時に `ca->epoch_start = 0` にリセットし、現在の `tp->snd_cwnd` を `ca->last_max_cwnd`（$W_{\max}$）として記憶します（Fast Convergence と Reno-friendly 領域は次の Step 2 で追加します）。
 - 新しい `snd_ssthresh` として `(tp->snd_cwnd * 717) / 1024`（最小値 `2U`）を返します。
 
-#### 4.4 その他のコールバック関数（初期提供済み）
+### 4.4 その他のコールバック関数（初期提供済み）
 
 - `bpf_cubic3_init()`: コネクション開始時に `bictcp_reset(ca)` でプライベート構造体をゼロクリアします。
 - `bpf_cubic3_cong_avoid()`: `tcp_is_cwnd_limited(sk)` を確認し、Slow Start 中は `bpf_cubic3_slow_start()` で `snd_ssthresh` まで伸ばし、残りの `acked` に対して `bictcp_update()` と `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` を実行します。
@@ -609,9 +609,9 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### 5.1 `test.pkt` のシナリオと検証内容
+### 5.1 `test.pkt` のシナリオと検証内容
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/cubic/step01-cubic-curve/test.pkt) は、実効 MSS = 1000 バイト・RTT = 100 ms（`delay_min = 100,000` usec）のコネクション上で、セクション 2.5 で計算した通りの 7 ステップを順番にアサートします。
 
@@ -632,7 +632,7 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 7. **Flight 5（凸領域 $t > K$ での帯域探索, $t_{\text{elapsed}} = 4.0\text{ s}$）**:
    経過時間が $K \approx 2.46\text{ s}$ を超えると凸領域に入り、`delta = 1`、`bic_target = 20 + 1 = 21`、`ca->cnt = 20` となって、20 セグメントの ACK 後に `tcpi_snd_cwnd > 20` へ再び増加し始めることを確認します。
 
-#### 5.2 テストの実行方法
+### 5.2 テストの実行方法
 
 `labs/` の各ステップディレクトリ（またはリポジトリ内の任意の場所）から以下のコマンドを実行してください。
 
@@ -642,7 +642,7 @@ __u32 BPF_PROG(bpf_cubic3_ssthresh, struct sock *sk)
 ```
 
 
-### `labs/cubic/step01-cubic-curve/starter.bpf.c`（穴埋めスケルトン）
+### `labs/cubic/step01-cubic-curve/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -908,8 +908,7 @@ struct tcp_congestion_ops bpf_cubic3 = {
 };
 ```
 
-
-### `labs/cubic/step01-cubic-curve/test.pkt`（packetdrill テスト）
+### `labs/cubic/step01-cubic-curve/test.pkt` (packetdrill テスト)
 
 ```python
 // Step 3: Fixed-Point Cubic Root and W_cubic(t) Curve (Concave & Convex)
@@ -1014,7 +1013,6 @@ assert tcpi_snd_cwnd == 20, f"expected cwnd to plateau at 20 near K, got {tcpi_s
 assert tcpi_snd_cwnd > 20, f"expected cwnd > 20 in convex region, got {tcpi_snd_cwnd}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/cubic/step01-cubic-curve/solution.bpf.c</code></summary>
@@ -1344,21 +1342,23 @@ struct tcp_congestion_ops bpf_cubic3 = {
 
 </details>
 
+
+
 ---
 
 ## Step 2: Reno-friendly 領域 ($W_{\text{est}}$) と Fast Convergence
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
-このステップでは、Step 1 で実装した純粋な CUBIC の三次関数曲線（$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$）が実ネットワークで直面する 2 つの課題——「新しい競合フローが参入したときに帯域を譲るのが遅い問題」と「短 RTT・小ウィンドウ環境で従来の TCP Reno より遅くなる問題」——を解決する **Fast Convergence（高速収束）** と **Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）** を実装します。トラック全体の構成や各ステップの位置づけについては、[CUBIC トラック概要 (`../README.md`)](../README.md) を参照してください。
+このステップでは、Step 1 で実装した純粋な CUBIC の三次関数曲線（$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}$）が実ネットワークで直面する 2 つの課題——「新しい競合フローが参入したときに帯域を譲るのが遅い問題」と「短 RTT・小ウィンドウ環境で従来の TCP Reno より遅くなる問題」——を解決する **Fast Convergence（高速収束）** と **Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）** を実装します。トラック全体の構成や各ステップの位置づけについては、[CUBIC トラック概要 (`../README.md`)](#) を参照してください。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
 `starter.bpf.c` の設計や `TODO` に取り組む前に、まずは CUBIC がなぜこれら 2 つの補助アルゴリズムを必要とするのか、その直感的な理由と数式、そしてカーネルが提供するデータ構造をゼロから整理しましょう。
 
-#### 2.1 純粋な CUBIC 曲線が抱える 2 つの課題
+### 2.1 純粋な CUBIC 曲線が抱える 2 つの課題
 
 Step 1 で学んだ通り、純粋な CUBIC はパケットロスが発生したときの輻輳ウィンドウ `cwnd` を最大ウィンドウ $W_{\max}$（`ca->last_max_cwnd`）として記録し、`cwnd` を $\beta \approx 0.7$ 倍に減速します。その後、経過時間 $t$ に応じた三次関数
 
@@ -1371,9 +1371,9 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 - **課題 1（新しいフローが参入したときの収束の遅さ）**: 既存の CUBIC フローが大きな $W_{\max}$ を維持しているボトルネックに新しいフローが参入すると、1 フローあたりの公平な帯域シェアは以前より小さくなります。しかし既存のフローは「以前の大きな $W_{\max}$」を目指して凹領域で急激にウィンドウを広げようとするため、帯域をなかなか譲らず、公平なシェアへ収束するまでに何度もパケットロスを繰り返してしまいます。
 - **課題 2（短 RTT・小 BDP 環境での TCP Reno に対する劣後）**: $W_{\text{cubic}}(t)$ は RTT の長さではなく「実時間 $t$（秒）」の関数であり、特にプラトー（$t \approx K$）付近では傾きがほぼゼロになります。そのため、RTT が短い環境（1 秒間に何十回も RTT が回る環境）や $W_{\max}$ が小さい環境では、「1 RTT ごとに確実にウィンドウを増やす」標準的な TCP Reno（AIMD）よりもウィンドウの成長が遅くなってしまいます。
 
-#### 2.2 アルゴリズム 1: Fast Convergence（高速収束）
+### 2.2 アルゴリズム 1: Fast Convergence（高速収束）
 
-##### 直感とアイデア
+#### 直感とアイデア
 
 送信側は「新しい競合フローが参入して自分の使える帯域が減った」ことをどうすれば検知できるでしょうか？
 
@@ -1401,7 +1401,7 @@ cwnd
   +---------------------------------------------------------------------> 時間 t
 ```
 
-##### 固定小数点での数式と具体例
+#### 固定小数点での数式と具体例
 
 `starter.bpf.c` / `solution.bpf.c` では、浮動小数点を使わずに `BICTCP_BETA_SCALE = 1024` を分母とする固定小数点で $\beta$ を表しています（`beta = 717`、すなわち $717 / 1024 \approx 0.7002$）。したがって、$\frac{1 + \beta}{2}$ を掛ける整数演算は以下の式になります。
 
@@ -1417,15 +1417,15 @@ $$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{
      - `last_max_cwnd = (14 * 1741) / 2048 = 24374 / 2048 = 11`（Fast Convergence がなければ `14`）
      - `ssthresh = (14 * 717) / 1024 = 9`
 
-#### 2.3 アルゴリズム 2: Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）
+### 2.3 アルゴリズム 2: Reno-friendly 領域（$W_{\text{est}}$ / `tcp_cwnd`）
 
-##### 直感とアイデア
+#### 直感とアイデア
 
 短 RTT 環境やプラトー付近で CUBIC が TCP Reno に負けないようにするため、CUBIC は内部で **「もし同じ経路で TCP Reno 相当の AIMD フローが走っていたら、今ごろウィンドウはいくつになっているか？」という推定値 $W_{\text{est}}$（コード上は `ca->tcp_cwnd`）** を並行して計算します。そして毎回、三次関数の目標値 $W_{\text{cubic}}(t)$ と $W_{\text{est}}$ のうち **大きい方** のペースでウィンドウを増やします。
 
 $$W_{\text{target}} = \max\left(W_{\text{cubic}}(t),\, W_{\text{est}}\right)$$
 
-##### なぜ $W_{\text{est}}$ は「1 RTT あたり +1」ではなく「約 1.875 RTT あたり +1」なのか？
+#### なぜ $W_{\text{est}}$ は「1 RTT あたり +1」ではなく「約 1.875 RTT あたり +1」なのか？
 
 ここで非常に重要な疑問が生まれます。標準の TCP Reno は「ロス時に $\beta_{\text{reno}} = 0.5$ 倍に減らし、1 RTT ごとに $\alpha_{\text{reno}} = +1$ セグメント増やす」アルゴリズムです。では、CUBIC の $W_{\text{est}}$ も 1 RTT ごとに $+1$ 増やせばよいのでしょうか？
 
@@ -1443,7 +1443,7 @@ $$\alpha = \frac{3 \times (1024 - 717)}{1024 + 717} = \frac{3 \times 307}{1741} 
 
 $$\frac{1}{\alpha} = \frac{1 + \beta}{3(1 - \beta)} = \frac{1741}{921} \approx 1.890 \text{ [RTT]}$$
 
-##### 固定小数点定数 `beta_scale` と ACK カウントによる更新規則
+#### 固定小数点定数 `beta_scale` と ACK カウントによる更新規則
 
 1 RTT の間にはおよそ `cwnd` 個のセグメントが ACK されるため、`ca->tcp_cwnd` を $+1$ 増やすのに必要な累積 ACK セグメント数 `delta` は $\text{cwnd} \times \frac{1}{\alpha}$ 個です。
 
@@ -1486,7 +1486,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
   - 一方、Reno-friendly 領域では `cwnd = 11` のとき `delta = (11 * 15) >> 3 = 165 >> 3 = 20` です。11 パケットのフライトを 4 回（計 44 ACKs）送ると、`ack_cnt` が 20 を 2 回超えて `ca->tcp_cwnd` が `10 -> 11 -> 12` へと進みます。
   - `ca->tcp_cwnd (12) > cwnd (11)` となった瞬間、`max_cnt = 11 / (12 - 11) = 11` が計算され、`ca->cnt` は `1100` から `11` にクランプされます。その結果、プラトーの最中であっても 11 パケットの ACK で `cwnd` が `12` へと成長します。
 
-#### 2.4 カーネルと `starter.bpf.c` が提供する構造体・フィールド・ヘルパー
+### 2.4 カーネルと `starter.bpf.c` が提供する構造体・フィールド・ヘルパー
 
 このステップで使うすべての構造体メンバとヘルパー関数は以下の通りです（すべて `vmlinux.h`、`bpf_cc_helpers.h`、`starter.bpf.c` で定義済みです）。
 
@@ -1513,11 +1513,11 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の解説を踏まえて、`starter.bpf.c` の 2 つの `TODO` をコードに落とし込むための 4 つの設計問答に答えてみましょう。すべての問いはセクション 2 の内容から導き出すことができます。
 
-#### Q1. `bpf_cubic4_ssthresh()` で Fast Convergence を実装するとき、どの変数を比較し、どのような整数式で `ca->last_max_cwnd` を更新しますか？
+### Q1. `bpf_cubic4_ssthresh()` で Fast Convergence を実装するとき、どの変数を比較し、どのような整数式で `ca->last_max_cwnd` を更新しますか？
 
 ロス発生時に呼ばれる `bpf_cubic4_ssthresh()` では、すでに `cwnd = tp->snd_cwnd` と `ca = inet_csk_ca(sk)` が取得されています。`starter.bpf.c` では無条件に `ca->last_max_cwnd = cwnd;` となっている箇所を、セクション 2.2 の式と定数（`BICTCP_BETA_SCALE`、`beta`）を使ってどのように書き換えればよいでしょうか？
 
@@ -1538,7 +1538,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 </details>
 
-#### Q2. `bictcp_update()` で `ca->ack_cnt += acked;` を関数の先頭（レート制限チェックの前）に置く必要があるのはなぜですか？また、新エポック開始時（`ca->epoch_start == 0`）にはどう扱われますか？
+### Q2. `bictcp_update()` で `ca->ack_cnt += acked;` を関数の先頭（レート制限チェックの前）に置く必要があるのはなぜですか？また、新エポック開始時（`ca->epoch_start == 0`）にはどう扱われますか？
 
 `bictcp_update()` の冒頭には、以下のような早期リターンと `goto` があります。
 
@@ -1564,7 +1564,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 </details>
 
-#### Q3. `tcp_friendliness:` ラベルにおいて、BPF 検証器（Verifier）を通過しつつ `ca->tcp_cwnd` と `ca->ack_cnt` を更新するにはどう書けばよいですか？
+### Q3. `tcp_friendliness:` ラベルにおいて、BPF 検証器（Verifier）を通過しつつ `ca->tcp_cwnd` と `ca->ack_cnt` を更新するにはどう書けばよいですか？
 
 セクション 2.3 で学んだ通り、1 セグメント増やすのに必要な ACK しきい値は `delta = (cwnd * beta_scale) >> 3;` です。カーネルの `tcp_cubic.c` のような `while (ca->ack_cnt > delta)` ループを使わずに、エッジケース（ゼロ除算）も防ぎながら `ca->tcp_cwnd` と `ca->ack_cnt` を更新するコードを書いてみましょう。
 
@@ -1582,7 +1582,7 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 </details>
 
-#### Q4. `ca->tcp_cwnd > cwnd` のとき、なぜ `ca->cnt` を「大きくする」のではなく `max_cnt` 以下に「小さくクランプする」のでしょうか？
+### Q4. `ca->tcp_cwnd > cwnd` のとき、なぜ `ca->cnt` を「大きくする」のではなく `max_cnt` 以下に「小さくクランプする」のでしょうか？
 
 `ca->tcp_cwnd` が現在の `cwnd` を上回ったとき、Reno 相当の成長速度を保証するために `ca->cnt` をどのように更新すべきか、その理由とともにコードを示してください。
 
@@ -1603,11 +1603,11 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 `solution.bpf.c` では、Step 1 の純粋な CUBIC 実装に対して以下の 2 つの関数を拡張しています。それぞれの処理と固定小数点演算を確認しましょう。
 
-#### 4.1 `bpf_cubic4_ssthresh()` — Fast Convergence と乗法的減少
+### 4.1 `bpf_cubic4_ssthresh()` — Fast Convergence と乗法的減少
 
 ```c
 SEC("struct_ops")
@@ -1634,7 +1634,7 @@ __u32 BPF_PROG(bpf_cubic4_ssthresh, struct sock *sk)
 - `if (cwnd < ca->last_max_cwnd)`: 前回の最大ウィンドウ $W_{\max}$ に到達する前にロスが発生した場合、`(cwnd * (1024 + 717)) / 2048` によって `ca->last_max_cwnd` を約 $0.85 \times \text{cwnd}$ に引き下げます。
 - `return max((cwnd * beta) / BICTCP_BETA_SCALE, 2U);`: 新しいスロースタート閾値 `snd_ssthresh` として $\max(\lfloor 0.7 \times \text{cwnd} \rfloor, 2)$ を返します。
 
-#### 4.2 `bictcp_update()` — エポック初期化、三次関数、および Reno-friendly 領域
+### 4.2 `bictcp_update()` — エポック初期化、三次関数、および Reno-friendly 領域
 
 ```c
 static __always_inline void bictcp_update(struct sock *sk, __u32 cwnd, __u32 acked)
@@ -1698,11 +1698,11 @@ tcp_friendliness:
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
 `test.pkt` は、RTT = 100 ms、MSS = 1000 バイト（TS オプション込みで 1012 バイト）のコネクション上で **Fast Convergence** と **Reno-friendly 領域** の両方を順番に検証します。
 
-#### `test.pkt` のタイムラインと検証内容
+### `test.pkt` のタイムラインと検証内容
 
 1. **Slow Start（`0.000s 〜 0.200s`、`cwnd: 10 -> 20`）**:
    - 3-way ハンドシェイク完了後、初期ウィンドウ 10 セグメント（10,000 バイト）を送信し、0.1 秒後の ACK で `cwnd == 20` に成長するとともに最小 RTT `ca->delay_min = 100,000 us`（100 ms）が記録されます。
@@ -1724,7 +1724,7 @@ tcp_friendliness:
    - この間、まだ $t < K \approx 1.71\text{ s}$ なので、純粋な三次関数だけでは `bic_target == 11 == cwnd` のプラトーにとどまり、`ca->cnt = 100 * 11 = 1100` となって `cwnd` は `11` から一切増えません（もし Fast Convergence だけを実装して Reno-friendly 領域を未実装のままにすると、最後の 125 行目のアサート `assert tcpi_snd_cwnd > 11` で `got 11` となり FAIL します）。
    - **`solution.bpf.c` が PASS する理由**: Reno-friendly 領域が有効なため、`delta = (11 * 15) >> 3 = 20` ACK ごとに `ca->tcp_cwnd` が `10 -> 11 -> 12` と着実に増加します。Flight 6 で `ca->tcp_cwnd` が `12`（`> cwnd = 11`）に達した瞬間に `max_cnt = 11 / (12 - 11) = 11` で `ca->cnt` が `1100` から `11` にクランプされ、`cwnd` が `12`（`> 11`）へと成長して最終アサートに PASS します。
 
-#### 実行コマンド
+### 実行コマンド
 
 `labs/` ディレクトリから見ても、このステップのディレクトリ（`cubic/step02-reno-friendly-fast-conv`）から相対パスで実行する場合も、以下のコマンドでテストできます。
 
@@ -1734,7 +1734,7 @@ tcp_friendliness:
 ```
 
 
-### `labs/cubic/step02-reno-friendly-fast-conv/starter.bpf.c`（穴埋めスケルトン）
+### `labs/cubic/step02-reno-friendly-fast-conv/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2055,8 +2055,7 @@ struct tcp_congestion_ops bpf_cubic4 = {
 };
 ```
 
-
-### `labs/cubic/step02-reno-friendly-fast-conv/test.pkt`（packetdrill テスト）
+### `labs/cubic/step02-reno-friendly-fast-conv/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -2186,7 +2185,6 @@ assert tcpi_snd_cwnd == 11, f"expected cwnd 11 at plateau, got {tcpi_snd_cwnd}"
 assert tcpi_snd_cwnd > 11, f"expected Reno-friendly region to grow cwnd > 11 at plateau, got {tcpi_snd_cwnd}"
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/cubic/step02-reno-friendly-fast-conv/solution.bpf.c</code></summary>
@@ -2552,23 +2550,25 @@ struct tcp_congestion_ops bpf_cubic4 = {
 
 </details>
 
+
+
 ---
 
 ## Step 3: アイドル後の Epoch シフト (`CA_EVENT_TX_START`)
 
-### 1. 学習ゴール
+## 1. 学習ゴール
 
 Step 2 までで、CUBIC の 3 次関数曲線・Fast Convergence・Reno-friendly 領域をすべて備えた輻輳回避（Congestion Avoidance）が完成しました。しかし、ここまでの実装には **アプリケーションが送信を一時停止（アイドル）した後に再開すると、`snd_cwnd` が一瞬で急膨張して深刻なパケットバーストを引き起こす** という実ネットワーク上の大きな落とし穴が残っています。
 
 このステップでは、なぜ「時間ベース」の CUBIC がアイドル期間に弱いのかを基礎から理解し、TCP コアが「未確認データゼロ（`in_flight == 0`）からの送信再開」を通知する `.cwnd_event_tx_start` フック（`CA_EVENT_TX_START` イベント）を使って、エポック開始時刻 `ca->epoch_start` をアイドル期間分だけ未来へ平行移動（シフト）させる仕組みを実装します。
 
-- トラック全体の概要と各ステップの一覧は [CUBIC トラック README](../README.md) を参照してください。
+- トラック全体の概要と各ステップの一覧は [CUBIC トラック README](#) を参照してください。
 
 ---
 
-### 2. アルゴリズムと背景の解説（まずここを読む）
+## 2. アルゴリズムと背景の解説（まずここを読む）
 
-#### 2.1 なぜアイドル期間が CUBIC の窓サイズを暴走させるのか？
+### 2.1 なぜアイドル期間が CUBIC の窓サイズを暴走させるのか？
 
 従来の TCP Reno（AIMD）は、「到着した ACK の数」だけを数えて `snd_cwnd` を進めます。したがって、アプリケーションがデータを送らずにアイドル状態（ネットワーク上の未確認パケット数 `in_flight == 0`）になっている間は ACK も届かず、Reno の「時計」は自然に停止します。
 
@@ -2580,7 +2580,7 @@ $$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\
 
 `ca->epoch_start` がアイドル前の古い時刻のまま放置されていると、再開後の最初の ACK が届いた瞬間に、経過時間 $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ が **アイドルしていた 2 秒分を一気にジャンプ** します。すると $(t - K)^3$ が急増して `bic_target` が跳ね上がり、その間ネットワークの空き帯域を一切プローブしていなかったにもかかわらず、アイドル明けのたった 1 RTT で `snd_cwnd` が最大 1.5 倍（`ca->cnt = 2`）まで急膨張してしまいます。このような理由から、[RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) は「経過時間 $t$ にアプリケーション制限（アイドル）期間を含めてはならない（MUST NOT）」と規定しています。
 
-#### 2.2 解決策：曲線の「リセット」ではなく時間軸方向の「平行移動（シフト）」
+### 2.2 解決策：曲線の「リセット」ではなく時間軸方向の「平行移動（シフト）」
 
 アイドル期間 $\Delta_{\text{idle}}$ を経過時間 $t$ から除外するには、送信を再開した瞬間にエポック開始時刻 `ca->epoch_start` をアイドル期間 $\Delta_{\text{idle}}$ の分だけ未来へずらします（平行移動）。
 
@@ -2604,12 +2604,12 @@ $$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}})
 ここで重要なのは、**`ca->epoch_start = 0` にリセットして新しいエポックを始め直すのではなく、`ca->epoch_start += delta` でシフトする** という点です。
 CUBIC の凹領域（$t < K$）は「エポック開始直後が最も傾きが急で、プラトー（$W_{\max}$）に近づくほど傾きが緩やかになる」形をしています。もしアイドルからの再開のたびに `ca->epoch_start = 0` にリセットして $K$ を再計算してしまうと、すでに $W_{\max}$ 手前の平坦部まで達していたフローであっても、アイドルのたびに「ロス直後のような急勾配の立ち上がり」を最初からやり直すことになってしまいます。`ca->epoch_start += delta` で平行移動すれば、**3 次関数の曲線形状（`ca->bic_K` と `ca->bic_origin_point`）と曲線上の現在位置をそのまま保った状態** で時計だけを一時停止・再開できます。
 
-#### 2.3 エッジケース 1：まだエポックが始まっていない場合（`ca->epoch_start == 0`）
+### 2.3 エッジケース 1：まだエポックが始まっていない場合（`ca->epoch_start == 0`）
 
 CUBIC では、`ca->epoch_start == 0` を「現在アクティブな Congestion Avoidance エポックが存在しない（Slow Start 中、またはロス発生直後でまだ Congestion Avoidance の ACK を受けていない）」ことを表す **番兵（センチネル値）** として使っています。
 もし `ca->epoch_start == 0` のときに `delta` を足してしまうと、`ca->epoch_start` が非ゼロの適当な時刻に化けてしまい、次の `bictcp_update()` で `ca->bic_K` や `ca->bic_origin_point` の初期化がスキップされて壊れてしまいます。そのため、シフト処理は必ず **`ca->epoch_start != 0` かつ `delta > 0` のときだけ** 実行します。
 
-#### 2.4 エッジケース 2：シフト後の `ca->epoch_start` が現在時刻 `now` より未来になる現象
+### 2.4 エッジケース 2：シフト後の `ca->epoch_start` が現在時刻 `now` より未来になる現象
 
 一見すると、`delta = now - tp->lsndtime` を足しているだけなので `ca->epoch_start + delta` が現在時刻 `now` を超えることはないように思えます。しかし、カーネル内のタイムスタンプが記録されるタイミングの違いにより、**`ca->epoch_start + delta > now`（未来の時刻）になるケース** が実在します。
 
@@ -2638,7 +2638,7 @@ t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;
 
 これを防ぐため、`ca->epoch_start += delta` の直後に「もし `ca->epoch_start` が `now` より未来（`after(ca->epoch_start, now)`）になったら、`ca->epoch_start = now` にクランプ（頭打ち）する」というガードが不可欠です。
 
-#### 2.5 具体例（`test.pkt` の数値で計算）
+### 2.5 具体例（`test.pkt` の数値で計算）
 
 RTT = $20\text{ ms}$（$d_{\min} = 20{,}000\ \mu\text{s}$）、`cwnd = 20` でロスが起きて `last_max_cwnd` ($W_{\max}$) $= 20$、`ssthresh` $= 14$ になったケース（$K \approx 2.46\text{ s}$）を考えます。
 
@@ -2647,7 +2647,7 @@ RTT = $20\text{ ms}$（$d_{\min} = 20{,}000\ \mu\text{s}$）、`cwnd = 20` で�
   - **Epoch シフトあり（正常）**: 2.0 秒のアイドル分だけ `ca->epoch_start` が後ろへシフトされるため、ACK 到着時の実質経過時間 $t$ は約 $60\text{ ms}$ + $d_{\min}$ にとどまります。$t \ll K$ なので `bic_target` は $15$ のままで、`cwnd` は **$15$ を維持** します。
   - **Epoch シフトなし（バグ）**: `ca->epoch_start` が古いままなので、ACK 到着時に $t \approx 2.06\text{ s}$ まで一気に進みます。すると $t$ が $K = 2.46\text{ s}$ に急接近するため `bic_target` が $W_{\max} = 20$ へ跳ね上がり、`ca->cnt = 15 / (20 - 15) = 3` となって、15 セグメントの ACK 一発で `cwnd` が **$15 \to 20$ へ急騰** してしまいます。
 
-#### 2.6 カーネルと `bpf_cc_helpers.h` が提供する構造体・フィールド・ヘルパー
+### 2.6 カーネルと `bpf_cc_helpers.h` が提供する構造体・フィールド・ヘルパー
 
 セクション 3 の設計問題に取り組む前に、このステップで使うカーネルの仕組みと構造体フィールドを整理しておきましょう（なお、コード内の関数・構造体プレフィックスは歴史的経緯により `bpf_cubic5` となっています）。
 
@@ -2661,11 +2661,11 @@ RTT = $20\text{ ms}$（$d_{\min} = 20{,}000\ \mu\text{s}$）、`cwnd = 20` で�
 
 ---
 
-### 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 3. 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 セクション 2 の解説を踏まえて、`starter.bpf.c` の TODO を埋めるための 4 つの設計チェックポイントに答えてみましょう。
 
-#### Q1. アイドルからの送信再開を検知するフックの選択
+### Q1. アイドルからの送信再開を検知するフックの選択
 
 ネットワーク上の未確認データがゼロ（`in_flight == 0`）の状態からアプリケーションが送信を再開した瞬間に処理を行いたい場合、`struct tcp_congestion_ops` のどのコールバックを使えばよいでしょうか？
 
@@ -2677,7 +2677,7 @@ TCP 送信パスの `tcp_event_data_sent()` は、`tcp_packets_in_flight(tp) == 
 
 </details>
 
-#### Q2. 新しい変数を追加せずにアイドル期間 `delta` を求める方法
+### Q2. 新しい変数を追加せずにアイドル期間 `delta` を求める方法
 
 `struct bpf_bictcp` に「最後に送信した時刻」を保存する独自フィールドを追加しなくても、カーネルの `struct tcp_sock` が持っているフィールドからアイドル期間 `delta`（jiffies 単位）を計算できます。どのフィールドを使い、なぜ `.cwnd_event_tx_start` の中で古い時刻が読み取れるのでしょうか？
 
@@ -2704,7 +2704,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 
 </details>
 
-#### Q3. `ca->epoch_start` をシフトする条件と、リセット（`= 0`）しない理由
+### Q3. `ca->epoch_start` をシフトする条件と、リセット（`= 0`）しない理由
 
 計算した `delta` を使って `ca->epoch_start` を更新するとき、(1) なぜ `ca->epoch_start = 0` にリセットするのではなく `ca->epoch_start += delta` でシフトするのか、(2) なぜ更新前に `if (ca->epoch_start && delta > 0)` をチェックする必要があるのかを説明してください。
 
@@ -2718,7 +2718,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 
 </details>
 
-#### Q4. 未来の時刻への飛び出しを防ぐクランプ処理
+### Q4. 未来の時刻への飛び出しを防ぐクランプ処理
 
 `ca->epoch_start += delta;` の直後に、なぜ `if (after(ca->epoch_start, now)) ca->epoch_start = now;` というクランプ処理が必要なのでしょうか？クランプしないと `bictcp_update()` のどの計算がどう壊れるでしょうか？
 
@@ -2736,11 +2736,11 @@ $$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T
 
 ---
 
-### 4. 実装ステップと解説 (`solution.bpf.c`)
+## 4. 実装ステップと解説 (`solution.bpf.c`)
 
 Step 2 までのコード（`bictcp_update()`、`bpf_cubic5_cong_avoid()`、`bpf_cubic5_recalc_ssthresh()`、`bpf_cubic5_state()`、`bpf_cubic5_acked()`、`bpf_cubic5_undo_cwnd()`）はすべてそのまま引き継ぎ、`bpf_cubic5_cwnd_event_tx_start()` を完成させて `struct tcp_congestion_ops bpf_cubic5` に登録します。
 
-#### 4.1 `bpf_cubic5_cwnd_event_tx_start()` の実装
+### 4.1 `bpf_cubic5_cwnd_event_tx_start()` の実装
 
 ```c
 SEC("struct_ops")
@@ -2771,7 +2771,7 @@ void BPF_PROG(bpf_cubic5_cwnd_event_tx_start, struct sock *sk)
 3. **未来時刻のクランプ**:
    - `if (after(ca->epoch_start, now)) ca->epoch_start = now;` により、`ca->epoch_start` が現在時刻 `now` を追い越した場合に `now` で頭打ちにし、`bictcp_update()` における `tcp_jiffies32 - ca->epoch_start` の負数アンダーフローを確実に防ぎます。
 
-#### 4.2 `bictcp_update()` における経過時間 `t` の計算との連携
+### 4.2 `bictcp_update()` における経過時間 `t` の計算との連携
 
 `bpf_cubic5_cwnd_event_tx_start()` が `ca->epoch_start` をシフトしておくことで、その後に ACK が到着して `bictcp_update()` が呼ばれた際、174〜177 行目の固定小数点計算は特別な分岐を一切追加することなくそのまま正しく動作します。
 
@@ -2784,7 +2784,7 @@ void BPF_PROG(bpf_cubic5_cwnd_event_tx_start, struct sock *sk)
 
 - `tcp_jiffies32 - ca->epoch_start` からアイドル期間 `delta` が差し引かれた状態になるため、`t`（$1/1024$ 秒単位）には純粋にデータを送信していたアクティブな期間と最小 RTT `ca->delay_min` だけが反映されます。
 
-#### 4.3 `struct tcp_congestion_ops bpf_cubic5` への登録
+### 4.3 `struct tcp_congestion_ops bpf_cubic5` への登録
 
 ```c
 SEC(".struct_ops")
@@ -2803,9 +2803,9 @@ struct tcp_congestion_ops bpf_cubic5 = {
 
 ---
 
-### 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## 5. `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### 5.1 `test.pkt` のシナリオ解説
+### 5.1 `test.pkt` のシナリオ解説
 
 `test.pkt` は、RTT = $20\text{ ms}$ の環境で以下の 5 つのフェーズを順番に実行し、2 秒間のアイドル後に `snd_cwnd` が暴走しないことを検証します。
 
@@ -2825,7 +2825,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
    - **`starter.bpf.c` が失敗する理由**: `bpf_cubic5_cwnd_event_tx_start()` が何もしないため、`ca->epoch_start` が 2 秒前のまま残ります。ACK 到着時に経過時間 `t` が一気に約 $2.06$ 秒まで進み、`bic_target` が `W_max = 20` に跳ね上がって `ca->cnt = 15 / (20 - 15) = 3` となるため、15 セグメントの ACK 一発で `tcpi_snd_cwnd` が **`20` 以上** に急騰し、`assert tcpi_snd_cwnd <= 15` で FAIL します。
    - **`solution.bpf.c` がパスする理由**: 2 秒後の最初のセグメント送信時に `bpf_cubic5_cwnd_event_tx_start()` が `ca->epoch_start` を 2 秒分シフトします。そのため ACK 到着時の `t` は約 $60\text{ ms}$ にとどまり、`bic_target = 15 <= cwnd (15)`（`ca->cnt = 100 * 15 = 1500`）となって `tcpi_snd_cwnd` は **`15` のまま**（`<= 15`）で PASS します。
 
-#### 5.2 テストの実行方法
+### 5.2 テストの実行方法
 
 ```sh
 ../../run_test.sh cubic/step03-idle-epoch-shift starter
@@ -2833,7 +2833,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 ```
 
 
-### `labs/cubic/step03-idle-epoch-shift/starter.bpf.c`（穴埋めスケルトン）
+### `labs/cubic/step03-idle-epoch-shift/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3155,8 +3155,7 @@ struct tcp_congestion_ops bpf_cubic5 = {
 };
 ```
 
-
-### `labs/cubic/step03-idle-epoch-shift/test.pkt`（packetdrill テスト）
+### `labs/cubic/step03-idle-epoch-shift/test.pkt` (packetdrill テスト)
 
 ```python
 // SPDX-License-Identifier: GPL-2.0
@@ -3227,7 +3226,6 @@ assert tcpi_snd_cwnd == 15, tcpi_snd_cwnd
 assert tcpi_snd_cwnd <= 15, tcpi_snd_cwnd
 }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/cubic/step03-idle-epoch-shift/solution.bpf.c</code></summary>
@@ -3564,20 +3562,22 @@ struct tcp_congestion_ops bpf_cubic5 = {
 
 </details>
 
+
+
 ---
 
 ## Step 4: HyStart（ACK Train と Delay 増加による Slow Start 早期脱出）
 
-### 学習ゴール
+## 学習ゴール
 
-Step 3 までで、CUBIC の 3 次関数ウィンドウ曲線・Fast Convergence・Reno-friendly 領域・アイドル後の Epoch シフトを備えた輻輳回避（Congestion Avoidance）を実装しました（トラック全体の構成は [CUBIC トラック概要](../README.md) を参照してください）。
+Step 3 までで、CUBIC の 3 次関数ウィンドウ曲線・Fast Convergence・Reno-friendly 領域・アイドル後の Epoch シフトを備えた輻輳回避（Congestion Avoidance）を実装しました（トラック全体の構成は [CUBIC トラック概要](#) を参照してください）。
 しかし、ここまでの実装には **接続開始直後の初期 Slow Start でボトルネックルータのバッファを溢れさせてしまう** という大きな課題が残っています。このステップでは、パケットロスが起きる前にネットワークの飽和兆候（ACK 列の詰まりと RTT の増加）を検知して Slow Start から Congestion Avoidance へ安全に着陸させる **HyStart（Hybrid Slow Start）** を `.pkts_acked` フック（`bpf_cubic6_acked()` と `hystart_update()`）に実装します。
 
 ---
 
-### アルゴリズムと背景の解説（まずここを読む）
+## アルゴリズムと背景の解説（まずここを読む）
 
-#### 1. なぜ初期 Slow Start で大事故が起きるのか？（Slow Start オーバーシュート問題）
+### 1. なぜ初期 Slow Start で大事故が起きるのか？（Slow Start オーバーシュート問題）
 
 TCP コネクションが確立された直後、送信側はネットワークの空き帯域（帯域遅延積: BDP = Bandwidth-Delay Product）を知らないため、**Slow Start** フェーズから送信を開始します。
 初期状態の Slow Start 閾値 `tp->snd_ssthresh` は事実上の無限大である `TCP_INFINITE_SSTHRESH`（`0x7fffffff`）に設定されており、`tp->snd_cwnd < tp->snd_ssthresh` が成り立つ間、カーネルの `tcp_slow_start()` は到着した ACK のパケット数分だけ `tp->snd_cwnd` を加算します。つまり、**1 RTT ごとに `snd_cwnd` が 2 倍（$10 \to 20 \to 40 \to 80 \dots$）へ指数関数的に膨張**します。
@@ -3594,7 +3594,7 @@ TCP コネクションが確立された直後、送信側はネットワーク�
 
 ---
 
-#### 2. ラウンド（1 RTT のフライト）の定義と境界管理
+### 2. ラウンド（1 RTT のフライト）の定義と境界管理
 
 HyStart は 1 RTT ごとの「ラウンド」単位で測定を行います。シーケンス番号空間を使ってラウンドの区切りを次のように追跡します。
 
@@ -3609,7 +3609,7 @@ HyStart は 1 RTT ごとの「ラウンド」単位で測定を行います。�
 
 ---
 
-#### 3. HyStart の 2 つの独立した検出器
+### 3. HyStart の 2 つの独立した検出器
 
 HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一方でも条件を満たしたら** `ca->found = 1` を立てて `tp->snd_ssthresh = tp->snd_cwnd` に設定します。
 
@@ -3625,7 +3625,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
   |  8 サンプル以上の最小 RTT (curr_rtt) >= delay_min + 閾値 なら [Detector 2 発火!]
 ```
 
-##### 検出器 1: ACK Train 検出（`HYSTART_ACK_TRAIN`）
+#### 検出器 1: ACK Train 検出（`HYSTART_ACK_TRAIN`）
 
 - **直感的な仕組み**:
   Slow Start 中に送信側が 1 ラウンド分のパケット群を送出すると、それらのパケットはボトルネック回線の帯域幅に応じた間隔で順番に受信側へ届き、その応答である ACK も密に連なった「列車（ACK Train）」となって送信側へ戻ってきます。
@@ -3644,7 +3644,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
      }
      ```
 
-##### 検出器 2: Delay 増加検出（`HYSTART_DELAY`）
+#### 検出器 2: Delay 増加検出（`HYSTART_DELAY`）
 
 - **直感的な仕組み**:
   ACK 間引きや GRO/LRO によって ACK Train が途切れる環境でも、in-flight パケット数が BDP を超えてボトルネックルータのバッファにキューが溜まり始めれば、必ず **RTT（往復遅延）が最小 RTT（`ca->delay_min`）より長くなります**。
@@ -3675,7 +3675,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 
 ---
 
-#### 4. 具体例で追う数値トレース（Delay 増加検出）
+### 4. 具体例で追う数値トレース（Delay 増加検出）
 
 最小 RTT が $20\text{ ms}$（`delay_min = 20000` $\mu\text{s}$）の回線で、Slow Start がどのように止まるかを数値で確認しましょう。
 
@@ -3691,7 +3691,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 
 ---
 
-#### 5. カーネルと `bpf_cc_helpers.h` が提供する構造体・フィールド・ヘルパー一覧
+### 5. カーネルと `bpf_cc_helpers.h` が提供する構造体・フィールド・ヘルパー一覧
 
 コードを書く前に、このステップでアクセスするカーネル側の構造体メンバと既存ヘルパーを整理しておきましょう。
 
@@ -3720,11 +3720,11 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 
 ---
 
-### 設計チェックポイント（理解した仕組みをコードに落とし込む）
+## 設計チェックポイント（理解した仕組みをコードに落とし込む）
 
 上の解説を踏まえて、`starter.bpf.c` の `hystart_update()` にある `TODO` をどのようにコードへ落とし込むか、4 つの設計ポイントを考えてみましょう。
 
-#### Q1. `bpf_cubic6_acked()` はどのような条件のときだけ `hystart_update()` を呼び出すか？
+### Q1. `bpf_cubic6_acked()` はどのような条件のときだけ `hystart_update()` を呼び出すか？
 
 `bpf_cubic6_acked()`（既に `starter.bpf.c` に実装済み）を見ると、`ca->delay_min` を更新した後、3 つの条件がすべて成り立つときだけ `hystart_update(sk, delay)` を呼んでいます。その 3 つの条件とは何で、なぜそれぞれが必要なのでしょうか？
 
@@ -3745,7 +3745,7 @@ if (tp->snd_ssthresh == TCP_INFINITE_SSTHRESH &&
 
 </details>
 
-#### Q2. `hystart_update()` の先頭で行うラウンド境界チェックとウィンドウサイズチェックの正しい順序は？
+### Q2. `hystart_update()` の先頭で行うラウンド境界チェックとウィンドウサイズチェックの正しい順序は？
 
 `hystart_update(struct sock *sk, __u32 delay)` の冒頭では、「新しいラウンドに入ったかの判定（`hystart_reset(sk)`）」と「ウィンドウサイズが `HYSTART_LOW_WINDOW`（16）未満なら何もしない早期リターン」の 2 つを行います。この 2 つの `if` 文はどう並べるべきでしょうか？
 
@@ -3766,7 +3766,7 @@ if (tp->snd_cwnd < HYSTART_LOW_WINDOW)
 
 </details>
 
-#### Q3. Detector 1（`HYSTART_ACK_TRAIN`）は C コードでどう記述するか？
+### Q3. Detector 1（`HYSTART_ACK_TRAIN`）は C コードでどう記述するか？
 
 現在時刻 `__u32 now_us = tp->tcp_mstamp;` を使って、「直前の ACK からの間隔が `HYSTART_ACK_DELTA_US`（`2000U`）以内なら `ca->last_ack` を更新し、さらにラウンド開始時刻 `ca->round_start` からの経過時間が `ca->delay_min` の半分以上なら Slow Start を終了する」というロジックを C コードで組み立ててみましょう。
 
@@ -3788,7 +3788,7 @@ if ((__s32)(now_us - ca->last_ack) <= HYSTART_ACK_DELTA_US) {
 
 </details>
 
-#### Q4. Detector 2（`HYSTART_DELAY`）は C コードでどう記述するか？
+### Q4. Detector 2（`HYSTART_DELAY`）は C コードでどう記述するか？
 
 引数で渡された今回の RTT `delay`（$\mu\text{s}$）を使って、「ラウンド内の最小 RTT `ca->curr_rtt` を更新し、サンプル数 `ca->sample_cnt` を最大 `HYSTART_MIN_SAMPLES`（8）まで増やし、8 サンプル以上集まった状態で `ca->curr_rtt` が閾値以上なら Slow Start を終了する」というロジックを C コードで組み立ててみましょう。
 
@@ -3817,11 +3817,11 @@ if (ca->sample_cnt >= HYSTART_MIN_SAMPLES) {
 
 ---
 
-### 実装ステップと解説 (`solution.bpf.c`)
+## 実装ステップと解説 (`solution.bpf.c`)
 
 `solution.bpf.c` における HyStart 関連の実装を関数ごとに確認します。
 
-#### 1. HyStart の定数定義
+### 1. HyStart の定数定義
 
 ```c
 #define HYSTART_ACK_TRAIN	0x1
@@ -3838,7 +3838,7 @@ if (ca->sample_cnt >= HYSTART_MIN_SAMPLES) {
 - `HYSTART_MIN_SAMPLES`（`8`）: Delay 増加検出を行うために必要なラウンド内の最小 RTT サンプル数。
 - `HYSTART_DELAY_MIN`（`4000U` = $4\text{ ms}$）/ `HYSTART_DELAY_MAX`（`16000U` = $16\text{ ms}$）: 許容キューイング遅延 `delay_min >> 3` の下限と上限。
 
-#### 2. `hystart_reset()` — 新しいラウンドの開始
+### 2. `hystart_reset()` — 新しいラウンドの開始
 
 ```c
 static __always_inline void hystart_reset(struct sock *sk)
@@ -3858,7 +3858,7 @@ static __always_inline void hystart_reset(struct sock *sk)
 - `ca->round_start` と `ca->last_ack` を現在の `tp->tcp_mstamp` で揃え、`ca->end_seq = tp->snd_nxt` でこのラウンドの終端シーケンス番号をマークします。
 - `ca->curr_rtt = ~0U` とすることで、次の最初の RTT サンプルで確実に `ca->curr_rtt = delay` へ更新されます。
 
-#### 3. `hystart_update()` — ラウンド管理と 2 つの検出器
+### 3. `hystart_update()` — ラウンド管理と 2 つの検出器
 
 ```c
 static __always_inline void hystart_update(struct sock *sk, __u32 delay)
@@ -3902,7 +3902,7 @@ static __always_inline void hystart_update(struct sock *sk, __u32 delay)
 - 次に `tp->snd_cwnd < HYSTART_LOW_WINDOW`（16）であれば早期リターンします。
 - 続く Detector 1（`HYSTART_ACK_TRAIN`）と Detector 2（`HYSTART_DELAY`）のいずれかで飽和条件が成立すると、`ca->found = 1` と `tp->snd_ssthresh = tp->snd_cwnd` を設定します。
 
-#### 4. `bpf_cubic6_acked()` — `.pkts_acked` フックからの呼び出し
+### 4. `bpf_cubic6_acked()` — `.pkts_acked` フックからの呼び出し
 
 ```c
 SEC("struct_ops")
@@ -3931,9 +3931,9 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 
 ---
 
-### `packetdrill` テストの解説 (`test.pkt`) と実行方法
+## `packetdrill` テストの解説 (`test.pkt`) と実行方法
 
-#### `test.pkt` のシナリオ解説
+### `test.pkt` のシナリオ解説
 
 `test.pkt` は、初期 Slow Start 中に RTT が $20\text{ ms}$ から $35\text{ ms}$ へ増加したとき、パケットロスなしで Slow Start を早期脱出できるかを検証します。
 
@@ -3955,12 +3955,12 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
    - 8 サンプル目に達した `ack 18217` および続く `ack 19229` の時点で、`sample_cnt >= 8` かつ `curr_rtt`（$35\text{ ms}$）$\ge$ `delay_min + 4 ms`（$20\text{ ms} + 4\text{ ms} = 24\text{ ms}$）が成立し、**Detector 2（`HYSTART_DELAY`）が発火** します。
    - `tp->snd_ssthresh = tp->snd_cwnd` が実行され、`assert tcpi_snd_ssthresh == tcpi_snd_cwnd` と `assert tcpi_snd_ssthresh < 0x7fffffff` が PASS します。
 
-#### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` は PASS するのか？
+### なぜ `starter.bpf.c` は失敗し、`solution.bpf.c` は PASS するのか？
 
 - **`starter.bpf.c`**: `hystart_update()` が空のスタブになっているため、Round 2 で $35\text{ ms}$ の遅延サンプルが 8 個以上届いても `tp->snd_ssthresh` が更新されず初期値 `0x7fffffff` のまま残り、49 行目の `assert tcpi_snd_ssthresh == tcpi_snd_cwnd` で FAIL します。
 - **`solution.bpf.c`**: Round 2 の 8 サンプル目で Delay 増加検出器が `ca->found = 1` と `tp->snd_ssthresh = tp->snd_cwnd` を設定するため、すべてのアサートに PASS します。
 
-#### テストの実行コマンド
+### テストの実行コマンド
 
 ```sh
 ../../run_test.sh cubic/step04-hystart starter
@@ -3968,7 +3968,7 @@ void BPF_PROG(bpf_cubic6_acked, struct sock *sk, const struct ack_sample *sample
 ```
 
 
-### `labs/cubic/step04-hystart/starter.bpf.c`（穴埋めスケルトン）
+### `labs/cubic/step04-hystart/starter.bpf.c` (穴埋めスケルトン)
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4299,8 +4299,7 @@ struct tcp_congestion_ops bpf_cubic6 = {
 };
 ```
 
-
-### `labs/cubic/step04-hystart/test.pkt`（packetdrill テスト）
+### `labs/cubic/step04-hystart/test.pkt` (packetdrill テスト)
 
 ```python
 // Test HyStart delay detection in bpf_cubic6
@@ -4358,7 +4357,6 @@ struct tcp_congestion_ops bpf_cubic6 = {
 +0.000 < . 1:1(0) ack 30361 win 1024
    +0 %{ assert tcpi_snd_ssthresh < 0x7fffffff, tcpi_snd_ssthresh }%
 ```
-
 
 <details>
 <summary>模範解答: <code>labs/cubic/step04-hystart/solution.bpf.c</code></summary>
@@ -4703,5 +4701,3 @@ struct tcp_congestion_ops bpf_cubic6 = {
 ```
 
 </details>
-
----

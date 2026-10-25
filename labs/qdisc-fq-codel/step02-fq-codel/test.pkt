@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-2.0
+// Step 2: Test FQ-CoDel Sparse Flow Prioritization and AQM Isolation
+
+0.00 `tc qdisc replace dev tun0 root bpf_fq_codel`
+0.00 `ethtool -K tun0 tso off gso off`
+
+// Setup Flow A (fd 3)
++0.00 socket(..., SOCK_DGRAM, IPPROTO_UDP) = 3
++0.00 connect(3, ..., ...) = 0
+
+// Setup Flow B (fd 4)
++0.00 socket(..., SOCK_DGRAM, IPPROTO_UDP) = 4
++0.00 connect(4, ..., ...) = 0
+
+// 1. Flow A sends 8 packets (1,000 bytes each) at t = 0
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
++0.00 write(3, ..., 1000) = 1000
+
+// Packet 1 of Flow A departs immediately at t = 0.
+// Credit drops 1000 - 1028 <= 0, Flow A moves to old_flows:
++0.00 > udp (1000)
+
+// 2. While Flow A's remaining 7 packets are queued in old_flows,
+// sparse Flow B sends a single 500-byte packet at t = 2ms:
++0.002 write(4, ..., 500) = 500
+
+// 3. Sparse Flow Prioritization:
+// At the next bottleneck slot (t = 4ms), Flow B (in new_flows)
+// is dequeued FIRST, ahead of Flow A's queued packets!
++0.002 > udp (500)
+
+// 4. Subsequent dequeue cycles serve Flow A from old_flows:
+// P2 at t = 8ms
++0.004 > udp (1000)
+// P3 at t = 12ms (sojourn >= 5ms -> first_above_time set to 12ms + 20ms = 32ms)
++0.004 > udp (1000)
+// P4 at t = 16ms
++0.004 > udp (1000)
+// P5 at t = 20ms
++0.004 > udp (1000)
+// P6 at t = 24ms
++0.004 > udp (1000)
+// P7 at t = 28ms
++0.004 > udp (1000)
+// At t = 32ms, now >= first_above_time (32ms): CoDel drops P8!
+// Verify that CoDel recorded at least 1 drop on the congested Flow A:
++0.01 `tc -s qdisc show dev tun0 | grep -q "dropped [1-9]"`

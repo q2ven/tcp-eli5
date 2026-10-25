@@ -1,4 +1,4 @@
-# 17. Hands-on (3): Building TCP BBR with BPF CC and packetdrill
+# 20. Hands-on (3): Building TCP BBR with BPF CC and packetdrill
 
 In Track 1 (Reno) and Track 2 (CUBIC), we implemented **loss-based congestion control**: algorithms that continuously inflate `cwnd` until a router buffer overflows and drops a packet, treating packet loss as the signal to cut `cwnd`. Since Van Jacobson's pioneering design in the late 1980s, this paradigm has powered the Internet for nearly three decades.
 
@@ -293,17 +293,17 @@ When you are ready, dive into [Step 1: The `.cong_control` Hook and Pacing Rate 
 
 ## Step 1: The `.cong_control` Hook and Pacing Rate Calculation from Delivery Rate
 
-### 1. Goal
+## 1. Goal
 
-In this step, you will implement the foundational mechanism of BBR (Bottleneck Bandwidth and Round-trip propagation time) using BPF `struct_ops` (`struct tcp_congestion_ops`): **pacing rate control driven directly by the measured delivery rate**. You will learn how BBR's `.cong_control` hook replaces the traditional `.cong_avoid` hook used by loss-based algorithms (Reno and CUBIC), and how to dynamically update `sk->sk_pacing_rate` from the kernel's `struct rate_sample` measurements (see [../README.md](../README.md) for the full BBR track overview).
+In this step, you will implement the foundational mechanism of BBR (Bottleneck Bandwidth and Round-trip propagation time) using BPF `struct_ops` (`struct tcp_congestion_ops`): **pacing rate control driven directly by the measured delivery rate**. You will learn how BBR's `.cong_control` hook replaces the traditional `.cong_avoid` hook used by loss-based algorithms (Reno and CUBIC), and how to dynamically update `sk->sk_pacing_rate` from the kernel's `struct rate_sample` measurements (see [../README.md](#) for the full BBR track overview).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
 Before examining the design checkpoints or writing code, let's build a complete picture from first principles: why BBR paces packets, how it computes the pacing rate from a delivery rate sample, and which kernel structures and fields are already provided to your BPF program.
 
-#### Why Controlling Only `cwnd` Is Not Enough (Intuition Behind Pacing)
+### Why Controlling Only `cwnd` Is Not Enough (Intuition Behind Pacing)
 
 Traditional loss-based congestion control algorithms such as Reno and CUBIC only regulate the **congestion window (`snd_cwnd`)** — the maximum number of unacknowledged segments allowed in flight. Relying solely on `snd_cwnd` causes two classic problems:
 
@@ -325,17 +325,17 @@ flowchart LR
     end
 ```
 
-#### Delivery Rate Formula and Fixed-Point STARTUP Gain
+### Delivery Rate Formula and Fixed-Point STARTUP Gain
 
 On every incoming ACK, the Linux kernel's rate sampling engine (`tcp_rate_gen()`) measures how many segments (`delivered`) were delivered to the peer over the elapsed measurement interval (`interval_us`, in microseconds). Given the segment payload size `mss_cache` (in bytes) and `USEC_PER_SEC = 1,000,000` microseconds per second, the instantaneous delivery rate $\text{bw}$ in bytes per second is:
 
 $$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
-##### Why Multiply Before Dividing in Integer Arithmetic?
+#### Why Multiply Before Dividing in Integer Arithmetic?
 
 In C and BPF integer arithmetic, division truncates any fractional remainder towards zero. If you divided `delivered / interval_us` first (for example, `10 / 10000`), the result would truncate to `0`. Therefore, you must always cast to a 64-bit unsigned integer (`__u64`), **multiply the entire numerator (`delivered * mss_cache * USEC_PER_SEC`) first**, and then divide by `interval_us` using the 64-bit helper `div64_u64()`.
 
-##### Applying the STARTUP Gain in Fixed-Point (`BBR_HIGH_GAIN`)
+#### Applying the STARTUP Gain in Fixed-Point (`BBR_HIGH_GAIN`)
 
 When a connection starts in the **STARTUP** phase (BBR's equivalent of Slow Start), it probes for available bandwidth by pacing packets faster than the currently measured delivery rate. Specifically, BBR uses a theoretical STARTUP gain of $2 / \ln(2) \approx 2.885\text{x}$, which doubles the sending rate every RTT.
 
@@ -343,7 +343,7 @@ Because floating-point instructions (`float` / `double`) are forbidden in the Li
 
 $$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
-##### Initialising the Pacing Rate at Connection Start (`.init`)
+#### Initialising the Pacing Rate at Connection Start (`.init`)
 
 When the 3-way handshake finishes and `.init(sk)` runs, no data segments have been acknowledged yet, so no `rate_sample` exists. To prevent the initial congestion window (`snd_cwnd = 10` segments) from being transmitted as an unpaced line-rate burst, BBR estimates an initial bandwidth from `snd_cwnd` and the handshake RTT (`rtt_us`), scales it by `BBR_HIGH_GAIN`, and enables TCP internal pacing:
 
@@ -351,7 +351,7 @@ $$\text{init}_{\text{bw}} = \frac{\text{snd}_{\text{cwnd}} \times \text{mss}_{\t
 
 $$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_{\text{HIGH,GAIN}}) \gg \text{BBR}_{\text{SCALE}}$$
 
-#### Concrete Numerical Walkthrough (`test.pkt` Numbers)
+### Concrete Numerical Walkthrough (`test.pkt` Numbers)
 
 Let's trace the exact numbers from our test scenario where the payload MSS is `mss_cache = 1000` bytes:
 
@@ -364,7 +364,7 @@ Let's trace the exact numbers from our test scenario where the payload MSS is `m
    - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$ (1.0 MB/s)
    - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
 
-#### What the Kernel Already Provides (Structures, Fields, and Hooks)
+### What the Kernel Already Provides (Structures, Fields, and Hooks)
 
 Here are the exact kernel callbacks and structure fields provided to your BPF program:
 
@@ -390,11 +390,11 @@ Here are the exact kernel callbacks and structure fields provided to your BPF pr
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Using what you just learned in Section 2, think through these four design questions to plan your implementation of `starter.bpf.c`.
 
-#### Q1. Which hook in `struct tcp_congestion_ops` should we implement, and do we need a private struct in `icsk_ca_priv` for Step 1?
+### Q1. Which hook in `struct tcp_congestion_ops` should we implement, and do we need a private struct in `icsk_ca_priv` for Step 1?
 
 Unlike Reno and CUBIC, which implement `.cong_avoid(sk, ack, acked)`, how should `bpf_bbr1` hook into the ACK processing path to receive `struct rate_sample`? And do we need to store any custom per-socket state in `icsk_ca_priv` for this first step?
 
@@ -406,7 +406,7 @@ Unlike Reno and CUBIC, which implement `.cong_avoid(sk, ack, acked)`, how should
 
 </details>
 
-#### Q2. How does `.init(sk)` enable TCP internal pacing and safely compute the initial pacing rate without risking division by zero?
+### Q2. How does `.init(sk)` enable TCP internal pacing and safely compute the initial pacing rate without risking division by zero?
 
 In `bpf_bbr1_init()`, which field on `struct sock` turns on internal packet pacing, and how should we extract the initial RTT in microseconds from `tp->srtt_us` when `tp->srtt_us` might be `0` or less than `8`?
 
@@ -419,7 +419,7 @@ In `bpf_bbr1_init()`, which field on `struct sock` turns on internal packet paci
 
 </details>
 
-#### Q3. How should `bpf_bbr1_cong_control()` filter out invalid rate samples?
+### Q3. How should `bpf_bbr1_cong_control()` filter out invalid rate samples?
 
 Not every ACK carries a usable delivery rate measurement. Which fields of `const struct rate_sample *rs` must we inspect at the start of `bpf_bbr1_cong_control()` before performing any arithmetic?
 
@@ -435,7 +435,7 @@ Not every ACK carries a usable delivery rate measurement. Which fields of `const
 
 </details>
 
-#### Q4. How do we write the 64-bit integer arithmetic in `bpf_bbr1_cong_control()` to compute the instantaneous delivery rate and apply `BBR_HIGH_GAIN`?
+### Q4. How do we write the 64-bit integer arithmetic in `bpf_bbr1_cong_control()` to compute the instantaneous delivery rate and apply `BBR_HIGH_GAIN`?
 
 Given a valid `rs`, write the C statements that compute the delivery rate in bytes/sec from `rs->delivered`, `tp->mss_cache`, `USEC_PER_SEC`, and `rs->interval_us`, scale it by `BBR_HIGH_GAIN` (`2885` in `BBR_SCALE = 10` fixed-point), and update `sk->sk_pacing_rate`.
 
@@ -457,11 +457,11 @@ Given a valid `rs`, write the C statements that compute the delivery rate in byt
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let's walk through each part of [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c).
 
-#### 1. Fixed-Point Constants
+### 1. Fixed-Point Constants
 
 ```c
 #define BBR_SCALE	10
@@ -472,7 +472,7 @@ Let's walk through each part of [solution.bpf.c](file:///usr/local/google/home/k
 - `BBR_SCALE = 10` (`BBR_UNIT = 1024`) defines our fixed-point unit (`1.0x`).
 - `BBR_HIGH_GAIN = 2885` represents the STARTUP gain ($2885 / 1024 \approx 2.817\text{x}$). Scaling any byte-per-second `rate` via `(rate * BBR_HIGH_GAIN) >> BBR_SCALE` multiplies it by ~2.82x using pure integer operations.
 
-#### 2. `bpf_bbr1_init()` — Enabling Internal Pacing and Setting the Initial Rate
+### 2. `bpf_bbr1_init()` — Enabling Internal Pacing and Setting the Initial Rate
 
 ```c
 SEC("struct_ops")
@@ -498,7 +498,7 @@ void BPF_PROG(bpf_bbr1_init, struct sock *sk)
 - Extracts the initial smoothed RTT in microseconds (`tp->srtt_us >> 3`), defaulting to `USEC_PER_MSEC` (1 ms) if `tp->srtt_us` is zero, and clamps `rtt_us` to at least `1`.
 - Computes the initial bandwidth `snd_cwnd * mss_cache * USEC_PER_SEC / rtt_us`, applies `BBR_HIGH_GAIN`, writes the result to `sk->sk_pacing_rate`, and sets `sk->sk_pacing_status = SK_PACING_NEEDED`.
 
-#### 3. `bpf_bbr1_cong_control()` — Updating Pacing Rate from `struct rate_sample`
+### 3. `bpf_bbr1_cong_control()` — Updating Pacing Rate from `struct rate_sample`
 
 ```c
 SEC("struct_ops")
@@ -529,7 +529,7 @@ void BPF_PROG(bpf_bbr1_cong_control, struct sock *sk, __u32 ack, int flag,
 - Calculates the instantaneous delivery rate in bytes/sec using 64-bit multiplication (`(__u64)rs->delivered * tp->mss_cache * USEC_PER_SEC`) followed by `div64_u64(rate, (__u64)rs->interval_us)`.
 - Multiplies by `BBR_HIGH_GAIN`, shifts right by `BBR_SCALE`, and updates `sk->sk_pacing_rate`.
 
-#### 4. `bpf_bbr1_ssthresh()` and `bpf_bbr1_undo_cwnd()`
+### 4. `bpf_bbr1_ssthresh()` and `bpf_bbr1_undo_cwnd()`
 
 ```c
 SEC("struct_ops")
@@ -549,7 +549,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/test.pkt) verifies `bpf_bbr1` in two stages:
 
@@ -573,7 +573,7 @@ __u32 BPF_PROG(bpf_bbr1_undo_cwnd, struct sock *sk)
    - Why [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/starter.bpf.c) fails: `bpf_bbr1_cong_control()` is an empty stub, so `sk->sk_pacing_rate` stays at the initial `281,738 B/s` and fails `assert tcpi_pacing_rate > 500000` on line 32.
    - Why [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step01-pacing-rate/solution.bpf.c) passes: `bpf_bbr1_cong_control()` updates `sk->sk_pacing_rate` to `1,000,000 * 2885 >> 10 = 2,817,382 B/s` (~2.82 MB/s), passing both `assert tcpi_pacing_rate > 500000` and `assert 2000000 < tcpi_pacing_rate < 3500000`.
 
-#### How to Run the Test
+### How to Run the Test
 
 Run the commands below to see `starter` fail the assertion and `solution` pass:
 
@@ -660,7 +660,6 @@ struct tcp_congestion_ops bpf_bbr1 = {
 };
 ```
 
-
 ### `labs/bbr/step01-pacing-rate/test.pkt` (packetdrill test)
 
 ```python
@@ -700,9 +699,8 @@ assert 2000000 < tcpi_pacing_rate < 3500000, f"expected pacing_rate ~2.82MB/s, g
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step01-pacing-rate/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step01-pacing-rate/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -788,21 +786,23 @@ struct tcp_congestion_ops bpf_bbr1 = {
 
 </details>
 
+
+
 ---
 
 ## Step 2: BDP Calculation from BtlBw (Max Bandwidth Filter) and RTprop (Min RTT Filter)
 
-### 1. Goal
+## 1. Goal
 
 In Step 1, we updated `sk_pacing_rate` on every ACK by directly overwriting our bandwidth estimate with the latest delivery rate sample (`rs->delivered / rs->interval_us`). In a real network, however, a single ACK sample is noisy: router queues temporarily inflate RTT, and application pauses cause the measured delivery rate to drop far below the physical link capacity. In this step, we store per-socket state in `icsk_ca_priv` to track the two core parameters of BBR's network path model — **RTprop (Round-Trip Propagation Time via a minimum RTT filter)** and **BtlBw (Bottleneck Bandwidth via an application-limited-aware maximum bandwidth filter)** — and use their product, the **BDP (Bandwidth-Delay Product)**, to control both `snd_cwnd` and `sk_pacing_rate` (see [../README.md](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/README.md) for the BBR track overview).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
 Before looking at the code or design questions, let us build the model from first principles: why naive per-ACK overwriting fails, how BBR extracts physical path properties from noisy ACK samples, and which kernel structures and fields are already provided for us.
 
-#### Why Overwriting on Every ACK Fails
+### Why Overwriting on Every ACK Fails
 
 Each time an ACK arrives, the TCP sender observes an instantaneous **RTT sample (`rs->rtt_us`)** and an instantaneous **delivery rate sample (`rs->delivered / rs->interval_us`)**. Blindly overwriting our path model with every new sample breaks down for two physical reasons:
 
@@ -814,7 +814,7 @@ Each time an ACK arrives, the TCP sender observes an instantaneous **RTT sample 
 2. **Under-Utilised Pipes Understate Bandwidth**:
    Conversely, the delivery rate measured over an ACK interval ($\text{bw}_t = \text{delivered} / \Delta t$) can never exceed the physical capacity of the bottleneck link ($\text{BtlBw}$), because packets cannot arrive at the receiver faster than the bottleneck link transmits them ($\text{bw}_t \le \text{BtlBw}$). However, whenever the sender transmits less data than needed to keep the bottleneck link full, the measured delivery rate falls below $\text{BtlBw}$. Therefore, to estimate the bottleneck link capacity (`max_bw`), we must apply a **maximum filter (max-filter)** across delivery rate samples.
 
-#### The Application-Limited (`rs->is_app_limited`) Invariant
+### The Application-Limited (`rs->is_app_limited`) Invariant
 
 A crucial edge case arises when the application itself does not supply enough data to keep the network pipe full — for instance, between HTTP requests, during interactive SSH sessions, or after a brief pause between writes. This condition is called being **application-limited (app-limited)**.
 
@@ -845,7 +845,7 @@ pkts/s|   |             * (ignored, max_bw kept!) |   |
       +---+-------------+----------> Time         +---+-------------+----------> Time
 ```
 
-#### Fixed-Point BDP Calculation and Target `snd_cwnd`
+### Fixed-Point BDP Calculation and Target `snd_cwnd`
 
 Once we know both $\text{BtlBw}$ (`ca->max_bw`) and $\text{RTprop}$ (`ca->min_rtt_us`), Kleinrock's optimal operating point states that the exact volume of in-flight data required to achieve 100% bottleneck utilisation with zero standing queue is the **Bandwidth-Delay Product (BDP)**:
 
@@ -871,7 +871,7 @@ Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in
 4. Finally, BBR adds a 4-packet margin (`bdp + 4U`, floored at `BBR_CWND_MIN_TARGET = 4U`) to `tp->snd_cwnd` to absorb receiver delayed ACKs and TSO/GSO burst quantisation:
    $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
 
-#### Counting Packet-Timed Round Trips (`round_cnt`)
+### Counting Packet-Timed Round Trips (`round_cnt`)
 
 In subsequent steps (Startup exit detection in Step 3 and ProbeBW gain cycling in Step 4), BBR measures time in **packet-timed round trips** rather than wall-clock timers. We lay that foundation here:
 
@@ -880,7 +880,7 @@ In subsequent steps (Startup exit detection in Step 3 and ProbeBW gain cycling i
 3. Therefore, as soon as an ACK arrives with `rs->prior_delivered >= ca->next_rtt_delivered` (checked safely against 32-bit unsigned wrap-around using `!before(rs->prior_delivered, ca->next_rtt_delivered)`), a packet sent at or after the beginning of the current round has completed a full round trip.
 4. BBR then increments `ca->round_cnt++` and advances the threshold for the next round to `ca->next_rtt_delivered = tp->delivered`.
 
-#### Concrete Numerical Example (Matching `test.pkt`)
+### Concrete Numerical Example (Matching `test.pkt`)
 
 Let us trace the exact numbers from `test.pkt` on a path with payload $\text{MSS} = 1000\text{ Bytes}$:
 
@@ -899,7 +899,7 @@ Let us trace the exact numbers from `test.pkt` on a path with payload $\text{MSS
   - **BtlBw filter**: The sample rate is $\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$ ($40\text{ pkts/s}$). Because `rs->is_app_limited` is true and `bw < ca->max_bw`, it is rejected and `ca->max_bw = 16777` is preserved.
   - Consequently, both `tp->snd_cwnd == 14` and `sk_pacing_rate` ($\approx 990\text{ KB/s}$) remain intact after Phase 2.
 
-#### What the Kernel Already Provides
+### What the Kernel Already Provides
 
 Before answering the design questions in Section 3, review the exact fields and helpers provided by the kernel and [bpf_cc_helpers.h](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/include/bpf_cc_helpers.h):
 
@@ -928,11 +928,11 @@ Before answering the design questions in Section 3, review the exact fields and 
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Use what you learned in Section 2 to work through these four design questions for [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c). Every question can be answered directly from Section 2.
 
-#### Q1. How should we write the `RTprop` min-filter condition so that it also handles the very first RTT sample (`ca->min_rtt_us == 0`)?
+### Q1. How should we write the `RTprop` min-filter condition so that it also handles the very first RTT sample (`ca->min_rtt_us == 0`)?
 
 In `bpf_bbr2_init()`, `ca->min_rtt_us` is initialised to `0`. What would go wrong if we wrote `if (rs->rtt_us > 0 && rs->rtt_us < ca->min_rtt_us)` without checking for `0`? Taking into account the signed/unsigned types (`rs->rtt_us` is `__s32` while `ca->min_rtt_us` is `__u32`), what is the exact condition for TODO 1?
 
@@ -948,7 +948,7 @@ In `bpf_bbr2_init()`, `ca->min_rtt_us` is initialised to `0`. What would go wron
 
 </details>
 
-#### Q2. How should we write the `BtlBw` max-filter and app-limited check for TODO 2?
+### Q2. How should we write the `BtlBw` max-filter and app-limited check for TODO 2?
 
 In [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c), line 120 unconditionally overwrites `ca->max_bw = bw;`. How should you replace that line to implement the app-limited invariant and maximum filter explained in Section 2?
 
@@ -966,7 +966,7 @@ In [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02
 
 </details>
 
-#### Q3. How do we detect the completion of a packet-timed round trip (`ca->round_cnt`)?
+### Q3. How do we detect the completion of a packet-timed round trip (`ca->round_cnt`)?
 
 After `bpf_bbr2_init()` sets `ca->next_rtt_delivered = tp->delivered;`, how does `bpf_bbr2_cong_control()` use `rs->prior_delivered` and `tp->delivered` to advance `ca->round_cnt` when a valid rate sample arrives?
 
@@ -984,7 +984,7 @@ After `bpf_bbr2_init()` sets `ca->next_rtt_delivered = tp->delivered;`, how does
 
 </details>
 
-#### Q4. Why does `bbr_bdp()` check `if (!ca->min_rtt_us || !bw) return 10U;` and use ceiling division (`+ BW_UNIT - 1`)?
+### Q4. Why does `bbr_bdp()` check `if (!ca->min_rtt_us || !bw) return 10U;` and use ceiling division (`+ BW_UNIT - 1`)?
 
 Look at `bbr_bdp()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c). What two failure modes are prevented by the initial zero check and the `+ BW_UNIT - 1` term in `(((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT`?
 
@@ -998,11 +998,11 @@ Look at `bbr_bdp()` in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let us walk through each part of [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c).
 
-#### 1. Scaling Constants and Per-Socket State `struct bpf_bbr2_ca`
+### 1. Scaling Constants and Per-Socket State `struct bpf_bbr2_ca`
 
 ```c
 #define BW_SCALE 24
@@ -1023,7 +1023,7 @@ struct bpf_bbr2_ca {
 - `BW_UNIT` (`1 << 24`) scales delivery rates in packets per microsecond; `BBR_UNIT` (`1 << 8`) scales gains.
 - `struct bpf_bbr2_ca` is stored in each socket's `icsk_ca_priv` area and accessed via `inet_csk_ca(sk)`.
 
-#### 2. Pacing Rate Conversion (`bbr_rate_bytes_per_sec()` and `bbr_set_pacing_rate()`)
+### 2. Pacing Rate Conversion (`bbr_rate_bytes_per_sec()` and `bbr_set_pacing_rate()`)
 
 ```c
 static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate, int gain)
@@ -1041,7 +1041,7 @@ static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate,
 - Converts `rate` (in `packets/usec << BW_SCALE`) into bytes per second by multiplying by `mss`, applying `gain` (`>> BBR_SCALE`), multiplying by `USEC_PER_SEC` with a 1% pacing margin (`BBR_PACING_MARGIN_PCT = 1U`, i.e. $990,000$), and shifting right by `BW_SCALE`.
 - `bbr_set_pacing_rate()` clamps the result against `sk->sk_max_pacing_rate` (if set) and writes it to `sk->sk_pacing_rate`.
 
-#### 3. BDP Helper `bbr_bdp()`
+### 3. BDP Helper `bbr_bdp()`
 
 ```c
 static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
@@ -1059,7 +1059,7 @@ static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
 
 - Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min}_{\text{rtt,us}} \times \text{gain} \gg 8) / 2^{24} \rceil$.
 
-#### 4. Initialisation (`bpf_bbr2_init()`) and Per-ACK Control (`bpf_bbr2_cong_control()`)
+### 4. Initialisation (`bpf_bbr2_init()`) and Per-ACK Control (`bpf_bbr2_cong_control()`)
 
 ```c
 SEC("struct_ops")
@@ -1123,11 +1123,11 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/test.pkt) tests both the `BtlBw` max-filter and the `RTprop` min-filter across two phases.
 
-#### Packet Trace Walkthrough
+### Packet Trace Walkthrough
 
 1. **3-way Handshake (lines 14–17, RTT = $10\text{ ms}$, payload MSS = $1000\text{ Bytes}$)**:
    - SYN and SYN-ACK are exchanged at `0.00`, and the handshake ACK arrives at `+0.01` ($10\text{ ms}$ RTT). Because `mss 1012` includes 12 bytes of TCP timestamps, the TCP payload MSS is exactly $1000\text{ Bytes}$.
@@ -1141,7 +1141,7 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
    - **Why `starter.bpf.c` fails**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) blindly overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->max_bw = bw`. On the Phase 2 ACK, `max_bw` collapses by $25\times$ to $40\text{ pkts/s}$, shrinking `tcpi_snd_cwnd` to `5` ($\text{BDP } 1 + 4$) and dropping `tcpi_pacing_rate` to $\approx 39.6\text{ KB/s}$, which fails the assertions on lines 44–45.
    - **Why `solution.bpf.c` passes**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) rejects the inflated RTT via the min-filter (`min_rtt_us` stays `10000`) and rejects the low app-limited bandwidth sample via the max-filter (`max_bw` stays $1000\text{ pkts/s}$), preserving `tcpi_snd_cwnd == 14` and `tcpi_pacing_rate` ($\approx 990\text{ KB/s}$).
 
-#### How to Run
+### How to Run
 
 Run the following commands to see `starter` fail the Phase 2 assertion and `solution` pass:
 
@@ -1305,7 +1305,6 @@ struct tcp_congestion_ops bpf_bbr2 = {
 };
 ```
 
-
 ### `labs/bbr/step02-btlbw-rtprop/test.pkt` (packetdrill test)
 
 ```python
@@ -1357,9 +1356,8 @@ assert 950000 < tcpi_pacing_rate < 1050000, f"expected pacing_rate ~990KB/s to b
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step02-btlbw-rtprop/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -1513,19 +1511,21 @@ struct tcp_congestion_ops bpf_bbr2 = {
 
 </details>
 
+
+
 ---
 
 ## Step 3: Transitioning from STARTUP to DRAIN and PROBE_BW (Full Pipe Detection)
 
-### 1. Goal
+## 1. Goal
 
-In this step, you will implement BBR's state transitions from its initial **`BBR_STARTUP`** mode (exponential bandwidth search) to **`BBR_DRAIN`** (draining the excess queue created during STARTUP) and finally into steady-state **`BBR_PROBE_BW`** (cruising at the estimated bottleneck bandwidth). You will implement `bbr_check_full_bw_reached()` to detect when the bottleneck pipe is full without relying on packet loss, `bbr_check_drain()` to drain the resulting queue and enter steady state, and `bbr_update_gains()` to switch pacing and congestion window gains across modes (see [../README.md](../README.md) for the full BBR track overview).
+In this step, you will implement BBR's state transitions from its initial **`BBR_STARTUP`** mode (exponential bandwidth search) to **`BBR_DRAIN`** (draining the excess queue created during STARTUP) and finally into steady-state **`BBR_PROBE_BW`** (cruising at the estimated bottleneck bandwidth). You will implement `bbr_check_full_bw_reached()` to detect when the bottleneck pipe is full without relying on packet loss, `bbr_check_drain()` to drain the resulting queue and enter steady state, and `bbr_update_gains()` to switch pacing and congestion window gains across modes (see [../README.md](#) for the full BBR track overview).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
-#### Why Can BBR Detect a Full Pipe Without Waiting for Packet Loss?
+### Why Can BBR Detect a Full Pipe Without Waiting for Packet Loss?
 
 When a TCP connection starts, the sender has no idea whether the bottleneck link capacity (`BtlBw`) is 1 Mbps or 10 Gbps. To discover the available bandwidth quickly, it must double its sending rate every round trip (1 RTT).
 
@@ -1547,7 +1547,7 @@ In fixed-point arithmetic (`BBR_SCALE = 8`, where `BBR_UNIT = 256` represents `1
 
 $$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{\text{bw,thresh}}}{2^{\text{BBR}_{\text{SCALE}}}} = \left(\text{full}_{\text{bw}} \times 320\right) \gg 8$$
 
-#### Counting Packet-Timed Round Trips Without Wall-Clock Timers
+### Counting Packet-Timed Round Trips Without Wall-Clock Timers
 
 To check whether bandwidth has failed to grow by 25% for 3 consecutive rounds, BBR needs a reliable way to mark the boundaries of each round trip without relying on noisy wall-clock timers. It does this using the socket's cumulative delivered packet counter (`tp->delivered`):
 
@@ -1556,7 +1556,7 @@ To check whether bandwidth has failed to grow by 25% for 3 consecutive rounds, B
 3. One RTT later, when the ACK for that packet returns, the kernel copies that snapshot into `rs->prior_delivered` and passes `rs` to `.cong_control()`.
 4. As soon as an ACK arrives with `rs->prior_delivered >= ca->next_rtt_delivered` (checked via `!before(rs->prior_delivered, ca->next_rtt_delivered)` for 32-bit wrap-around safety), BBR knows that a packet sent at or after the start of the current round has completed a full round trip. It then advances the boundary (`ca->next_rtt_delivered = tp->delivered`), increments `ca->round_cnt++`, and sets `ca->round_start = 1`.
 
-#### Why BBR Enters `BBR_DRAIN` Before `BBR_PROBE_BW`
+### Why BBR Enters `BBR_DRAIN` Before `BBR_PROBE_BW`
 
 During `BBR_STARTUP`, BBR paces and caps `cwnd` at `bbr_high_gain` (`~2.89x BDP`), and waits 3 plateau rounds to confirm that bandwidth growth has stopped. Consequently, by the time `full_bw_reached` becomes `1`, the amount of data in flight has grown up to roughly `2.89x BDP`. Because the pipe itself only holds `1.0x BDP`, the remaining **`~1.89x BDP` is sitting in the bottleneck router's queue**.
 
@@ -1586,7 +1586,7 @@ Setting `full_bw_reached = 1` also changes how `bbr_set_pacing_rate()` and `bbr_
 - **`bbr_set_pacing_rate()`**: Before the pipe is full (`!ca->full_bw_reached`), `sk->sk_pacing_rate` is only allowed to increase (`rate > sk->sk_pacing_rate`) so noisy or low early rate samples do not stall STARTUP's ramp-up. Once `ca->full_bw_reached == 1`, `bbr_set_pacing_rate()` unconditionally updates `sk->sk_pacing_rate = rate` so BBR can reduce its pacing rate down to `0.35x BtlBw` in `BBR_DRAIN` and `1.0x BtlBw` in `BBR_PROBE_BW`.
 - **`bbr_set_cwnd()`**: Once `ca->full_bw_reached == 1`, `cwnd` is clamped down to the target window via `cwnd = min(cwnd + acked, target_cwnd)` (with a floor of `BBR_CWND_MIN_TARGET = 4`).
 
-#### Concrete Numerical Example (`BtlBw = 100 KB/s` Constant Bottleneck)
+### Concrete Numerical Example (`BtlBw = 100 KB/s` Constant Bottleneck)
 
 Consider a connection over a constant `100 KB/s` bottleneck (`MSS = 1000` bytes, `RTT = 10 ms`, delivering 1 packet per 10 ms so `bw = 1677` in `BW_SCALE = 24` units):
 
@@ -1604,7 +1604,7 @@ Consider a connection over a constant `100 KB/s` bottleneck (`MSS = 1000` bytes,
    - For the 3rd consecutive non-app-limited round, `ca->max_bw (1677) < bw_thresh (2096)`. `++ca->full_bw_cnt` reaches `3`, setting **`ca->full_bw_reached = 1`**!
    - `bbr_check_drain()` transitions `BBR_STARTUP -> BBR_DRAIN` and sets `tp->snd_ssthresh = BDP`. If `tcp_packets_in_flight(tp) <= BDP` at that moment, it immediately transitions to `BBR_PROBE_BW` (`pacing_gain = 1.0x`, `cwnd_gain = 2.0x`), dropping `sk->sk_pacing_rate` to `~99 KB/s` (`100 KB/s` minus the 1% pacing margin).
 
-#### Kernel Struct Fields Provided vs. `icsk_ca_priv`
+### Kernel Struct Fields Provided vs. `icsk_ca_priv`
 
 Before writing the BPF code, review what the kernel already provides on each socket and rate sample, and what we store in our private congestion control state (`icsk_ca_priv`):
 
@@ -1643,11 +1643,11 @@ Before writing the BPF code, review what the kernel already provides on each soc
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Using the concepts from Section 2, think through the following three design questions before implementing the TODOs in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c).
 
-#### Q1. When should `bbr_check_full_bw_reached()` return early without touching `ca->full_bw_cnt`?
+### Q1. When should `bbr_check_full_bw_reached()` return early without touching `ca->full_bw_cnt`?
 
 `bbr_check_full_bw_reached()` is called on every ACK inside `.cong_control()`. If it incremented `ca->full_bw_cnt` on every ACK, a flow sending dozens of packets per RTT would hit `full_bw_cnt == 3` within a single round trip! Which three conditions (`ca->full_bw_reached`, `!ca->round_start`, and `rs->is_app_limited`) require an immediate early `return`, and how should `bw_thresh`, `ca->full_bw`, and `ca->full_bw_cnt` be updated when none of those early-return conditions apply?
 
@@ -1666,7 +1666,7 @@ Using the concepts from Section 2, think through the following three design ques
 
 </details>
 
-#### Q2. Why must `bbr_check_drain()` use two separate `if` statements instead of `if (...) ... else if (...)`?
+### Q2. Why must `bbr_check_drain()` use two separate `if` statements instead of `if (...) ... else if (...)`?
 
 `bbr_check_drain()` handles two transitions: (1) `BBR_STARTUP -> BBR_DRAIN` when `ca->full_bw_reached` is set, and (2) `BBR_DRAIN -> BBR_PROBE_BW` when `tcp_packets_in_flight(tp) <= bbr_bdp(sk, ca->max_bw, BBR_UNIT)`. What would go wrong if you connected them with `else if` on a connection whose in-flight packets are already at or below `1.0x BDP` on the ACK that sets `full_bw_reached = 1`?
 
@@ -1680,7 +1680,7 @@ Using the concepts from Section 2, think through the following three design ques
 
 </details>
 
-#### Q3. How should `bbr_update_gains()` assign `pacing_gain` and `cwnd_gain` in each of the three modes?
+### Q3. How should `bbr_update_gains()` assign `pacing_gain` and `cwnd_gain` in each of the three modes?
 
 Using the constants defined at the top of [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/starter.bpf.c) (`bbr_high_gain`, `bbr_drain_gain`, `BBR_UNIT`, and `bbr_cwnd_gain`), what values should `bbr_update_gains()` assign to `ca->pacing_gain` and `ca->cwnd_gain` for `BBR_STARTUP`, `BBR_DRAIN`, and `BBR_PROBE_BW`?
 
@@ -1701,11 +1701,11 @@ Using the constants defined at the top of [starter.bpf.c](file:///usr/local/goog
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let's walk through each helper and fixed-point calculation in [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/solution.bpf.c).
 
-#### 1. Fixed-Point Scales and Gain Constants
+### 1. Fixed-Point Scales and Gain Constants
 
 - `BW_SCALE = 24` (`BW_UNIT = 1 << 24`): fixed-point scale for delivery rates `bw` in packets per microsecond.
 - `BBR_SCALE = 8` (`BBR_UNIT = 1 << 8 = 256`): fixed-point scale for gains and growth factors where `256` equals `1.0x`:
@@ -1715,7 +1715,7 @@ Let's walk through each helper and fixed-point calculation in [solution.bpf.c](f
   - `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320` ($1.25\text{x}$)
   - `bbr_full_bw_cnt = 3U`
 
-#### 2. Packet-Timed Rounds and Peak Bandwidth Tracking: `bbr_update_bw()`
+### 2. Packet-Timed Rounds and Peak Bandwidth Tracking: `bbr_update_bw()`
 
 `bbr_update_bw()` runs on every ACK. It resets `ca->round_start = 0` and, for valid rate samples (`rs->delivered > 0 && rs->interval_us > 0`), performs two steps:
 
@@ -1724,7 +1724,7 @@ Let's walk through each helper and fixed-point calculation in [solution.bpf.c](f
 2. **Computing delivery rate and updating `ca->max_bw`**:
    It computes `bw = div64_u64((__u64)rs->delivered * BW_UNIT, (__u64)rs->interval_us)` and updates `ca->max_bw` whenever the sample is not app-limited (`!rs->is_app_limited`) or exceeds the current `ca->max_bw`.
 
-#### 3. Full Pipe Detection: `bbr_check_full_bw_reached()`
+### 3. Full Pipe Detection: `bbr_check_full_bw_reached()`
 
 ```c
 static __always_inline void bbr_check_full_bw_reached(struct sock *sk,
@@ -1751,7 +1751,7 @@ static __always_inline void bbr_check_full_bw_reached(struct sock *sk,
 - Runs only at the end of a packet-timed round (`ca->round_start == 1`) on non-application-limited samples (`!rs->is_app_limited`).
 - Compares `ca->max_bw` against `bw_thresh` (`1.25x` of `ca->full_bw`). After 3 consecutive rounds without 25% growth, it sets `ca->full_bw_reached = 1`.
 
-#### 4. Mode Transitions and Gain Updates: `bbr_check_drain()` and `bbr_update_gains()`
+### 4. Mode Transitions and Gain Updates: `bbr_check_drain()` and `bbr_update_gains()`
 
 ```c
 static __always_inline void bbr_check_drain(struct sock *sk)
@@ -1776,7 +1776,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step03-startup-drain/test.pkt) drives a connection across a constant `100 KB/s` bottleneck (1 segment of 1,000 bytes every 10 ms) and verifies the transition out of `BBR_STARTUP` after 3 plateau rounds:
 
@@ -1797,7 +1797,7 @@ static __always_inline void bbr_check_drain(struct sock *sk)
      - In `starter.bpf.c`, the three TODO functions are unimplemented, so `ca->full_bw_reached` stays `0` and the flow remains stuck in `BBR_STARTUP` at `~286 KB/s`, failing the line 56 assertion `assert 90000 < tcpi_pacing_rate < 110000`.
      - In `solution.bpf.c` (and in `starter.bpf.c` once you complete the TODOs), the flow transitions to `BBR_PROBE_BW` in Round 4, lowering `tcpi_pacing_rate` to `~99 KB/s` (`90000 < tcpi_pacing_rate < 110000`), setting `1 <= tcpi_snd_ssthresh <= 4`, and clamping `tcpi_snd_cwnd == 4` (`BBR_CWND_MIN_TARGET = 4`), passing all assertions.
 
-#### How to Run the Test
+### How to Run the Test
 
 Run the commands below to verify that `starter` fails before your changes and `solution` passes:
 
@@ -2064,7 +2064,6 @@ struct tcp_congestion_ops bpf_bbr3 = {
 };
 ```
 
-
 ### `labs/bbr/step03-startup-drain/test.pkt` (packetdrill test)
 
 ```python
@@ -2129,9 +2128,8 @@ assert tcpi_snd_cwnd == 4, f"Round 4 PROBE_BW: expected cwnd == 4, got {tcpi_snd
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step03-startup-drain/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step03-startup-drain/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -2404,19 +2402,21 @@ struct tcp_congestion_ops bpf_bbr3 = {
 
 </details>
 
+
+
 ---
 
 ## Step 4: PROBE_BW 8-Phase Gain Cycle (Bandwidth Probing and Queue Draining)
 
-### 1. Goal
+## 1. Goal
 
-In [Step 3](../step03-startup-drain/README.en.md), you implemented `BBR_STARTUP` (which uses a `2.89x` gain to quickly discover the bottleneck bandwidth) and `BBR_DRAIN` (which drains the queue built during startup). In this step, you will implement the steady-state **`BBR_PROBE_BW`** mode's **8-phase pacing gain cycle (`bbr_pacing_gain[]`)** and its phase transition logic (`bbr_is_next_cycle_phase()`, `bbr_advance_cycle_phase()`, `bbr_update_cycle_phase()`, and `bbr_update_gains()`). For the full curriculum progression, see the [BBR Track Overview (`../README.md`)](../README.md).
+In [Step 3](../step03-startup-drain/README.en.md), you implemented `BBR_STARTUP` (which uses a `2.89x` gain to quickly discover the bottleneck bandwidth) and `BBR_DRAIN` (which drains the queue built during startup). In this step, you will implement the steady-state **`BBR_PROBE_BW`** mode's **8-phase pacing gain cycle (`bbr_pacing_gain[]`)** and its phase transition logic (`bbr_is_next_cycle_phase()`, `bbr_advance_cycle_phase()`, `bbr_update_cycle_phase()`, and `bbr_update_gains()`). For the full curriculum progression, see the [BBR Track Overview (`../README.md`)](#).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
-#### Why Can't BBR Simply Pace at `1.0x` Forever in Steady State?
+### Why Can't BBR Simply Pace at `1.0x` Forever in Steady State?
 
 When a flow finishes `BBR_STARTUP` and `BBR_DRAIN` and enters `BBR_PROBE_BW`, it has measured the bottleneck bandwidth `ca->max_bw` (BtlBw) and minimum round-trip propagation time `ca->min_rtt_us` (RTprop), and its data in flight sits at `1.0x BDP`.
 
@@ -2427,7 +2427,7 @@ At first glance, it might seem ideal to simply pace at `pacing_gain = 1.0x` (mat
 2. **Excess queue buildup when capacity has not increased**:
    Conversely, suppose the sender probes for extra capacity by pacing at `1.25x` (+25%) for one RTT, and the bottleneck capacity has *not* actually grown. That extra 25% of traffic cannot cross the bottleneck link immediately, so it accumulates in the bottleneck router's buffer as an excess queue of `0.25x BDP`. If the sender immediately returned to `1.0x` without draining that queue, the `0.25x BDP` queue would persist indefinitely—inflating RTT and stacking up on subsequent probes until the buffer overflows (bufferbloat).
 
-#### BBRv1's Solution: The 8-Phase Pacing Gain Cycle (`CYCLE_LEN = 8`)
+### BBRv1's Solution: The 8-Phase Pacing Gain Cycle (`CYCLE_LEN = 8`)
 
 To solve both problems simultaneously, BBRv1's `BBR_PROBE_BW` mode cycles through **8 phases (Phase 0 to Phase 7)**, where each phase lasts roughly one minimum RTT (`ca->min_rtt_us`):
 
@@ -2452,7 +2452,7 @@ Throughout all 8 phases of `BBR_PROBE_BW`, the congestion window gain `ca->cwnd_
 > **Flow Desynchronisation (Random Initial Phase) vs. Deterministic Testing**
 > In the production Linux kernel, when BBR transitions from `BBR_DRAIN` to `BBR_PROBE_BW`, it picks a random starting `cycle_idx` among the cruise phases (2..7). This prevents multiple BBR flows sharing a bottleneck from synchronising their Phase 0 (`1.25x`) probes at the same instant and causing queue spikes. In this lab (`starter.bpf.c` / `solution.bpf.c`), `bbr_check_drain()` initialises `ca->cycle_idx = 0` so that `test.pkt` can deterministically verify the Phase 0 → Phase 1 → Phase 2 transitions immediately after `BBR_DRAIN`.
 
-#### Phase Completion Rules (`bbr_is_next_cycle_phase()`)
+### Phase Completion Rules (`bbr_is_next_cycle_phase()`)
 
 How does BBR decide when the current phase has finished so it can advance `ca->cycle_idx`? First, BBR checks whether the time elapsed since the current phase started (`ca->cycle_mstamp`) exceeds one minimum RTT (`ca->min_rtt_us`):
 
@@ -2487,7 +2487,7 @@ Next, `bbr_is_next_cycle_phase()` applies one of three rules depending on the cu
      The sole purpose of Phase 1 is to drain the excess queue created during Phase 0 back down to `1.0x BDP`. If Phase 0 actually discovered higher bandwidth (so no excess queue built up), or if the queue finishes draining in less than a full RTT such that `rs->prior_in_flight <= bbr_inflight(sk, ca->max_bw, BBR_UNIT)` (`1.0x BDP`), continuing to pace at `0.75x` would underutilise the bottleneck link!
    - Thus, Phase 1 exits early as soon as `rs->prior_in_flight` drops to or below `1.0x BDP`, or after `is_full_length` (`> ca->min_rtt_us`) at the latest.
 
-#### Advancing the Phase (`bbr_advance_cycle_phase()`)
+### Advancing the Phase (`bbr_advance_cycle_phase()`)
 
 When `bbr_is_next_cycle_phase()` returns `true` in `BBR_PROBE_BW`, `bbr_advance_cycle_phase()` increments `ca->cycle_idx` modulo `CYCLE_LEN` (`8`) and records the new phase's start timestamp (`tp->tcp_mstamp`). Because `CYCLE_LEN = 8` is a power of two, modulo 8 is computed via bitwise AND `& (CYCLE_LEN - 1)` (`& 7`):
 
@@ -2496,7 +2496,7 @@ ca->cycle_idx = (ca->cycle_idx + 1) & (CYCLE_LEN - 1);
 ca->cycle_mstamp = tp->tcp_mstamp;
 ```
 
-#### Concrete Numerical Example (Matching `test.pkt`)
+### Concrete Numerical Example (Matching `test.pkt`)
 
 Let's trace the exact numbers from `test.pkt`:
 - `MSS = 1000` bytes
@@ -2512,19 +2512,19 @@ Let's trace the exact numbers from `test.pkt`:
   - **Phase 1 (`3/4 = 0.75x`)**: `100,000 * 0.75 * 0.99` ≈ **`74,250 B/s` (~74 KB/s)**
   - **Phases 2..7 (`1.0x`)**: `100,000 * 1.00 * 0.99` ≈ **`99,000 B/s` (~99 KB/s)**
 
-#### Kernel and `starter.bpf.c` Fields & Helpers Provided
+### Kernel and `starter.bpf.c` Fields & Helpers Provided
 
 Before moving to Section 3, here is every struct field and helper function already provided by the kernel and `starter.bpf.c`:
 
-##### 1. `struct tcp_sock *tp = tcp_sk(sk)` (Kernel TCP Socket State)
+#### 1. `struct tcp_sock *tp = tcp_sk(sk)` (Kernel TCP Socket State)
 - `tp->tcp_mstamp` (`__u64`): Microsecond timestamp updated by the kernel on every packet transmission and ACK reception. Used to compute phase elapsed time `(tp->tcp_mstamp - ca->cycle_mstamp)` and to stamp `ca->cycle_mstamp` when advancing phases.
 - `tp->snd_cwnd` (`__u32`): Current congestion window in packets.
 
-##### 2. `const struct rate_sample *rs` (Per-ACK Rate Sample Passed by the Kernel to `.cong_control`)
+#### 2. `const struct rate_sample *rs` (Per-ACK Rate Sample Passed by the Kernel to `.cong_control`)
 - `rs->prior_in_flight` (`__u32`): Number of packets in flight right before this ACK was processed. Used in `bbr_is_next_cycle_phase()` to check whether Phase 0 reached `>= 1.25x BDP` or Phase 1 drained down to `<= 1.0x BDP`.
 - `rs->losses` (`__u32`): Number of packets newly marked lost on this ACK. Used in Phase 0 to end probing if loss occurs after 1 RTT.
 
-##### 3. `struct bbr_ca *ca = inet_csk_ca(sk)` (Per-Socket Private Storage in `icsk_ca_priv`)
+#### 3. `struct bbr_ca *ca = inet_csk_ca(sk)` (Per-Socket Private Storage in `icsk_ca_priv`)
 Every `struct inet_connection_sock` includes an inline private buffer `icsk_ca_priv` reserved for the active congestion control algorithm, accessed via `inet_csk_ca(sk)` as `struct bbr_ca *ca`:
 - `ca->mode` (`__u32`): Current BBR mode (`BBR_STARTUP`, `BBR_DRAIN`, `BBR_PROBE_BW`). When `bbr_check_drain()` finishes draining the startup queue, it sets `ca->mode = BBR_PROBE_BW`, `ca->cycle_idx = 0`, and `ca->cycle_mstamp = tp->tcp_mstamp`.
 - `ca->cycle_idx` (`__u32`): Current index (`0..7`) in `bbr_pacing_gain[]`.
@@ -2533,18 +2533,18 @@ Every `struct inet_connection_sock` includes an inline private buffer `icsk_ca_p
 - `ca->max_bw` (`__u32`): Estimated bottleneck bandwidth in `BW_SCALE = 24` fixed-point (`pkts/us << 24`).
 - `ca->pacing_gain` / `ca->cwnd_gain` (`__u32`): Current pacing and cwnd gains in `BBR_SCALE = 8` fixed-point (`BBR_UNIT = 256` represents `1.0x`).
 
-##### 4. Existing Constants and Helpers in `starter.bpf.c`
+#### 4. Existing Constants and Helpers in `starter.bpf.c`
 - `CYCLE_LEN` (`8`), `BBR_UNIT` (`256`), `bbr_cwnd_gain` (`BBR_UNIT * 2`)
 - `bbr_pacing_gain[8]`: `{ BBR_UNIT * 5 / 4, BBR_UNIT * 3 / 4, BBR_UNIT, ... }`.
 - `bbr_inflight(sk, bw, gain)`: Returns the target in-flight packet count (`ceil(BDP * gain)`) for a given `bw` and `gain`.
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Use the concepts and struct fields from Section 2 to work through the four TODOs in `starter.bpf.c`.
 
-#### Q1. How should we express the base timer check and the Cruise phase (Phases 2..7) completion rule in `bbr_is_next_cycle_phase()`? (TODO 1, Part 1)
+### Q1. How should we express the base timer check and the Cruise phase (Phases 2..7) completion rule in `bbr_is_next_cycle_phase()`? (TODO 1, Part 1)
 
 In `bbr_is_next_cycle_phase(struct sock *sk, const struct rate_sample *rs)`, which fields of `tp` and `ca` determine whether the current phase has lasted longer than one minimum RTT (`is_full_length`), and what should the function return when `ca->pacing_gain == BBR_UNIT`?
 
@@ -2563,7 +2563,7 @@ In `bbr_is_next_cycle_phase(struct sock *sk, const struct rate_sample *rs)`, whi
 
 </details>
 
-#### Q2. How do the Probe phase (`ca->pacing_gain > BBR_UNIT`) and Drain phase (`ca->pacing_gain < BBR_UNIT`) conditions differ in logical operators (`&&` vs `||`) and `bbr_inflight()` arguments? (TODO 1, Part 2)
+### Q2. How do the Probe phase (`ca->pacing_gain > BBR_UNIT`) and Drain phase (`ca->pacing_gain < BBR_UNIT`) conditions differ in logical operators (`&&` vs `||`) and `bbr_inflight()` arguments? (TODO 1, Part 2)
 
 When writing the remaining two branches of `bbr_is_next_cycle_phase()`, how should `is_full_length` be combined with `rs->prior_in_flight`, and what `gain` argument must be passed to `bbr_inflight(sk, ca->max_bw, ...)` in each branch?
 
@@ -2589,7 +2589,7 @@ When writing the remaining two branches of `bbr_is_next_cycle_phase()`, how shou
 
 </details>
 
-#### Q3. What two state variables must `bbr_advance_cycle_phase()` update when `bbr_update_cycle_phase()` triggers a transition? (TODO 2 & TODO 3)
+### Q3. What two state variables must `bbr_advance_cycle_phase()` update when `bbr_update_cycle_phase()` triggers a transition? (TODO 2 & TODO 3)
 
 In `bbr_update_cycle_phase()`, we check `ca->mode == BBR_PROBE_BW && bbr_is_next_cycle_phase(sk, rs)` before calling `bbr_advance_cycle_phase(sk)`. Inside `bbr_advance_cycle_phase(sk)`, what happens if you increment `ca->cycle_idx` (wrapping modulo `CYCLE_LEN`) but forget to update `ca->cycle_mstamp`?
 
@@ -2605,7 +2605,7 @@ In `bbr_update_cycle_phase()`, we check `ca->mode == BBR_PROBE_BW && bbr_is_next
 
 </details>
 
-#### Q4. How should `bbr_update_gains()` index into `bbr_pacing_gain[]` to satisfy the BPF verifier, and why does call order in `bpf_bbr4_main()` matter? (TODO 4)
+### Q4. How should `bbr_update_gains()` index into `bbr_pacing_gain[]` to satisfy the BPF verifier, and why does call order in `bpf_bbr4_main()` matter? (TODO 4)
 
 In `bbr_update_gains()`, how should `ca->cycle_idx` be masked when indexing `bbr_pacing_gain[]`? Also, look at `bpf_bbr4_main()`: why is `bbr_update_cycle_phase()` called *before* `bbr_check_drain()`, and `bbr_update_gains()` called *after* both?
 
@@ -2623,11 +2623,11 @@ In `bbr_update_gains()`, how should `ca->cycle_idx` be masked when indexing `bbr
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let's walk through each component implemented in `solution.bpf.c`.
 
-#### 1. The `bbr_pacing_gain[]` Table
+### 1. The `bbr_pacing_gain[]` Table
 
 In steady state (`BBR_PROBE_BW`), BBR cycles through the 8-phase pacing gain array:
 
@@ -2650,7 +2650,7 @@ static const int bbr_pacing_gain[] = {
 - Index `1`: `BBR_UNIT * 3 / 4` (`192` = `0.75x`, Drain phase)
 - Indices `2..7`: `BBR_UNIT` (`256` = `1.0x`, 6 Cruise phases)
 
-#### 2. `bbr_is_next_cycle_phase()` — Evaluating Phase Completion (TODO 1)
+### 2. `bbr_is_next_cycle_phase()` — Evaluating Phase Completion (TODO 1)
 
 ```c
 static __always_inline bool bbr_is_next_cycle_phase(struct sock *sk,
@@ -2678,7 +2678,7 @@ static __always_inline bool bbr_is_next_cycle_phase(struct sock *sk,
 - `ca->pacing_gain > BBR_UNIT`: Phase 0 (Probe) requires `is_full_length` AND either packet losses (`rs->losses`) or `rs->prior_in_flight >= bbr_inflight(sk, ca->max_bw, ca->pacing_gain)` (`1.25x BDP`).
 - `ca->pacing_gain < BBR_UNIT`: Phase 1 (Drain) finishes when `is_full_length` is true OR `rs->prior_in_flight <= bbr_inflight(sk, ca->max_bw, BBR_UNIT)` (`1.0x BDP`).
 
-#### 3. `bbr_advance_cycle_phase()` and `bbr_update_cycle_phase()` — Advancing Phases (TODO 2 & TODO 3)
+### 3. `bbr_advance_cycle_phase()` and `bbr_update_cycle_phase()` — Advancing Phases (TODO 2 & TODO 3)
 
 ```c
 static __always_inline void bbr_advance_cycle_phase(struct sock *sk)
@@ -2703,7 +2703,7 @@ static __always_inline void bbr_update_cycle_phase(struct sock *sk,
 - `bbr_advance_cycle_phase()` increments `ca->cycle_idx` modulo 8 (`& (CYCLE_LEN - 1)`) and stamps `ca->cycle_mstamp = tp->tcp_mstamp`.
 - `bbr_update_cycle_phase()` checks `ca->mode == BBR_PROBE_BW` and advances the phase whenever `bbr_is_next_cycle_phase(sk, rs)` returns `true`.
 
-#### 4. `bbr_update_gains()` — Applying the Phase Gain (TODO 4)
+### 4. `bbr_update_gains()` — Applying the Phase Gain (TODO 4)
 
 ```c
 static __always_inline void bbr_update_gains(struct sock *sk)
@@ -2733,9 +2733,9 @@ static __always_inline void bbr_update_gains(struct sock *sk)
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
-#### Walkthrough of `test.pkt`
+### Walkthrough of `test.pkt`
 
 `test.pkt` emulates a 100 KB/s bottleneck link (`MSS = 1000` bytes, `min_rtt_us = 10 ms`, `1.0x BDP = 1` packet) and verifies the transitions through **Phase 0 (`1.25x`) → Phase 1 (`0.75x`) → Phase 2 (`1.0x`)** after exiting `BBR_STARTUP`:
 
@@ -2764,14 +2764,14 @@ static __always_inline void bbr_update_gains(struct sock *sk)
    assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expected ~99KB/s, got {tcpi_pacing_rate}"
    ```
 
-#### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
+### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - **Why `starter.bpf.c` fails**:
   In `starter.bpf.c`, `bbr_update_gains()` hardcodes `ca->pacing_gain = BBR_UNIT` (`1.0x`) in `BBR_PROBE_BW`, and `bbr_is_next_cycle_phase()` always returns `false`. As a result, when the flow enters `BBR_PROBE_BW` Phase 0 at line 53, `tcpi_pacing_rate` is set to `~99,000 B/s` (`1.0x`) instead of `~123,750 B/s` (`1.25x`), failing the assertion at line 55 (`assert 115000 < tcpi_pacing_rate < 135000`).
 - **Why `solution.bpf.c` passes**:
   `bbr_update_gains()` looks up `bbr_pacing_gain[ca->cycle_idx & 7]`, and `bbr_is_next_cycle_phase()`, `bbr_advance_cycle_phase()`, and `bbr_update_cycle_phase()` advance `ca->cycle_idx` from `0` (`1.25x`) → `1` (`0.75x`) → `2` (`1.0x`) as each phase's completion criteria are met.
 
-#### How to Run
+### How to Run
 
 Run the following commands to verify that `starter` fails on the unimplemented TODOs and `solution` passes all packetdrill assertions:
 
@@ -3151,7 +3151,6 @@ struct tcp_congestion_ops bpf_bbr4 = {
 };
 ```
 
-
 ### `labs/bbr/step04-probe-bw/test.pkt` (packetdrill test)
 
 ```python
@@ -3237,9 +3236,8 @@ assert 90000 < tcpi_pacing_rate < 110000, f"PROBE_BW Phase 2 (1.0 gain): expecte
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step04-probe-bw/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step04-probe-bw/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -3596,19 +3594,21 @@ struct tcp_congestion_ops bpf_bbr4 = {
 
 </details>
 
+
+
 ---
 
 ## BBRv1 Step 5: Transition to PROBE_RTT & Clamping to Minimum Pipe Size (cwnd = 4)
 
-### 1. Goal
+## 1. Goal
 
-In this step, you will implement BBRv1's fourth state, `BBR_PROBE_RTT`, in BPF to periodically drain standing queues at the bottleneck and refresh stale minimum RTT estimates (`min_rtt_us`). Specifically, you will implement the minimum-RTT filter window expiry check (`BBR_MIN_RTT_WIN_US`), save the pre-probe congestion window into `ca->prior_cwnd`, clamp `snd_cwnd` down to the minimum pipe size (`BBR_MIN_PIPE_CWND = 4`), and hold `BBR_PROBE_RTT` until inflight has remained at or below 4 packets for both at least 200 ms and one full packet-timed round trip before restoring the window and mode (see [../README.md](../README.md) for the full track overview).
+In this step, you will implement BBRv1's fourth state, `BBR_PROBE_RTT`, in BPF to periodically drain standing queues at the bottleneck and refresh stale minimum RTT estimates (`min_rtt_us`). Specifically, you will implement the minimum-RTT filter window expiry check (`BBR_MIN_RTT_WIN_US`), save the pre-probe congestion window into `ca->prior_cwnd`, clamp `snd_cwnd` down to the minimum pipe size (`BBR_MIN_PIPE_CWND = 4`), and hold `BBR_PROBE_RTT` until inflight has remained at or below 4 packets for both at least 200 ms and one full packet-timed round trip before restoring the window and mode (see [../README.md](#) for the full track overview).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
-#### Why `BBR_PROBE_BW` Alone Loses Track of the True Propagation Delay (RTprop)
+### Why `BBR_PROBE_BW` Alone Loses Track of the True Propagation Delay (RTprop)
 
 BBR estimates a path's bandwidth-delay product ($\text{BDP} = \text{BtlBw} \times \text{RTprop}$) by tracking two independent quantities: the windowed maximum delivery rate `max_bw` ($\approx \text{BtlBw}$) and the windowed minimum round-trip time `min_rtt_us` ($\approx \text{RTprop}$). However, the physical two-way propagation delay ($\text{RTprop}$) can only be observed when the bottleneck queue is completely empty (queueing delay $= 0$).
 
@@ -3619,7 +3619,7 @@ In steady-state `BBR_PROBE_BW`, a flow cycles through 8 pacing gain phases (`[1.
 2. **Route Changes Increasing True RTprop**:
    If physical path routing changes to a longer path (for instance, true `RTprop` increases from `10 ms` to `15 ms`), tracking `min_rtt_us` as an all-time minimum over the lifetime of the connection would keep the obsolete `10 ms` value forever.
 
-#### Core Idea and Mathematical Model of `BBR_PROBE_RTT`
+### Core Idea and Mathematical Model of `BBR_PROBE_RTT`
 
 To solve both problems, BBR attaches a **filter expiration window `BBR_MIN_RTT_WIN_US`** to `min_rtt_us` (10 seconds in Linux kernel `net/ipv4/tcp_bbr.c`, shortened to **2 seconds** in this lab so `packetdrill` tests complete in ~2.5 seconds).
 
@@ -3630,7 +3630,7 @@ To solve both problems, BBR attaches a **filter expiration window `BBR_MIN_RTT_W
   $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
   When `filter_expired` is true, as long as the ACK was not artificially delayed by the receiver's delayed-ACK timer (`!rs->is_ack_delayed`), BBR overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->min_rtt_stamp = tp->tcp_mstamp` (even if `rs->rtt_us >= ca->min_rtt_us`) and transitions into `BBR_PROBE_RTT`.
 
-#### Why Clamp `cwnd = 4` and Wait for Both 200 ms and 1 Packet-Timed Round?
+### Why Clamp `cwnd = 4` and Wait for Both 200 ms and 1 Packet-Timed Round?
 
 Upon entering `BBR_PROBE_RTT`, BBR saves the prior working congestion window into `ca->prior_cwnd`, sets `pacing_gain = 1.0` (`BBR_UNIT`) and `cwnd_gain = 1.0` (`BBR_UNIT`), and clamps `tp->snd_cwnd` down to the minimum pipe size **`BBR_MIN_PIPE_CWND = 4` packets**.
 
@@ -3674,7 +3674,7 @@ Upon entering `BBR_PROBE_RTT`, BBR saves the prior working congestion window int
   - Call bbr_reset_mode() to return to BBR_STARTUP or BBR_PROBE_BW
 ```
 
-#### Concrete Numerical Example (Following `test.pkt`)
+### Concrete Numerical Example (Following `test.pkt`)
 
 1. **`t = 0.010 s` (Handshake completes)**: The initial RTT sample is `10 ms` (`10,000 us`), setting `ca->min_rtt_us = 10000` and `ca->min_rtt_stamp = t_0`. Initial `snd_cwnd` is `10`.
 2. **`t = 0.020 s` (10 segments sent and ACKed)**: During `BBR_STARTUP`, 10 segments are ACKed at `RTT = 10 ms`, growing `snd_cwnd` from `10` to `20`. Because `10 ms` is not strictly less than `min_rtt_us` (`10 ms`), `min_rtt_stamp` remains `t_0`.
@@ -3688,7 +3688,7 @@ Upon entering `BBR_PROBE_RTT`, BBR saves the prior working congestion window int
    - Delivering the new packet triggers `ca->round_start = 1`, setting `ca->probe_rtt_round_done = 1`.
    - Because `tp->tcp_mstamp > ca->probe_rtt_done_stamp` (`250 ms > 200 ms`) also holds, `bbr_check_probe_rtt_done()` restores `tp->snd_cwnd = max(4, 20) = 20` and exits `BBR_PROBE_RTT`.
 
-#### What the Kernel Already Provides
+### What the Kernel Already Provides
 
 To translate this algorithm into BPF C code, the kernel (`struct tcp_sock`, `struct rate_sample`, `struct inet_connection_sock`) and `bpf_cc_helpers.h` already provide the following fields and helpers:
 
@@ -3710,11 +3710,11 @@ To translate this algorithm into BPF C code, the kernel (`struct tcp_sock`, `str
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Use the concepts from Section 2 to work through these four design questions before filling in the TODOs in `starter.bpf.c`.
 
-#### Q1. What are the two conditions for updating `ca->min_rtt_us` in `bbr_update_min_rtt()`?
+### Q1. What are the two conditions for updating `ca->min_rtt_us` in `bbr_update_min_rtt()`?
 Given a valid RTT sample (`rs->rtt_us >= 0`), how should we write the condition to update `ca->min_rtt_us` and `ca->min_rtt_stamp`? Why must we use strict `<` instead of `<=`, and why do we check `!rs->is_ack_delayed` when `filter_expired` is true?
 
 <details>
@@ -3740,7 +3740,7 @@ if (rs->rtt_us >= 0 &&
 
 ---
 
-#### Q2. When transitioning into `BBR_PROBE_RTT` upon `filter_expired`, why do we set `probe_rtt_done_stamp = 0` instead of immediately starting the 200 ms timer?
+### Q2. When transitioning into `BBR_PROBE_RTT` upon `filter_expired`, why do we set `probe_rtt_done_stamp = 0` instead of immediately starting the 200 ms timer?
 When `filter_expired && ca->mode != BBR_PROBE_RTT` triggers, why shouldn't we immediately set `ca->probe_rtt_done_stamp = tp->tcp_mstamp + BBR_PROBE_RTT_MODE_US`?
 
 <details>
@@ -3756,7 +3756,7 @@ At the moment of transition, dozens or hundreds of previously transmitted packet
 
 ---
 
-#### Q3. How do we coordinate `tp->app_limited`, `probe_rtt_done_stamp`, and `probe_rtt_round_done` while in `BBR_PROBE_RTT`?
+### Q3. How do we coordinate `tp->app_limited`, `probe_rtt_done_stamp`, and `probe_rtt_round_done` while in `BBR_PROBE_RTT`?
 Inside the `if (ca->mode == BBR_PROBE_RTT)` block, what actions must run on each ACK when `ca->probe_rtt_done_stamp` is still `0` versus when it is already non-zero?
 
 <details>
@@ -3780,7 +3780,7 @@ Inside the `if (ca->mode == BBR_PROBE_RTT)` block, what actions must run on each
 
 ---
 
-#### Q4. Where in `bbr_set_cwnd()` should `tp->snd_cwnd` be clamped to `BBR_MIN_PIPE_CWND`?
+### Q4. Where in `bbr_set_cwnd()` should `tp->snd_cwnd` be clamped to `BBR_MIN_PIPE_CWND`?
 In `bbr_set_cwnd()`, there is an early `if (!acked) goto done;` branch as well as standard BDP target window calculations. Where should the `BBR_PROBE_RTT` clamp be placed?
 
 <details>
@@ -3802,11 +3802,11 @@ This guarantees that regardless of how `cwnd` was computed (or whether `!acked` 
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let's walk through the functions and fixed-point calculations in `solution.bpf.c`.
 
-#### 1. Constants and Fixed-Point Scales
+### 1. Constants and Fixed-Point Scales
 
 ```c
 #define BW_SCALE		24
@@ -3824,7 +3824,7 @@ Let's walk through the functions and fixed-point calculations in `solution.bpf.c
 - In `bbr_bdp()`, `w = (__u64)bw * ca->min_rtt_us` is multiplied by `gain`, shifted right by `BBR_SCALE`, rounded up with `+ BW_UNIT - 1`, and shifted right by `BW_SCALE` to compute the target BDP in packets.
 - `BBR_MIN_RTT_WIN_US` is `2ULL * USEC_PER_SEC` (2,000,000 us = 2 s) and `BBR_PROBE_RTT_MODE_US` is `200ULL * USEC_PER_MSEC` (200,000 us = 200 ms).
 
-#### 2. `bbr_save_cwnd()` and `bbr_reset_mode()`
+### 2. `bbr_save_cwnd()` and `bbr_reset_mode()`
 
 ```c
 static __always_inline void bbr_save_cwnd(struct sock *sk)
@@ -3856,7 +3856,7 @@ static __always_inline void bbr_reset_mode(struct sock *sk)
 - `bbr_save_cwnd()` records `tp->snd_cwnd` into `ca->prior_cwnd` when outside `BBR_PROBE_RTT` (or preserves the larger value if called while already in `BBR_PROBE_RTT`, such as via `bpf_bbr5_ssthresh()`).
 - `bbr_reset_mode()` returns the flow to `BBR_STARTUP` if `ca->full_bw_reached` is still 0, or to `BBR_PROBE_BW` (at `cycle_idx = 0`) if the pipe has already been filled.
 
-#### 3. `bbr_check_probe_rtt_done()` and `bbr_update_min_rtt()`
+### 3. `bbr_check_probe_rtt_done()` and `bbr_update_min_rtt()`
 
 ```c
 static __always_inline void bbr_check_probe_rtt_done(struct sock *sk)
@@ -3914,7 +3914,7 @@ static __always_inline void bbr_update_min_rtt(struct sock *sk, const struct rat
 - On the ACK where `ca->probe_rtt_done_stamp` is first armed (`!ca->probe_rtt_done_stamp`), the `if` branch runs and starts tracking the round from `ca->next_rtt_delivered = tp->delivered`. On subsequent ACKs, the `else if (ca->probe_rtt_done_stamp)` branch checks `ca->round_start` and calls `bbr_check_probe_rtt_done()`.
 - When `bbr_check_probe_rtt_done()` exits `BBR_PROBE_RTT`, it restores `tp->snd_cwnd` and resets `ca->mode` before `bbr_update_gains()` and `bbr_set_cwnd()` execute, so the restored window is immediately used on that same ACK.
 
-#### 4. `bbr_update_gains()` and `bbr_set_cwnd()`
+### 4. `bbr_update_gains()` and `bbr_set_cwnd()`
 
 ```c
 static __always_inline void bbr_update_gains(struct sock *sk)
@@ -3959,9 +3959,9 @@ done:
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
-#### Packet Trace and Assertions in `test.pkt`
+### Packet Trace and Assertions in `test.pkt`
 
 `test.pkt` validates the `BBR_PROBE_RTT` transition, window clamping, and restoration across three stages:
 
@@ -4007,12 +4007,12 @@ done:
    - After waiting `+0.250` seconds (`> BBR_PROBE_RTT_MODE_US = 200 ms`) with inflight $\le 4$, 1 segment is sent and ACKed at `RTT = 10 ms`, completing 1 packet-timed round trip (`probe_rtt_round_done = 1`).
    - With both the 200 ms timer and 1 round trip satisfied, BBR exits `BBR_PROBE_RTT`, restores `prior_cwnd` (20), and adds the newly ACKed segment so `tcpi_snd_cwnd >= 20` passes.
 
-#### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
+### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - In `starter.bpf.c`, the `filter_expired` check, the transition to `BBR_PROBE_RTT`, and the `BBR_MIN_PIPE_CWND` clamp in `bbr_set_cwnd()` are left as TODOs. Consequently, after `+2.100 s`, the flow stays in `BBR_STARTUP` and grows `snd_cwnd` to `21`, failing the assertion `assert tcpi_snd_cwnd == 4` on line 33.
 - In `solution.bpf.c`, the filter expires after 2.1 seconds, clamps `snd_cwnd` to `4`, and restores `snd_cwnd >= 20` after the 0.25-second hold and round trip complete, passing all assertions.
 
-#### How to Run
+### How to Run
 
 Run the following commands to verify `starter` (fails as expected before adding your code) and `solution` (passes):
 
@@ -4429,7 +4429,6 @@ struct tcp_congestion_ops bpf_bbr5 = {
 };
 ```
 
-
 ### `labs/bbr/step05-probe-rtt/test.pkt` (packetdrill test)
 
 ```python
@@ -4480,9 +4479,8 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step05-probe-rtt/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step05-probe-rtt/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -4910,23 +4908,25 @@ struct tcp_congestion_ops bpf_bbr5 = {
 
 </details>
 
+
+
 ---
 
 ## BBRv1 Step 6: Saving/Restoring cwnd Across Loss & ACK Aggregation (`extra_acked`) Compensation
 
-### 1. Goal
+## 1. Goal
 
 In this final step of the BBRv1 track, we complete our BPF BBRv1 implementation by adding **loss recovery handling (Packet Conservation and `prior_cwnd` preservation/restoration)** and **ACK aggregation compensation (`extra_acked`)** for Wi-Fi, cellular, and LRO/GRO paths. Unlike loss-based congestion control algorithms such as Reno or CUBIC, BBR does not permanently halve `snd_cwnd` upon packet loss; instead, it briefly applies packet conservation during the first round of recovery, restores its pre-loss window upon exiting recovery, and augments `target_cwnd` to absorb bursty ACK aggregation.
 
-- For the full track overview and list of steps, see [../README.md](../README.md).
+- For the full track overview and list of steps, see [../README.md](#).
 
 ---
 
-### 2. How the Algorithm Works (Read This First)
+## 2. How the Algorithm Works (Read This First)
 
 Before looking at the code or design questions, let us build a complete mental model of how BBRv1 handles packet loss and ACK aggregation from first principles, along with the exact structs and callbacks provided by the Linux kernel.
 
-#### 2.1 Why BBR Does Not Halve `cwnd` on Loss, and How It Responds Instead
+### 2.1 Why BBR Does Not Halve `cwnd` on Loss, and How It Responds Instead
 
 Traditional loss-based algorithms (Reno, CUBIC) treat every packet loss as a direct symptom of bottleneck buffer overflow and cut `snd_cwnd` by 30%–50%. In modern networks—especially high-speed links with shallow switch buffers or wireless links—isolated packet drops frequently occur due to transient microbursts or random media errors even when the average sending rate matches the link capacity.
 
@@ -4946,7 +4946,7 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
    As soon as all lost segments are recovered and the TCP state transitions from `>= TCP_CA_Recovery` back to `< TCP_CA_Recovery` (such as `TCP_CA_Open`), or when a loss event is declared spurious via `.undo_cwnd`, BBR immediately restores its saved congestion window:
    $$\text{cwnd} = \max(\text{cwnd}, \text{ca}\to\text{prior}_{\text{cwnd}})$$
 
-##### Concrete Numerical Example
+#### Concrete Numerical Example
 
 - Suppose a connection in `TCP_CA_Open` has `snd_cwnd = 20`. It sends 4 segments (`10001:14001`), the first segment (`10001:11001`) is dropped, and the peer sends 3 SACK duplicate ACKs for the remaining 3 segments.
 - On the 3rd duplicate ACK, the kernel invokes `.ssthresh(sk)`, where `bbr_save_cwnd()` saves `ca->prior_cwnd = 20` (and leaves `snd_ssthresh` untouched), then transitions to `TCP_CA_Recovery` and fast-retransmits `10001:11001`.
@@ -4955,15 +4955,15 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
 
 ---
 
-#### 2.2 ACK Aggregation and `extra_acked` Compensation
+### 2.2 ACK Aggregation and `extra_acked` Compensation
 
-##### Why Does This Problem Happen? (Intuition)
+#### Why Does This Problem Happen? (Intuition)
 
 On Wi-Fi links (which batch frames at the MAC layer), cellular networks, cable modems, or receivers using GRO/LRO (Generic/Large Receive Offload), returning TCP ACKs are frequently coalesced. Instead of receiving a smooth stream of ACKs paced at the bottleneck rate, the sender experiences **a silent pause with zero ACKs followed by a sudden burst of ACKs acknowledging many packets at once**.
 
 If `target_cwnd` is sized strictly to $\text{BDP} \times \text{cwnd}_{\text{gain}}$, the sender's in-flight packets will hit `snd_cwnd` during the silent ACK pause. Even though the pacing timer is ready to send and the bottleneck link is not congested, the sender becomes **cwnd-limited and stalls**, under-utilising the link until the delayed ACK burst arrives.
 
-##### Idea and Mathematical Formula
+#### Idea and Mathematical Formula
 
 To prevent ACK silences from stalling transmission, BBR measures **how many excess packets were acknowledged in a burst compared to the number of ACKs expected at the steady delivery rate `max_bw`** over a sampling epoch, and adds that excess (`extra_acked`) to `target_cwnd`.
 
@@ -5005,7 +5005,7 @@ On every valid ACK (`rs->acked_sacked > 0 && rs->delivered > 0 && rs->interval_u
 
 ---
 
-#### 2.3 What the Kernel Already Provides
+### 2.3 What the Kernel Already Provides
 
 To translate these rules into BPF C code, you have access to the following kernel structures, fields, and callbacks:
 
@@ -5036,11 +5036,11 @@ To translate these rules into BPF C code, you have access to the following kerne
 
 ---
 
-### 3. Design Checkpoints (Translate the Algorithm into Code)
+## 3. Design Checkpoints (Translate the Algorithm into Code)
 
 Use the concepts from Section 2 to work through the design of the `TODO` items in [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c).
 
-#### Q1. How should `bbr_save_cwnd()` and `bpf_bbr6_ssthresh()` preserve `ca->prior_cwnd`?
+### Q1. How should `bbr_save_cwnd()` and `bpf_bbr6_ssthresh()` preserve `ca->prior_cwnd`?
 
 The kernel calls `bpf_bbr6_ssthresh()` right before entering Fast Recovery, and `bbr_update_min_rtt()` also calls `bbr_save_cwnd()` right before entering `BBR_PROBE_RTT`. What would go wrong if a packet loss occurred *while* the connection was already in `BBR_PROBE_RTT` (where `tp->snd_cwnd` is clamped to `4`) and `bbr_save_cwnd()` unconditionally wrote `ca->prior_cwnd = tp->snd_cwnd`? How should we guard `bbr_save_cwnd()`?
 
@@ -5057,7 +5057,7 @@ The kernel calls `bpf_bbr6_ssthresh()` right before entering Fast Recovery, and 
 
 ---
 
-#### Q2. How should `bbr_set_cwnd_to_recover_or_restore()` handle entering, maintaining, and exiting Recovery?
+### Q2. How should `bbr_set_cwnd_to_recover_or_restore()` handle entering, maintaining, and exiting Recovery?
 
 In `bbr_set_cwnd_to_recover_or_restore(sk, rs, acked, &cwnd)`, we compare the current state `state = inet_csk(sk)->icsk_ca_state` against `prev_state = ca->prev_ca_state`. How should we update `cwnd` and the fields of `struct bbr_ca` across:
 1. `rs->losses > 0`
@@ -5086,7 +5086,7 @@ In `bbr_set_cwnd_to_recover_or_restore(sk, rs, acked, &cwnd)`, we compare the cu
 
 ---
 
-#### Q3. Why must `bpf_bbr6_set_state()` explicitly record `TCP_CA_Loss` on an RTO timeout?
+### Q3. Why must `bpf_bbr6_set_state()` explicitly record `TCP_CA_Loss` on an RTO timeout?
 
 Fast Recovery (`TCP_CA_Recovery`) transitions are detected on incoming ACKs inside `.cong_control`. Why do we also need `bpf_bbr6_set_state()` to check `if (new_state == TCP_CA_Loss)` and set `ca->prev_ca_state = TCP_CA_Loss`? What bug would occur after an RTO timeout if `bpf_bbr6_set_state()` were left empty?
 
@@ -5103,7 +5103,7 @@ Fast Recovery (`TCP_CA_Recovery`) transitions are detected on incoming ACKs insi
 
 ---
 
-#### Q4. How do we guard, reset, and clamp the `extra_acked` calculation in `bbr_update_ack_aggregation()` and `bbr_set_cwnd()`?
+### Q4. How do we guard, reset, and clamp the `extra_acked` calculation in `bbr_update_ack_aggregation()` and `bbr_set_cwnd()`?
 
 When translating Section 2.2 into `bbr_update_ack_aggregation(sk, rs)` and `bbr_set_cwnd()`:
 1. Which `rate_sample` values must be ignored at the start of `bbr_update_ack_aggregation()`?
@@ -5125,11 +5125,11 @@ When translating Section 2.2 into `bbr_update_ack_aggregation(sk, rs)` and `bbr_
 
 ---
 
-### 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
+## 4. Step-by-step Code Walkthrough (`solution.bpf.c`)
 
 Let us walk through each function implemented in [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c).
 
-#### 4.1 `bbr_save_cwnd()` and `.ssthresh` / `.undo_cwnd` / `.set_state`
+### 4.1 `bbr_save_cwnd()` and `.ssthresh` / `.undo_cwnd` / `.set_state`
 
 ```c
 static __always_inline void bbr_save_cwnd(struct sock *sk)
@@ -5148,7 +5148,7 @@ static __always_inline void bbr_save_cwnd(struct sock *sk)
 - `bpf_bbr6_undo_cwnd()` resets `ca->full_bw = 0` and `ca->full_bw_cnt = 0`, and returns `max(tp->snd_cwnd, ca->prior_cwnd)`.
 - `bpf_bbr6_set_state()` checks for `new_state == TCP_CA_Loss` and sets `ca->prev_ca_state = TCP_CA_Loss`, `ca->full_bw = 0`, and `ca->round_start = 1`.
 
-#### 4.2 `bbr_set_cwnd_to_recover_or_restore()` — Packet Conservation and Window Restoration
+### 4.2 `bbr_set_cwnd_to_recover_or_restore()` — Packet Conservation and Window Restoration
 
 ```c
 static __always_inline bool bbr_set_cwnd_to_recover_or_restore(
@@ -5186,7 +5186,7 @@ static __always_inline bool bbr_set_cwnd_to_recover_or_restore(
 - Once `bbr_update_bw()` detects the start of the next round trip (`!before(rs->prior_delivered, ca->next_rtt_delivered)`), it clears `ca->packet_conservation = 0`.
 - When the connection exits `TCP_CA_Recovery` or `TCP_CA_Loss` (`prev_state >= TCP_CA_Recovery && state < TCP_CA_Recovery`), `cwnd` is restored to `max(cwnd, ca->prior_cwnd)`.
 
-#### 4.3 `bbr_update_ack_aggregation()` and `bbr_set_cwnd()` — Measuring and Adding `extra_acked`
+### 4.3 `bbr_update_ack_aggregation()` and `bbr_set_cwnd()` — Measuring and Adding `extra_acked`
 
 ```c
 static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
@@ -5230,9 +5230,9 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
 
 ---
 
-### 5. Understanding `test.pkt` and How to Run
+## 5. Understanding `test.pkt` and How to Run
 
-#### Packet Trace and Assertions in `test.pkt`
+### Packet Trace and Assertions in `test.pkt`
 
 [test.pkt](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/test.pkt) validates BBRv1's loss recovery, first-round packet conservation, and `prior_cwnd` restoration step by step:
 
@@ -5249,12 +5249,12 @@ static __always_inline void bbr_update_ack_aggregation(struct sock *sk,
    - At `+0.010` s, a cumulative ACK (`ack 14001`) acknowledges all 14,000 bytes, transitioning the socket from `TCP_CA_Recovery` back to `TCP_CA_Open`.
    - The script asserts `tcpi_ca_state == TCP_CA_Open` and `tcpi_snd_cwnd >= 20`, confirming that BBR restored `ca->prior_cwnd` instead of permanently halving the window.
 
-#### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
+### Why `starter.bpf.c` Fails and `solution.bpf.c` Passes
 
 - In [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/starter.bpf.c), `bbr_set_cwnd_to_recover_or_restore()` contains a placeholder that halves `cwnd` (`cwnd = max(cwnd >> 1U, 2U)`) like Reno/CUBIC and neither enables packet conservation nor restores `prior_cwnd`. Consequently, `starter.bpf.c` fails at line 42 (`assert tcpi_snd_cwnd == 1`).
 - In [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step06-loss-ack-aggregation/solution.bpf.c), packet conservation sets `tcpi_snd_cwnd == 1` on entry to `TCP_CA_Recovery` and restores `tcpi_snd_cwnd >= 20` when `ack 14001` returns the connection to `TCP_CA_Open`, passing all assertions.
 
-#### How to Run
+### How to Run
 
 ```sh
 ../../run_test.sh bbr/step06-loss-ack-aggregation starter
@@ -5785,7 +5785,6 @@ struct tcp_congestion_ops bpf_bbr6 = {
 };
 ```
 
-
 ### `labs/bbr/step06-loss-ack-aggregation/test.pkt` (packetdrill test)
 
 ```python
@@ -5843,9 +5842,8 @@ assert tcpi_snd_cwnd >= 20, f"expected restored cwnd >= 20, got {tcpi_snd_cwnd}"
 }%
 ```
 
-
 <details>
-<summary>Model answer: <code>labs/bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
+<summary>Reference solution: <code>labs/bbr/step06-loss-ack-aggregation/solution.bpf.c</code></summary>
 
 ```c
 // SPDX-License-Identifier: GPL-2.0
@@ -6370,5 +6368,3 @@ struct tcp_congestion_ops bpf_bbr6 = {
 ```
 
 </details>
-
----

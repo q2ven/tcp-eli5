@@ -25,12 +25,21 @@
 - [13. BBR](13-bbr.md)
 - [14. ECN and DCTCP](14-ecn-dctcp.md)
 
-## BPF CC hands-on labs
+## Packet scheduling (Qdisc)
+
+- [15. Packet Scheduling (Qdisc) Fundamentals, FIFO, and MQ](15-qdisc-framework-fifo.md)
+- [16. Fair Queueing (sch_fq) and EDT (Earliest Departure Time) Pacing](16-qdisc-fq-edt.md)
+- [17. AQM (CoDel / FQ-CoDel / RED) and Network Emulation (NetEm)](17-qdisc-aqm-codel-red-netem.md)
+
+## BPF CC & Qdisc hands-on labs
 
 - [Lab overview and setup](lab-overview.md)
-- [15. Hands-on (1): Building TCP Reno with BPF CC and packetdrill](15-lab-reno.md)
-- [16. Hands-on (2): Building TCP CUBIC with BPF CC and packetdrill](16-lab-cubic.md)
-- [17. Hands-on (3): Building TCP BBR with BPF CC and packetdrill](17-lab-bbr.md)
+- [18. Hands-on (1): Building TCP Reno with BPF CC and packetdrill](18-lab-reno.md)
+- [19. Hands-on (2): Building TCP CUBIC with BPF CC and packetdrill](19-lab-cubic.md)
+- [20. Hands-on (3): Building TCP BBR with BPF CC and packetdrill](20-lab-bbr.md)
+- [21. Hands-on (4): Building FIFO and PRIO with BPF Qdisc](21-lab-qdisc-fifo.md)
+- [22. Hands-on (5): Building FQ and EDT Pacing with BPF Qdisc](22-lab-qdisc-fq.md)
+- [23. Hands-on (6): Building CoDel and FQ-CoDel with BPF Qdisc](23-lab-qdisc-fq-codel.md)
 
 ## Appendix
 

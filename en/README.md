@@ -31,9 +31,14 @@ this code with the same eyes as the TCP maintainers.
 
 Chapters 1-2 are a warm-up.  Chapters 3-10 cover the data-transfer
 fast path (send -> receive -> ACK -> loss recovery -> timers ->
-windows and memory) and chapters 11-14 cover congestion control.  The
-fast-path chapters are best read in order; the congestion control
-chapters can be read in any order once you have read chapters 7-8.
+windows and memory), chapters 11-14 cover congestion control, and
+chapters 15-17 cover packet scheduling (Qdisc: FIFO / MQ, FQ / EDT
+pacing, and CoDel / FQ-CoDel / RED / NetEm).  Chapters 18-23 are
+hands-on labs where you implement and verify Reno, CUBIC, BBR, FIFO,
+FQ, and FQ-CoDel from scratch using BPF `struct_ops` and
+`packetdrill`.  The fast-path chapters are best read in order; the
+congestion control and Qdisc chapters can be read in any order once
+you have read chapters 7-8.
 
 ## About the source code
 
