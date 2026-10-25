@@ -1,12 +1,12 @@
-# BPF TCP Congestion Control Hands-on Labs (`cubic` & `bbr`)
+# BPF TCP Congestion Control Hands-on Labs (`reno`, `cubic`, `bbr`)
 
-Linux カーネルの BPF `struct_ops`（`struct tcp_congestion_ops`）と `packetdrill` を使って、**CUBIC** と **BBRv1** をステップバイステップでゼロから実装・検証するハンズオン教材です。
+Linux カーネルの BPF `struct_ops`（`struct tcp_congestion_ops`）と `packetdrill` を使って、**Reno**・**CUBIC**・**BBRv1** の 3 つの輻輳制御アルゴリズムをステップバイステップでゼロから実装・検証するハンズオン教材です。
 
-カーネルの再ビルドや再起動は不要です。各ステップの BPF プログラムを `clang -target bpf` でコンパイルし、`vng`（virtme-ng）内の軽量 VM で `bpftool struct_ops register` して `packetdrill` スクリプトを走らせることで、1 ステップずつ手で動かしながら学べます。
+事前知識がなくても読めるよう、各トラックの冒頭（`reno/README.md`、`cubic/README.md`、`bbr/README.md`）と各ステップの最初に **「なぜそのアルゴリズムが生まれたのか」「どういう仕組み・数式で動くのか」「`struct tcp_sock` に最初から何が用意されているのか」** の解説を置き、その仕組みを理解したうえで **設計チェックポイント（VibeWise 方式の設計問答）** → **BPF 実装** → **`packetdrill` テスト** に進む構成になっています。
 
 ---
 
-## ディレクトリ構成
+## 3 つのトラックとディレクトリ構成
 
 ```text
 labs/
@@ -15,44 +15,41 @@ labs/
 ├── include/
 │   ├── vmlinux.h               # BTF から生成したカーネル型定義
 │   └── bpf_cc_helpers.h        # BPF CC 用の共通インラインヘルパー
-├── cubic/                      # トラック A: Reno から始める BPF CUBIC (全 6 ステップ)
-│   ├── step01-reno/
-│   ├── step02-loss-undo/
-│   ├── step03-cubic-curve/
-│   ├── step04-reno-friendly-fast-conv/
-│   ├── step05-idle-epoch-shift/
-│   └── step06-hystart/
-└── bbr/                        # トラック B: ゼロから作る BPF BBRv1 (全 6 ステップ)
-    ├── step01-pacing-rate/
-    ├── step02-btlbw-rtprop/
-    ├── step03-startup-drain/
-    ├── step04-probe-bw/
-    ├── step05-probe-rtt/
-    └── step06-loss-ack-aggregation/
+├── reno/                       # トラック 1: すべての輻輳制御の原点 TCP Reno (全 2 ステップ)
+│   ├── README.md               # Reno のアルゴリズム解説（AIMD・Slow Start・CA・tcp_sock の構造）
+│   ├── step01-slow-start-ai/   # Step 1: Slow Start と Additive Increase
+│   └── step02-loss-undo/       # Step 2: Loss (Multiplicative Decrease) と DSACK Undo
+├── cubic/                      # トラック 2: 高帯域ネットワーク向け TCP CUBIC (全 4 ステップ)
+│   ├── README.md               # なぜ Reno ではダメなのか & CUBIC の 3 次関数アルゴリズム解説
+│   ├── step01-cubic-curve/     # Step 1: β=0.7 と固定小数点の立方根・W_cubic(t) 曲線
+│   ├── step02-reno-friendly-fast-conv/ # Step 2: Reno-friendly 領域 (W_est) と Fast Convergence
+│   ├── step03-idle-epoch-shift/# Step 3: アイドル後の Epoch シフト (CA_EVENT_TX_START)
+│   └── step04-hystart/         # Step 4: HyStart (ACK Train & Delay 増加による Slow Start 脱出)
+└── bbr/                        # トラック 3: 帯域と最小 RTT のモデル駆動 TCP BBRv1 (全 6 ステップ)
+    ├── README.md               # なぜロスベース CC ではダメなのか & BBR の水道管モデル解説
+    ├── step01-pacing-rate/     # Step 1: .cong_control フックと Delivery Rate からの Pacing Rate
+    ├── step02-btlbw-rtprop/    # Step 2: BtlBw (最大帯域) と RTprop (最小 RTT) による BDP 計算
+    ├── step03-startup-drain/   # Step 3: STARTUP から DRAIN への遷移（満杯パイプ検出）
+    ├── step04-probe-bw/        # Step 4: PROBE_BW の 8 フェーズ Gain サイクル
+    ├── step05-probe-rtt/       # Step 5: PROBE_RTT への遷移と cwnd = 4
+    └── step06-loss-ack-aggregation/ # Step 6: Loss 時の cwnd 保存・復元と extra_acked 補償
 ```
-
-各ステップのディレクトリには以下の 5 ファイルが入っています。
-
-- `README.md` / `README.en.md`: 学習ゴール、**設計チェックポイント（VibeWise 方式の設計問答）**、コードと数式の解説、`test.pkt` の解説
-- `starter.bpf.c`: 自分で手を動かすための `TODO` 穴埋めスケルトン（コンパイル・ロードは通りますが、`test.pkt` のアサートで FAIL します）
-- `solution.bpf.c`: 模範解答の BPF 実装（`test.pkt` が PASS します）
-- `test.pkt`: そのステップの挙動を検証する `packetdrill` スクリプト
 
 ---
 
 ## 使い方
 
-### 1. ステップ単位で取り組む（おすすめ）
+### 1. トラック解説を読んでからステップごとに取り組む
 
-1. 各ステップの `README.md` を読み、**設計チェックポイント** の問いに自分の頭で答えてから `starter.bpf.c` を開きます。
-2. まず未実装の `starter` が `packetdrill` のアサートで失敗することを確認します：
+1. まず各トラックの `README.md`（例: `labs/reno/README.md`）でアルゴリズムの全体像を掴みます。
+2. 続いて各ステップの `README.md` の **「アルゴリズムと背景の解説」** を読み、**「設計チェックポイント」** の問いを自分の頭で考えてから `starter.bpf.c` を開きます。
+3. 未実装の `starter` が `packetdrill` のアサートで失敗することを確認します：
    ```sh
-   ./run_test.sh cubic/step01-reno starter
+   ./run_test.sh reno/step01-slow-start-ai starter
    ```
-3. `starter.bpf.c` の `TODO` を埋めて再実行し、PASS するかを確かめます。
-4. 模範解答（`solution.bpf.c`）の動作を確認するには：
+4. `starter.bpf.c` の `TODO` を埋めて再実行するか、模範解答 `solution` を走らせて PASS することを確認します：
    ```sh
-   ./run_test.sh cubic/step01-reno solution
+   ./run_test.sh reno/step01-slow-start-ai solution
    ```
 
 ### 2. 全 12 ステップの模範解答を一括ビルド＆テストする

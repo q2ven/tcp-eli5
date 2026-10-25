@@ -27,7 +27,7 @@ STEP_FILTER="${1:-all}"
 VARIANT="${2:-solution}"
 
 if [[ "$STEP_FILTER" == "all" ]]; then
-	mapfile -t STEPS < <(find "$LAB_DIR/cubic" "$LAB_DIR/bbr" -mindepth 1 -maxdepth 1 -type d | sort)
+	mapfile -t STEPS < <(find "$LAB_DIR/reno" "$LAB_DIR/cubic" "$LAB_DIR/bbr" -mindepth 1 -maxdepth 1 -type d | sort)
 else
 	STEPS=("$LAB_DIR/${STEP_FILTER#labs/}")
 fi
