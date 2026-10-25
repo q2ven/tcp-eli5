@@ -46,11 +46,11 @@ NIC のハードウェアリングは以下の理由から「スケジューリ�
 
 1. **BQL（Qdisc ⇄ NIC ドライバ間）**
    各ハードウェア TX キュー（`struct netdev_queue`）は DQL（Dynamic Queue Limits、`struct dql`）状態を持ちます。ドライバは `ndo_start_xmit()` でハードウェアリングにパケットを積むたびに `netdev_tx_sent_queue()` でバイト数を加算し、TX 完了割り込み（NAPI poll）で `netdev_tx_completed_queue()` を呼んで完了バイト数を減算します。
-   現在ハードウェアリング上に滞留している未完了バイト数を $$B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$$、DQL が動的に調整する上限を $$L_{\text{BQL}}$$ とすると、利用可能残量は次の式で表されます。
+   現在ハードウェアリング上に滞留している未完了バイト数を $B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$、DQL が動的に調整する上限を $L_{\text{BQL}}$ とすると、利用可能残量は次の式で表されます。
 
    $$\text{avail} = L_{\text{BQL}} - B_{\text{inflight}}$$
 
-   $$\text{avail} < 0$$ になった瞬間、BQL はその TX キューに `QUEUE_STATE_STACK_XOFF` ビットを立ててキューを停止します。すると Qdisc はそれ以上ドライバへパケットを流し込めなくなり、後続のパケットは Qdisc 内部のキューに留まります。TX 完了によって $$\text{avail} \ge 0$$ に戻ると、`QUEUE_STATE_STACK_XOFF` がクリアされ、`netif_schedule_queue()` によって `NET_TX_SOFTIRQ`（`net_tx_action()`）がスケジュールされて Qdisc の dequeue が再開します。
+   $\text{avail} < 0$ になった瞬間、BQL はその TX キューに `QUEUE_STATE_STACK_XOFF` ビットを立ててキューを停止します。すると Qdisc はそれ以上ドライバへパケットを流し込めなくなり、後続のパケットは Qdisc 内部のキューに留まります。TX 完了によって $\text{avail} \ge 0$ に戻ると、`QUEUE_STATE_STACK_XOFF` がクリアされ、`netif_schedule_queue()` によって `NET_TX_SOFTIRQ`（`net_tx_action()`）がスケジュールされて Qdisc の dequeue が再開します。
 
 2. **TSQ（TCP ソケット ⇄ Qdisc・NIC 間）**
    BQL が NIC リングの膨張を防いでも、ソケットが無限に Qdisc へパケットを投げ込めば、今度は Qdisc のキューが特定フローのパケットで溢れます。そこで TCP は `__tcp_transmit_skb()` で `skb->destructor = tcp_wfree` を設定し、`sk->sk_wmem_alloc` に `skb->truesize` を加算します。
@@ -370,7 +370,7 @@ struct qdisc_skb_head {
 };
 ```
 
-- 汎用の `struct sk_buff_head` は双方向循環リスト（`skb->next` と `skb->prev` の両方を更新）ですが、FIFO のように末尾に追加して先頭から取り出すだけの用途では `skb->prev` の更新は不要なメモリアクセスになります。そこで `qdisc_skb_head` は **`skb->next` だけを使う単方向リスト**（末尾要素の `skb->next == NULL`）とし、`head` と `tail` を持つことで先頭・末尾への $$O(1)$$ アクセスをより少ないポインタ書き換えで実現しています（`__qdisc_enqueue_tail()`、[include/net/sch_generic.h#L1102](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1102) および `__qdisc_dequeue_head()`、[include/net/sch_generic.h#L1136](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1136)）。
+- 汎用の `struct sk_buff_head` は双方向循環リスト（`skb->next` と `skb->prev` の両方を更新）ですが、FIFO のように末尾に追加して先頭から取り出すだけの用途では `skb->prev` の更新は不要なメモリアクセスになります。そこで `qdisc_skb_head` は **`skb->next` だけを使う単方向リスト**（末尾要素の `skb->next == NULL`）とし、`head` と `tail` を持つことで先頭・末尾への $O(1)$ アクセスをより少ないポインタ書き換えで実現しています（`__qdisc_enqueue_tail()`、[include/net/sch_generic.h#L1102](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1102) および `__qdisc_dequeue_head()`、[include/net/sch_generic.h#L1136](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1136)）。
 - `lock` は `qdisc_lock(q)`（[include/net/sch_generic.h#L581](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n581)）が返す `&qdisc->q.lock` そのもので、Qdisc 階層全体の排他制御（`root_lock`）に使われます。
 
 #### `struct Qdisc` と `TCQ_F_*` フラグ
@@ -2449,7 +2449,7 @@ Step 2 で見たとおり、`struct Qdisc` と `struct netdev_queue` はどち�
 
 ### 5. 固定小数点演算とレート・時間変換 (`psched_l2t_ns()`)
 
-カーネル内では浮動小数点演算（FPU/SSE）が使えないため、シェーパ系 Qdisc（次章の TBF や HTB など）が「バイト長 $$L$$ のパケットをレート $$R$$ で送るのにかかるナノ秒数」を計算する際は、`include/net/sch_generic.h` の `struct psched_ratecfg`（[include/net/sch_generic.h#L1217](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1217)）と `psched_l2t_ns()`（[include/net/sch_generic.h#L1238](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1238)）という固定小数点乗算＋右シフトを使います。
+カーネル内では浮動小数点演算（FPU/SSE）が使えないため、シェーパ系 Qdisc（次章の TBF や HTB など）が「バイト長 $L$ のパケットをレート $R$ で送るのにかかるナノ秒数」を計算する際は、`include/net/sch_generic.h` の `struct psched_ratecfg`（[include/net/sch_generic.h#L1217](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1217)）と `psched_l2t_ns()`（[include/net/sch_generic.h#L1238](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1238)）という固定小数点乗算＋右シフトを使います。
 
 ```c
 struct psched_ratecfg {
@@ -2476,7 +2476,7 @@ static inline u64 psched_l2t_ns(const struct psched_ratecfg *r,
 }
 ```
 
-設定時（`psched_ratecfg_precompute()`）に、1 秒（$$10^9\text{ ns}$$）あたりのバイト数 `rate_bytes_ps` から $$\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは**高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ**でナノ秒への変換を完了させています。
+設定時（`psched_ratecfg_precompute()`）に、1 秒（$10^9\text{ ns}$）あたりのバイト数 `rate_bytes_ps` から $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ となる整数 `mult` と `shift` を事前計算しておくことで、パケットごとのホットパスでは**高コストな 64 ビット除算（`div64_u64`）を一切使わず、乗算 1 回とビットシフト 1 回（`((u64)len * r->mult) >> r->shift`）だけ**でナノ秒への変換を完了させています。
 
 ---
 

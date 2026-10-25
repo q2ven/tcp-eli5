@@ -35,7 +35,7 @@ When a tail-drop occurs, the Qdisc must:
 
 ### 2.3 Bottleneck Serialization Rate and Watchdog Rate Pacing
 
-In real networks, physical links have finite transmission bandwidth. For instance, simulating a bottleneck link that requires 2 ms of serialization delay per packet ($$\text{BOTTLENECK NS} = 2,000,000\text{ ns}$$) requires the Qdisc to pace packet departures such that at most one packet is released to the NIC every 2 ms.
+In real networks, physical links have finite transmission bandwidth. For instance, simulating a bottleneck link that requires 2 ms of serialization delay per packet ($\text{BOTTLENECK NS} = 2,000,000\text{ ns}$) requires the Qdisc to pace packet departures such that at most one packet is released to the NIC every 2 ms.
 
 Linux Qdiscs achieve this via the **Watchdog timer**, backed by high-resolution hardware timers (`hrtimer`):
 

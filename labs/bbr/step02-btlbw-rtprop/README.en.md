@@ -15,18 +15,18 @@ Before looking at the code or design questions, let us build the model from firs
 Each time an ACK arrives, the TCP sender observes an instantaneous **RTT sample (`rs->rtt_us`)** and an instantaneous **delivery rate sample (`rs->delivered / rs->interval_us`)**. Blindly overwriting our path model with every new sample breaks down for two physical reasons:
 
 1. **Queueing Delay Inflates RTT**:
-   Every measured round-trip time $$\text{RTT}_t$$ is the sum of the two-way physical propagation delay of the path ($$\text{RTprop}$$, determined by speed-of-light propagation in fibre and router serialisation delays) plus any queueing delay inside bottleneck buffers ($$\text{QueueDelay}_t \ge 0$$):
+   Every measured round-trip time $\text{RTT}_t$ is the sum of the two-way physical propagation delay of the path ($\text{RTprop}$, determined by speed-of-light propagation in fibre and router serialisation delays) plus any queueing delay inside bottleneck buffers ($\text{QueueDelay}_t \ge 0$):
    $$\text{RTT}_t = \text{RTprop} + \text{QueueDelay}_t$$
-   Because queueing delay can never be negative ($$\text{QueueDelay}_t \ge 0$$), $$\text{RTT}_t$$ equals $$\text{RTprop}$$ only when the bottleneck queue is empty. Whenever packets queue up behind a burst or competing traffic, $$\text{RTT}_t$$ rises above $$\text{RTprop}$$. Therefore, to estimate the true unloaded propagation delay (`min_rtt_us`), we must apply a **minimum filter (min-filter)** across valid RTT samples (`rs->rtt_us > 0`).
+   Because queueing delay can never be negative ($\text{QueueDelay}_t \ge 0$), $\text{RTT}_t$ equals $\text{RTprop}$ only when the bottleneck queue is empty. Whenever packets queue up behind a burst or competing traffic, $\text{RTT}_t$ rises above $\text{RTprop}$. Therefore, to estimate the true unloaded propagation delay (`min_rtt_us`), we must apply a **minimum filter (min-filter)** across valid RTT samples (`rs->rtt_us > 0`).
 
 2. **Under-Utilised Pipes Understate Bandwidth**:
-   Conversely, the delivery rate measured over an ACK interval ($$\text{bw}_t = \text{delivered} / \Delta t$$) can never exceed the physical capacity of the bottleneck link ($$\text{BtlBw}$$), because packets cannot arrive at the receiver faster than the bottleneck link transmits them ($$\text{bw}_t \le \text{BtlBw}$$). However, whenever the sender transmits less data than needed to keep the bottleneck link full, the measured delivery rate falls below $$\text{BtlBw}$$. Therefore, to estimate the bottleneck link capacity (`max_bw`), we must apply a **maximum filter (max-filter)** across delivery rate samples.
+   Conversely, the delivery rate measured over an ACK interval ($\text{bw}_t = \text{delivered} / \Delta t$) can never exceed the physical capacity of the bottleneck link ($\text{BtlBw}$), because packets cannot arrive at the receiver faster than the bottleneck link transmits them ($\text{bw}_t \le \text{BtlBw}$). However, whenever the sender transmits less data than needed to keep the bottleneck link full, the measured delivery rate falls below $\text{BtlBw}$. Therefore, to estimate the bottleneck link capacity (`max_bw`), we must apply a **maximum filter (max-filter)** across delivery rate samples.
 
 ### The Application-Limited (`rs->is_app_limited`) Invariant
 
 A crucial edge case arises when the application itself does not supply enough data to keep the network pipe full — for instance, between HTTP requests, during interactive SSH sessions, or after a brief pause between writes. This condition is called being **application-limited (app-limited)**.
 
-Suppose a flow on a $$1000\text{ pkts/s}$$ link sends a 10-packet burst at line rate (measuring $$\text{max}_{\text{bw}} = 1000\text{ pkts/s}$$), and then the application pauses for $$30\text{ ms}$$ before writing just 2 packets. The delivery interval stretches to $$\Delta t = 50\text{ ms}$$, yielding an apparent delivery rate of $$2 / 50\text{ ms} = 40\text{ pkts/s}$$. The network did not become $$25\times$$ slower; **the application simply had nothing to send**.
+Suppose a flow on a $1000\text{ pkts/s}$ link sends a 10-packet burst at line rate (measuring $\text{max}_{\text{bw}} = 1000\text{ pkts/s}$), and then the application pauses for $30\text{ ms}$ before writing just 2 packets. The delivery interval stretches to $\Delta t = 50\text{ ms}$, yielding an apparent delivery rate of $2 / 50\text{ ms} = 40\text{ pkts/s}$. The network did not become $25\times$ slower; **the application simply had nothing to send**.
 
 The Linux kernel's rate estimator (`tcp_rate.c`) automatically detects whenever a rate sample was collected while the sender was not filling the pipe and sets `rs->is_app_limited = true`. BBR enforces a strict invariant on app-limited samples:
 
@@ -55,7 +55,7 @@ pkts/s|   |             * (ignored, max_bw kept!) |   |
 
 ### Fixed-Point BDP Calculation and Target `snd_cwnd`
 
-Once we know both $$\text{BtlBw}$$ (`ca->max_bw`) and $$\text{RTprop}$$ (`ca->min_rtt_us`), Kleinrock's optimal operating point states that the exact volume of in-flight data required to achieve 100% bottleneck utilisation with zero standing queue is the **Bandwidth-Delay Product (BDP)**:
+Once we know both $\text{BtlBw}$ (`ca->max_bw`) and $\text{RTprop}$ (`ca->min_rtt_us`), Kleinrock's optimal operating point states that the exact volume of in-flight data required to achieve 100% bottleneck utilisation with zero standing queue is the **Bandwidth-Delay Product (BDP)**:
 
 $$\text{BDP (packets)} = \text{BtlBw (packets / }\mu\text{s)} \times \text{RTprop (}\mu\text{s)}$$
 
@@ -65,16 +65,16 @@ Because floating-point arithmetic is not permitted in the kernel or BPF programs
   Because `rs->delivered / rs->interval_us` in packets per microsecond is almost always a fraction less than `1`, BBR scales the numerator by `BW_UNIT` before dividing:
   $$\text{bw} = \left\lfloor \frac{\text{rs}\to\text{delivered} \times \text{BW}_{\text{UNIT}}}{\text{rs}\to\text{interval}_{\text{us}}} \right\rfloor$$
 - **`BBR_SCALE = 8` (`BBR_UNIT = 1U << 8 = 256`)**:
-  Fixed-point scale for pacing and cwnd gains. A unity gain ($$1.0\times$$) is `BBR_UNIT` (`256`).
+  Fixed-point scale for pacing and cwnd gains. A unity gain ($1.0\times$) is `BBR_UNIT` (`256`).
 
-Given `bw` (in $$\text{packets}/\mu\text{s} \times 2^{24}$$), `ca->min_rtt_us` (in $$\mu\text{s}$$), and `gain` (scaled by $$2^8$$), `bbr_bdp()` computes the BDP in packets as follows:
+Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in $\mu\text{s}$), and `gain` (scaled by $2^8$), `bbr_bdp()` computes the BDP in packets as follows:
 
-1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $$\text{BDP} \times \text{BW}_{\text{UNIT}}$$).
+1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $\text{BDP} \times \text{BW}_{\text{UNIT}}$).
 2. Multiply by `gain`, shift right by `BBR_SCALE` (`8` bits), and perform **ceiling division** by `BW_UNIT`:
    ```c
    return (((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT;
    ```
-   Why **ceiling division** (`+ BW_UNIT - 1`) rather than integer truncation? If truncation rounded `bdp` down by even 1 packet below the true BDP (e.g., $$9.8 \to 9$$), `snd_cwnd` would cap in-flight data below the bottleneck capacity, preventing the sender from ever filling the pipe or measuring the true bandwidth — a permanent negative feedback loop.
+   Why **ceiling division** (`+ BW_UNIT - 1`) rather than integer truncation? If truncation rounded `bdp` down by even 1 packet below the true BDP (e.g., $9.8 \to 9$), `snd_cwnd` would cap in-flight data below the bottleneck capacity, preventing the sender from ever filling the pipe or measuring the true bandwidth — a permanent negative feedback loop.
 3. If either `ca->min_rtt_us` or `bw` is not yet initialised (`0`), `bbr_bdp()` returns a safe default initial window of `10U` packets.
 4. Finally, BBR adds a 4-packet margin (`bdp + 4U`, floored at `BBR_CWND_MIN_TARGET = 4U`) to `tp->snd_cwnd` to absorb receiver delayed ACKs and TSO/GSO burst quantisation:
    $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
@@ -90,22 +90,22 @@ In subsequent steps (Startup exit detection in Step 3 and ProbeBW gain cycling i
 
 ### Concrete Numerical Example (Matching `test.pkt`)
 
-Let us trace the exact numbers from `test.pkt` on a path with payload $$\text{MSS} = 1000\text{ Bytes}$$:
+Let us trace the exact numbers from `test.pkt` on a path with payload $\text{MSS} = 1000\text{ Bytes}$:
 
 - **Phase 1 (Full-speed 10-packet burst)**:
-  - The sender writes 10 packets ($$10,000\text{ Bytes}$$) at $$t = 10\text{ ms}$$ and receives an ACK for all 10 packets $$10\text{ ms}$$ ($$10,000\ \mu\text{s}$$) later.
+  - The sender writes 10 packets ($10,000\text{ Bytes}$) at $t = 10\text{ ms}$ and receives an ACK for all 10 packets $10\text{ ms}$ ($10,000\ \mu\text{s}$) later.
   - `rs->rtt_us = 10000`, `rs->delivered = 10`, `rs->interval_us = 10000`, `rs->is_app_limited = false`.
   - Because `ca->min_rtt_us` was `0`, the min-filter initialises `ca->min_rtt_us = 10000`.
-  - $$\text{bw} = \lfloor 10 \times 16,777,216 / 10000 \rfloor = 16,777$$ ($$\approx 0.001\text{ pkts/}\mu\text{s} = 1000\text{ pkts/s}$$).
+  - $\text{bw} = \lfloor 10 \times 16,777,216 / 10000 \rfloor = 16,777$ ($\approx 0.001\text{ pkts/}\mu\text{s} = 1000\text{ pkts/s}$).
   - Since `!rs->is_app_limited` and `bw > ca->max_bw`, the max-filter sets `ca->max_bw = 16777`.
-  - In `bbr_bdp()`, $$w = 16,777 \times 10000 = 167,770,000$$. With unity gain (`gain = BBR_UNIT`), ceiling division gives $$\lceil 167,770,000 / 16,777,216 \rceil = 10\text{ packets}$$.
-  - Thus `tp->snd_cwnd = max(10 + 4, 4) = 14`, and `sk_pacing_rate` is set to $$\approx 990,000\text{ Bytes/sec}$$ ($$1\text{ MB/s}$$ minus the 1% pacing margin).
-- **Phase 2 (App-limited 2-packet write after a $$30\text{ ms}$$ pause, with inflated RTT)**:
-  - The application pauses for $$30\text{ ms}$$, then writes only 2 packets ($$2000\text{ Bytes}$$), which are ACKed $$20\text{ ms}$$ later due to transient queueing.
+  - In `bbr_bdp()`, $w = 16,777 \times 10000 = 167,770,000$. With unity gain (`gain = BBR_UNIT`), ceiling division gives $\lceil 167,770,000 / 16,777,216 \rceil = 10\text{ packets}$.
+  - Thus `tp->snd_cwnd = max(10 + 4, 4) = 14`, and `sk_pacing_rate` is set to $\approx 990,000\text{ Bytes/sec}$ ($1\text{ MB/s}$ minus the 1% pacing margin).
+- **Phase 2 (App-limited 2-packet write after a $30\text{ ms}$ pause, with inflated RTT)**:
+  - The application pauses for $30\text{ ms}$, then writes only 2 packets ($2000\text{ Bytes}$), which are ACKed $20\text{ ms}$ later due to transient queueing.
   - `rs->rtt_us = 20000`, `rs->delivered = 2`, `rs->interval_us = 50000`, `rs->is_app_limited = true`.
   - **RTprop filter**: `rs->rtt_us` (`20000`) is greater than `ca->min_rtt_us` (`10000`), so the min-filter ignores it and keeps `ca->min_rtt_us = 10000`.
-  - **BtlBw filter**: The sample rate is $$\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$$ ($$40\text{ pkts/s}$$). Because `rs->is_app_limited` is true and `bw < ca->max_bw`, it is rejected and `ca->max_bw = 16777` is preserved.
-  - Consequently, both `tp->snd_cwnd == 14` and `sk_pacing_rate` ($$\approx 990\text{ KB/s}$$) remain intact after Phase 2.
+  - **BtlBw filter**: The sample rate is $\text{bw} = \lfloor 2 \times 16,777,216 / 50000 \rfloor = 671$ ($40\text{ pkts/s}$). Because `rs->is_app_limited` is true and `bw < ca->max_bw`, it is rejected and `ca->max_bw = 16777` is preserved.
+  - Consequently, both `tp->snd_cwnd == 14` and `sk_pacing_rate` ($\approx 990\text{ KB/s}$) remain intact after Phase 2.
 
 ### What the Kernel Already Provides
 
@@ -124,7 +124,7 @@ Before answering the design questions in Section 3, review the exact fields and 
   - `tp->delivered` (`__u32`): Cumulative count of packets delivered across the lifetime of the connection.
   - `tp->snd_cwnd` (`__u32`): Sending congestion window in packets.
   - `tp->snd_ssthresh` (`__u32`): Slow-start threshold (set to `TCP_INFINITE_SSTHRESH` in BBR).
-  - `tp->srtt_us` (`__u32`): Smoothed RTT scaled by $$8\times$$ (`tp->srtt_us >> 3` is microseconds).
+  - `tp->srtt_us` (`__u32`): Smoothed RTT scaled by $8\times$ (`tp->srtt_us >> 3` is microseconds).
   - `tp->mss_cache` (`__u32`): Current Maximum Segment Size in bytes.
 - **`struct sock *sk`**:
   - `sk->sk_pacing_status`: Set to `SK_PACING_NEEDED` to enable TCP pacing.
@@ -246,7 +246,7 @@ static __always_inline __u64 bbr_rate_bytes_per_sec(struct sock *sk, __u64 rate,
 }
 ```
 
-- Converts `rate` (in `packets/usec << BW_SCALE`) into bytes per second by multiplying by `mss`, applying `gain` (`>> BBR_SCALE`), multiplying by `USEC_PER_SEC` with a 1% pacing margin (`BBR_PACING_MARGIN_PCT = 1U`, i.e. $$990,000$$), and shifting right by `BW_SCALE`.
+- Converts `rate` (in `packets/usec << BW_SCALE`) into bytes per second by multiplying by `mss`, applying `gain` (`>> BBR_SCALE`), multiplying by `USEC_PER_SEC` with a 1% pacing margin (`BBR_PACING_MARGIN_PCT = 1U`, i.e. $990,000$), and shifting right by `BW_SCALE`.
 - `bbr_set_pacing_rate()` clamps the result against `sk->sk_max_pacing_rate` (if set) and writes it to `sk->sk_pacing_rate`.
 
 ### 3. BDP Helper `bbr_bdp()`
@@ -265,7 +265,7 @@ static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
 }
 ```
 
-- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $$\lceil (\text{bw} \times \text{min}_{\text{rtt,us}} \times \text{gain} \gg 8) / 2^{24} \rceil$$.
+- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min}_{\text{rtt,us}} \times \text{gain} \gg 8) / 2^{24} \rceil$.
 
 ### 4. Initialisation (`bpf_bbr2_init()`) and Per-ACK Control (`bpf_bbr2_cong_control()`)
 
@@ -337,17 +337,17 @@ void BPF_PROG(bpf_bbr2_cong_control, struct sock *sk, __u32 ack, int flag,
 
 ### Packet Trace Walkthrough
 
-1. **3-way Handshake (lines 14–17, RTT = $$10\text{ ms}$$, payload MSS = $$1000\text{ Bytes}$$)**:
-   - SYN and SYN-ACK are exchanged at `0.00`, and the handshake ACK arrives at `+0.01` ($$10\text{ ms}$$ RTT). Because `mss 1012` includes 12 bytes of TCP timestamps, the TCP payload MSS is exactly $$1000\text{ Bytes}$$.
+1. **3-way Handshake (lines 14–17, RTT = $10\text{ ms}$, payload MSS = $1000\text{ Bytes}$)**:
+   - SYN and SYN-ACK are exchanged at `0.00`, and the handshake ACK arrives at `+0.01` ($10\text{ ms}$ RTT). Because `mss 1012` includes 12 bytes of TCP timestamps, the TCP payload MSS is exactly $1000\text{ Bytes}$.
 2. **Phase 1: High-bandwidth burst and first assertion (lines 26–33)**:
-   - `write(4, ..., 10000)` transmits 10 segments (`1:10001(10000)`) at `0.010`, and the cumulative ACK (`ack 10001`) arrives $$10\text{ ms}$$ later (`+0.01`).
-   - This produces `rs->rtt_us = 10000` ($$10\text{ ms}$$), `rs->delivered = 10`, and `rs->interval_us = 10000` ($$10\text{ ms}$$).
-   - `ca->min_rtt_us` becomes `10000`, `ca->max_bw` becomes $$1000\text{ pkts/s}$$ ($$1,000,000\text{ Bytes/s}$$), `bdp = 10` packets, `tcpi_snd_cwnd == 14` ($$10 + 4$$), and `tcpi_pacing_rate` is $$\approx 990\text{ KB/s}$$ (`950000 < tcpi_pacing_rate < 1050000`).
+   - `write(4, ..., 10000)` transmits 10 segments (`1:10001(10000)`) at `0.010`, and the cumulative ACK (`ack 10001`) arrives $10\text{ ms}$ later (`+0.01`).
+   - This produces `rs->rtt_us = 10000` ($10\text{ ms}$), `rs->delivered = 10`, and `rs->interval_us = 10000` ($10\text{ ms}$).
+   - `ca->min_rtt_us` becomes `10000`, `ca->max_bw` becomes $1000\text{ pkts/s}$ ($1,000,000\text{ Bytes/s}$), `bdp = 10` packets, `tcpi_snd_cwnd == 14` ($10 + 4$), and `tcpi_pacing_rate` is $\approx 990\text{ KB/s}$ (`950000 < tcpi_pacing_rate < 1050000`).
 3. **Phase 2: App-limited small burst with inflated RTT and second assertion (lines 39–46)**:
-   - After a $$30\text{ ms}$$ pause (`+0.03`), the application writes only $$2000\text{ Bytes}$$ (2 segments), and the ACK (`ack 12001`) returns $$20\text{ ms}$$ later (`+0.02`).
-   - This sample has `rs->rtt_us = 20000` (inflated to $$20\text{ ms}$$), `rs->delivered = 2`, `rs->interval_us = 50000` ($$40\text{ pkts/s}$$), and `rs->is_app_limited = true`.
-   - **Why `starter.bpf.c` fails**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) blindly overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->max_bw = bw`. On the Phase 2 ACK, `max_bw` collapses by $$25\times$$ to $$40\text{ pkts/s}$$, shrinking `tcpi_snd_cwnd` to `5` ($$\text{BDP } 1 + 4$$) and dropping `tcpi_pacing_rate` to $$\approx 39.6\text{ KB/s}$$, which fails the assertions on lines 44–45.
-   - **Why `solution.bpf.c` passes**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) rejects the inflated RTT via the min-filter (`min_rtt_us` stays `10000`) and rejects the low app-limited bandwidth sample via the max-filter (`max_bw` stays $$1000\text{ pkts/s}$$), preserving `tcpi_snd_cwnd == 14` and `tcpi_pacing_rate` ($$\approx 990\text{ KB/s}$$).
+   - After a $30\text{ ms}$ pause (`+0.03`), the application writes only $2000\text{ Bytes}$ (2 segments), and the ACK (`ack 12001`) returns $20\text{ ms}$ later (`+0.02`).
+   - This sample has `rs->rtt_us = 20000` (inflated to $20\text{ ms}$), `rs->delivered = 2`, `rs->interval_us = 50000` ($40\text{ pkts/s}$), and `rs->is_app_limited = true`.
+   - **Why `starter.bpf.c` fails**: [starter.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/starter.bpf.c) blindly overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->max_bw = bw`. On the Phase 2 ACK, `max_bw` collapses by $25\times$ to $40\text{ pkts/s}$, shrinking `tcpi_snd_cwnd` to `5` ($\text{BDP } 1 + 4$) and dropping `tcpi_pacing_rate` to $\approx 39.6\text{ KB/s}$, which fails the assertions on lines 44–45.
+   - **Why `solution.bpf.c` passes**: [solution.bpf.c](file:///usr/local/google/home/kuniyu/tcp-eli5/labs/bbr/step02-btlbw-rtprop/solution.bpf.c) rejects the inflated RTT via the min-filter (`min_rtt_us` stays `10000`) and rejects the low app-limited bandwidth sample via the max-filter (`max_bw` stays $1000\text{ pkts/s}$), preserving `tcpi_snd_cwnd == 14` and `tcpi_pacing_rate` ($\approx 990\text{ KB/s}$).
 
 ### How to Run
 

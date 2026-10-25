@@ -38,8 +38,8 @@ CoDel determines whether a standing queue exists by tracking whether **the minim
 ### 2.3 CoDel State Transitions
 
 CoDel is governed by two primary parameters:
-- **`TARGET_NS`**: Target sojourn time (standard 5 ms = $$5,000,000\text{ ns}$$).
-- **`INTERVAL_NS`**: Sliding observation window (standard 100 ms, shortened to $$20\text{ ms} = 20,000,000\text{ ns}$$ in this lab).
+- **`TARGET_NS`**: Target sojourn time (standard 5 ms = $5,000,000\text{ ns}$).
+- **`INTERVAL_NS`**: Sliding observation window (standard 100 ms, shortened to $20\text{ ms} = 20,000,000\text{ ns}$ in this lab).
 
 ```mermaid
 flowchart TD

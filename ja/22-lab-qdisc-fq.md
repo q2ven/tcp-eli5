@@ -115,7 +115,7 @@ Linux 6.x で導入された最新の BPF 機能である **BPF Graph Data Struc
 | :--- | :--- |
 | `struct_ops` (`struct Qdisc_ops`) | C 言語でカーネルモジュールを書く代わりに、BPF でセキュアかつ動的に Qdisc を実装・登録する |
 | `bpf_list_head` / `bpf_list_node` | DRR の `fq_new_flows` / `fq_old_flows` キューおよびパケット FIFO キューを表現する |
-| `bpf_rb_root` / `bpf_rb_node` | タイムスタンプ順のパケットソート、および時刻順の遅延フロー管理（`fq_delayed`）を $$O(\log N)$$ で実現する |
+| `bpf_rb_root` / `bpf_rb_node` | タイムスタンプ順のパケットソート、および時刻順の遅延フロー管理（`fq_delayed`）を $O(\log N)$ で実現する |
 | `bpf_refcount` | フロー構造体がハッシュマップ（フローテーブル）とリスト（スケジューラ）の両方に同時に所属するための安全な参照カウント管理 |
 | `bpf_kptr_xchg()` | カーネルポインタの所有権（Ownership）をアトミックに移動・交換する |
 | `bpf_qdisc_watchdog_schedule()` | EDT の目標時刻に正確に Dequeue を再開させるためのカーネル kfunc |
@@ -174,7 +174,7 @@ FQ では、到着したパケットのソケット情報（`sk->__sk_common.skc
 
 フローごとにキューを分けた後、それぞれのキューからどのような順序でパケットを取り出す（Dequeue する）べきでしょうか？
 
-単純なラウンドロビン（1 パケットずつ順番に取り出す）だと、パケットサイズが 1500 バイトのフローと 500 バイトのフローの間で、帯域が $$1500 : 500 = 3 : 1$$ と不公平になってしまいます。
+単純なラウンドロビン（1 パケットずつ順番に取り出す）だと、パケットサイズが 1500 バイトのフローと 500 バイトのフローの間で、帯域が $1500 : 500 = 3 : 1$ と不公平になってしまいます。
 
 そこで M. Shreedhar と G. Varghese によって考案されたのが **Deficit Round Robin (DRR)** です。
 
@@ -225,7 +225,7 @@ graph TD
 ### 2.4 具体数値トレース（本ステップの `test.pkt` シナリオ）
 
 本ステップの `test.pkt` で実際に起きる動作をトレースしてみましょう。
-設定値：`INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, パケット長 $$\approx 1028$$ バイト（UDP 1000B ペイロード + ヘッダ）, ボトルネック送信間隔 `BOTTLENECK_NS = 2 ms`。
+設定値：`INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, パケット長 $\approx 1028$ バイト（UDP 1000B ペイロード + ヘッダ）, ボトルネック送信間隔 `BOTTLENECK_NS = 2 ms`。
 
 | 時刻 | イベント | Flow A の状態 | Flow B の状態 | 送出パケット | 解説 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -984,7 +984,7 @@ EDT ペーシング送信:
 
 ### 2.2 Earliest Departure Time (EDT) モデル
 
-Linux 4.20 で導入された **EDT モデル** では、ソケットが設定した目標レート（`sk->sk_max_pacing_rate`）に基づき、各パケットに「このパケットは未来の時刻 $$t$$ に送信せよ」という **最早出発時刻（`skb->tstamp`）** をスタンプします。
+Linux 4.20 で導入された **EDT モデル** では、ソケットが設定した目標レート（`sk->sk_max_pacing_rate`）に基づき、各パケットに「このパケットは未来の時刻 $t$ に送信せよ」という **最早出発時刻（`skb->tstamp`）** をスタンプします。
 
 パケット送信予定時刻 `time_to_send` は次のように計算されます：
 
@@ -992,7 +992,7 @@ Linux 4.20 で導入された **EDT モデル** では、ソケットが設定�
 2. **ソケットの `sk_max_pacing_rate` が有効な場合**:
    現在のフローの次回送出時刻 `flow->time_next_packet` と現在時刻 `now` の大きい方を基準とします：
    $$\text{time to send} = \max(\text{flow} \to \text{next packet time}, \text{now})$$
-   そして、このパケットを送るのに必要な時間幅（$$\Delta t$$）を足して、次回のパケットのために `time_next_packet` を進めます：
+   そして、このパケットを送るのに必要な時間幅（$\Delta t$）を足して、次回のパケットのために `time_next_packet` を進めます：
    $$\text{flow} \to \text{next packet time} = \text{time to send} + \frac{\text{packet len} \times 10^9}{\text{rate}}$$
 3. **上記以外**: 即座に送出可能（`time_to_send = now`）とします。
 
@@ -1016,7 +1016,7 @@ Dequeue 時にフローの先頭パケットを取り出した際、そのパケ
 
 ## 3. 具体数値トレース（本ステップの `test.pkt` シナリオ）
 
-設定値：`SO_MAX_PACING_RATE = 200,000` バイト/秒（200 KB/s）、パケット長 $$\approx 1066$$ バイト。
+設定値：`SO_MAX_PACING_RATE = 200,000` バイト/秒（200 KB/s）、パケット長 $\approx 1066$ バイト。
 パケットあたりの所要時間：
 $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.33 \text{ ms}$$
 
@@ -1026,7 +1026,7 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 | Pkt 2 の検査 | — | Pkt 2 の目標時刻は `+5.33 ms`（未来）。<br>フローは `fq_delayed` へ退避され、タイマーがセットされる。 |
 | タイマー発火 (+5.33 ms) | **~ +0.005** | Pkt 2 (1001:2001) が **Watchdog によって送出**！<br>`time_next_packet` は `now + 10.66 ms` へ進む。 |
 | タイマー発火 (+10.66 ms) | **~ +0.010** | Pkt 3 (2001:3001) が **Watchdog によって送出**！ |
-| `SO_MAX_PACING_RATE = 100` B/s に設定 | — | 1000B パケットで $$\Delta t = \frac{1066 \times 10^9}{100} > 10$$ 秒！ |
+| `SO_MAX_PACING_RATE = 100` B/s に設定 | — | 1000B パケットで $\Delta t = \frac{1066 \times 10^9}{100} > 10$ 秒！ |
 | `write(4, ..., 2000)` (2 セグメント) | **+0.000** | Pkt 1 (3001:4001) が送出され、`time_next_packet` は `now + 10.66s` へ進む。 |
 | Pkt 2 の Enqueue | — | Pkt 2 の目標時刻は `now + 10.66s` となり、**`now + 2s` のホライゾンを超過**！<br>`bpf_qdisc_skb_drop()` で **即座にドロップ**！ |
 

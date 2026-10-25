@@ -34,7 +34,7 @@ flowchart LR
 
 ### Delivery Rate Formula and Fixed-Point STARTUP Gain
 
-On every incoming ACK, the Linux kernel's rate sampling engine (`tcp_rate_gen()`) measures how many segments (`delivered`) were delivered to the peer over the elapsed measurement interval (`interval_us`, in microseconds). Given the segment payload size `mss_cache` (in bytes) and `USEC_PER_SEC = 1,000,000` microseconds per second, the instantaneous delivery rate $$\text{bw}$$ in bytes per second is:
+On every incoming ACK, the Linux kernel's rate sampling engine (`tcp_rate_gen()`) measures how many segments (`delivered`) were delivered to the peer over the elapsed measurement interval (`interval_us`, in microseconds). Given the segment payload size `mss_cache` (in bytes) and `USEC_PER_SEC = 1,000,000` microseconds per second, the instantaneous delivery rate $\text{bw}$ in bytes per second is:
 
 $$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
@@ -44,9 +44,9 @@ In C and BPF integer arithmetic, division truncates any fractional remainder tow
 
 #### Applying the STARTUP Gain in Fixed-Point (`BBR_HIGH_GAIN`)
 
-When a connection starts in the **STARTUP** phase (BBR's equivalent of Slow Start), it probes for available bandwidth by pacing packets faster than the currently measured delivery rate. Specifically, BBR uses a theoretical STARTUP gain of $$2 / \ln(2) \approx 2.885\text{x}$$, which doubles the sending rate every RTT.
+When a connection starts in the **STARTUP** phase (BBR's equivalent of Slow Start), it probes for available bandwidth by pacing packets faster than the currently measured delivery rate. Specifically, BBR uses a theoretical STARTUP gain of $2 / \ln(2) \approx 2.885\text{x}$, which doubles the sending rate every RTT.
 
-Because floating-point instructions (`float` / `double`) are forbidden in the Linux kernel and BPF programs, BBR represents gains as fixed-point integers scaled by $$2^{10} = 1024$$ (`BBR_SCALE = 10`, where `BBR_UNIT = 1 << 10 = 1024` represents a `1.0x` multiplier). In this lab, the STARTUP gain is defined as `BBR_HIGH_GAIN = 2885` ($$2885 / 1024 \approx 2.817\text{x}$$). Applying the gain is a 64-bit multiplication followed by a right shift by `BBR_SCALE`:
+Because floating-point instructions (`float` / `double`) are forbidden in the Linux kernel and BPF programs, BBR represents gains as fixed-point integers scaled by $2^{10} = 1024$ (`BBR_SCALE = 10`, where `BBR_UNIT = 1 << 10 = 1024` represents a `1.0x` multiplier). In this lab, the STARTUP gain is defined as `BBR_HIGH_GAIN = 2885` ($2885 / 1024 \approx 2.817\text{x}$). Applying the gain is a 64-bit multiplication followed by a right shift by `BBR_SCALE`:
 
 $$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
@@ -64,12 +64,12 @@ Let's trace the exact numbers from our test scenario where the payload MSS is `m
 
 1. **Right after the 3-way handshake (`.init`)**:
    - Initial `snd_cwnd = 10` segments, and the SYN/SYN-ACK RTT is `100 ms` (`rtt_us = 100,000` us):
-   - $$\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$$ (100 KB/s)
-   - $$\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$$ (~281.7 KB/s)
+   - $\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$ (100 KB/s)
+   - $\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$ (~281.7 KB/s)
 2. **When the first flight of 10 segments is ACKed after 10 ms (`.cong_control`)**:
    - The ACK reports `rs->delivered = 10` segments delivered over `rs->interval_us = 10,000` us (10 ms):
-   - $$\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$$ (1.0 MB/s)
-   - $$\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$$ (~2.82 MB/s)
+   - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$ (1.0 MB/s)
+   - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
 
 ### What the Kernel Already Provides (Structures, Fields, and Hooks)
 
@@ -177,7 +177,7 @@ Let's walk through each part of [solution.bpf.c](file:///usr/local/google/home/k
 ```
 
 - `BBR_SCALE = 10` (`BBR_UNIT = 1024`) defines our fixed-point unit (`1.0x`).
-- `BBR_HIGH_GAIN = 2885` represents the STARTUP gain ($$2885 / 1024 \approx 2.817\text{x}$$). Scaling any byte-per-second `rate` via `(rate * BBR_HIGH_GAIN) >> BBR_SCALE` multiplies it by ~2.82x using pure integer operations.
+- `BBR_HIGH_GAIN = 2885` represents the STARTUP gain ($2885 / 1024 \approx 2.817\text{x}$). Scaling any byte-per-second `rate` via `(rate * BBR_HIGH_GAIN) >> BBR_SCALE` multiplies it by ~2.82x using pure integer operations.
 
 ### 2. `bpf_bbr1_init()` — Enabling Internal Pacing and Setting the Initial Rate
 

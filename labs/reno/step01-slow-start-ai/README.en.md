@@ -42,12 +42,12 @@ cwnd (segments)
    - **Intuition**: At the start of a connection, the sender has no idea how large the path's bandwidth-delay product is. Starting from a conservative initial window (10 segments by default in Linux), it probes capacity rapidly by doubling `cwnd` every round-trip time (RTT).
    - **Formula and rule**: Whenever an incoming ACK acknowledges `acked` new segments of data, the sender increases `cwnd` by that exact amount:
      $$\text{cwnd} \leftarrow \text{cwnd} + \text{acked}$$
-   - When an entire flight of `cwnd` segments is sent and acknowledged over one RTT, `cwnd` grows to $$\text{cwnd} + \text{cwnd} = 2 \times \text{cwnd}$$ (**exponential doubling every RTT**).
+   - When an entire flight of `cwnd` segments is sent and acknowledged over one RTT, `cwnd` grows to $\text{cwnd} + \text{cwnd} = 2 \times \text{cwnd}$ (**exponential doubling every RTT**).
    - **Clamping at the `ssthresh` boundary**: Slow Start is only permitted up to `ssthresh`. If a single ACK (such as a stretch ACK acknowledging many segments at once) would push `cwnd + acked` past `ssthresh`, Slow Start consumes only enough `acked` segments to raise `cwnd` to `ssthresh`. **Any leftover `acked` segments are not discarded — they carry directly over into Congestion Avoidance.**
 
 2. **Congestion Avoidance / Reno Additive Increase (when `cwnd >= ssthresh`)**
    - **Intuition**: Once `cwnd` reaches `ssthresh` (which marks either a target threshold or the vicinity of a past packet loss), doubling the window again would quickly overflow router buffers. Instead, the sender switches to **Additive Increase (AI)**: it increases `cwnd` by just **+1 segment per full RTT** of successfully acknowledged data.
-   - **Integer-only maths without floating point**: Conceptually, each ACKed segment in Congestion Avoidance increases `cwnd` by $$\frac{1}{\text{cwnd}}$$ (or $$\text{cwnd} \leftarrow \text{cwnd} + \frac{\text{acked}}{\text{cwnd}}$$). Because floating-point arithmetic (`float` / `double`) is forbidden in the Linux kernel and BPF programs, TCP represents the fractional credit $$\frac{\text{cnt}}{\text{cwnd}}$$ using an integer numerator counter **`snd_cwnd_cnt`**:
+   - **Integer-only maths without floating point**: Conceptually, each ACKed segment in Congestion Avoidance increases `cwnd` by $\frac{1}{\text{cwnd}}$ (or $\text{cwnd} \leftarrow \text{cwnd} + \frac{\text{acked}}{\text{cwnd}}$). Because floating-point arithmetic (`float` / `double`) is forbidden in the Linux kernel and BPF programs, TCP represents the fractional credit $\frac{\text{cnt}}{\text{cwnd}}$ using an integer numerator counter **`snd_cwnd_cnt`**:
      1. On each ACK in Congestion Avoidance, add `acked` to the numerator: `snd_cwnd_cnt += acked`.
      2. Whenever the numerator reaches or exceeds the denominator (`snd_cwnd_cnt >= snd_cwnd`), subtract `snd_cwnd` from `snd_cwnd_cnt` (`snd_cwnd_cnt -= snd_cwnd`) and increment `snd_cwnd` by `1`.
 
@@ -73,9 +73,9 @@ Therefore, at the very beginning of `.cong_avoid()`, a congestion control algori
 
 When packet loss is detected — or when a loss detection later turns out to be a false alarm — TCP Reno applies two rules:
 
-- **Multiplicative Decrease (`.ssthresh()`)**: Packet loss signals that the current `cwnd` exceeded path capacity. Reno cuts `ssthresh` to half of the current `cwnd` ($$\lfloor \text{cwnd} / 2 \rfloor$$, written as `snd_cwnd >> 1U`), floored at a minimum of `2U` segments as mandated by RFC 5681 so transmission never stalls:
+- **Multiplicative Decrease (`.ssthresh()`)**: Packet loss signals that the current `cwnd` exceeded path capacity. Reno cuts `ssthresh` to half of the current `cwnd` ($\lfloor \text{cwnd} / 2 \rfloor$, written as `snd_cwnd >> 1U`), floored at a minimum of `2U` segments as mandated by RFC 5681 so transmission never stalls:
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $$\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$$.
+- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$.
 
 ### 2.6 What the Kernel Already Provides (Structs, Fields, and Helpers)
 
@@ -96,7 +96,7 @@ Every Linux TCP socket (`struct tcp_sock`) already has **all of Reno's state var
 
 - `tp->snd_cwnd` (`__u32`): Current congestion window (in segments).
 - `tp->snd_ssthresh` (`__u32`): Current slow start threshold (in segments).
-- `tp->snd_cwnd_cnt` (`__u32`): Linear Congestion Avoidance counter that accumulates ACKed segments (the numerator of $$\frac{\text{cnt}}{\text{cwnd}}$$).
+- `tp->snd_cwnd_cnt` (`__u32`): Linear Congestion Avoidance counter that accumulates ACKed segments (the numerator of $\frac{\text{cnt}}{\text{cwnd}}$).
 - `tp->snd_cwnd_clamp` (`__u32`): Maximum allowed value for `tp->snd_cwnd` (always clamp increases using `min(new_cwnd, tp->snd_cwnd_clamp)`).
 - `tp->prior_cwnd` (`__u32`): Value of `snd_cwnd` automatically saved by the kernel right before entering loss recovery.
 

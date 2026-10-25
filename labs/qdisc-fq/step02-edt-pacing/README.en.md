@@ -39,7 +39,7 @@ The packet's scheduled departure time `time_to_send` is calculated as follows:
 2. **Socket pacing rate (`sk_max_pacing_rate`) active**:
    Anchor against the later of the flow's scheduled next packet time or current time:
    $$\text{time to send} = \max(\text{flow} \to \text{next packet time}, \text{now})$$
-   Advance the flow's next eligible transmission timestamp by the transmission duration $$\Delta t$$:
+   Advance the flow's next eligible transmission timestamp by the transmission duration $\Delta t$:
    $$\text{flow} \to \text{next packet time} = \text{time to send} + \frac{\text{packet len} \times 10^9}{\text{rate}}$$
 3. **Otherwise**: Immediately transmittable (`time_to_send = now`).
 
@@ -63,7 +63,7 @@ To prevent head-of-line blocking and memory exhaustion, FQ enforces a **horizon 
 
 ## 3. Concrete Trace (`test.pkt` Scenario)
 
-Parameters: `SO_MAX_PACING_RATE = 200,000` bytes/sec (200 KB/s), packet length $$\approx 1066$$ bytes.
+Parameters: `SO_MAX_PACING_RATE = 200,000` bytes/sec (200 KB/s), packet length $\approx 1066$ bytes.
 Pacing delay per packet:
 $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.33 \text{ ms}$$
 
@@ -73,7 +73,7 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 | Inspection of Pkt 2 | — | Pkt 2 is due at `+5.33 ms` (future).<br>Flow is throttled into `fq_delayed`, timer armed. |
 | Timer fires (+5.33 ms) | **~ +0.005** | Pkt 2 (1001:2001) **transmitted via Watchdog**!<br>`time_next_packet` advances to `now + 10.66 ms`. |
 | Timer fires (+10.66 ms) | **~ +0.010** | Pkt 3 (2001:3001) **transmitted via Watchdog**! |
-| Set `SO_MAX_PACING_RATE = 100` B/s | — | For 1000B packets, $$\Delta t = \frac{1066 \times 10^9}{100} > 10$$ seconds! |
+| Set `SO_MAX_PACING_RATE = 100` B/s | — | For 1000B packets, $\Delta t = \frac{1066 \times 10^9}{100} > 10$ seconds! |
 | `write(4, ..., 2000)` (2 segments) | **+0.000** | Pkt 1 (3001:4001) is transmitted immediately;<br>`time_next_packet` advances to `now + 10.66s`. |
 | Enqueue of Pkt 2 | — | Pkt 2 is scheduled at `now + 10.66s`, which **exceeds the 2s horizon**!<br>**Dropped immediately** via `bpf_qdisc_skb_drop()`! |
 

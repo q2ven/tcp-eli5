@@ -46,11 +46,11 @@ This division of labor is made possible by a two-tiered backpressure architectur
 
 1. **BQL (between Qdisc and the NIC driver)**
    Each hardware TX queue (`struct netdev_queue`) maintains a DQL (Dynamic Queue Limits, `struct dql`) state. Every time the driver pushes packets onto the hardware ring in `ndo_start_xmit()`, it adds the byte count via `netdev_tx_sent_queue()`; in the TX completion interrupt (NAPI poll), it calls `netdev_tx_completed_queue()` to subtract completed bytes.
-   Letting the in-flight uncompleted byte count currently queued on the hardware ring be $$B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$$, and the dynamically adjusted ceiling of DQL be $$L_{\text{BQL}}$$, the remaining available budget is expressed as:
+   Letting the in-flight uncompleted byte count currently queued on the hardware ring be $B_{\text{inflight}} = \text{num}_{\text{queued}} - \text{num}_{\text{completed}}$, and the dynamically adjusted ceiling of DQL be $L_{\text{BQL}}$, the remaining available budget is expressed as:
 
    $$\text{avail} = L_{\text{BQL}} - B_{\text{inflight}}$$
 
-   The moment $$\text{avail} < 0$$, BQL sets the `QUEUE_STATE_STACK_XOFF` bit on that TX queue to halt transmission. The Qdisc can no longer push packets into the driver, and subsequent packets remain buffered inside the Qdisc. When TX completions restore $$\text{avail} \ge 0$$, `QUEUE_STATE_STACK_XOFF` is cleared, and `netif_schedule_queue()` schedules `NET_TX_SOFTIRQ` (`net_tx_action()`) to resume dequeuing from the Qdisc.
+   The moment $\text{avail} < 0$, BQL sets the `QUEUE_STATE_STACK_XOFF` bit on that TX queue to halt transmission. The Qdisc can no longer push packets into the driver, and subsequent packets remain buffered inside the Qdisc. When TX completions restore $\text{avail} \ge 0$, `QUEUE_STATE_STACK_XOFF` is cleared, and `netif_schedule_queue()` schedules `NET_TX_SOFTIRQ` (`net_tx_action()`) to resume dequeuing from the Qdisc.
 
 2. **TSQ (between the TCP socket and Qdisc / NIC)**
    Even if BQL prevents the NIC ring from bloating, if sockets flood the Qdisc with unbounded packets, the Qdisc queues would overflow with packets from a single flow. To prevent this, TCP sets `skb->destructor = tcp_wfree` in `__tcp_transmit_skb()` and adds `skb->truesize` to `sk->sk_wmem_alloc`.
@@ -369,7 +369,7 @@ struct qdisc_skb_head {
 };
 ```
 
-- While the generic `struct sk_buff_head` is a doubly linked circular list (updating both `skb->next` and `skb->prev`), for FIFO-like use cases where packets are simply appended to the tail and dequeued from the head, updating `skb->prev` constitutes unnecessary memory traffic. Therefore, `qdisc_skb_head` is designed as a **singly linked list that only uses `skb->next`** (with the tail element's `skb->next == NULL`), providing $$O(1)$$ access to both the head and tail with fewer pointer modifications by maintaining `head` and `tail` pointers (`__qdisc_enqueue_tail()` ([include/net/sch_generic.h#L1102](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1102)) and `__qdisc_dequeue_head()` ([include/net/sch_generic.h#L1136](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1136))).
+- While the generic `struct sk_buff_head` is a doubly linked circular list (updating both `skb->next` and `skb->prev`), for FIFO-like use cases where packets are simply appended to the tail and dequeued from the head, updating `skb->prev` constitutes unnecessary memory traffic. Therefore, `qdisc_skb_head` is designed as a **singly linked list that only uses `skb->next`** (with the tail element's `skb->next == NULL`), providing $O(1)$ access to both the head and tail with fewer pointer modifications by maintaining `head` and `tail` pointers (`__qdisc_enqueue_tail()` ([include/net/sch_generic.h#L1102](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1102)) and `__qdisc_dequeue_head()` ([include/net/sch_generic.h#L1136](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1136))).
 - `lock` is the exact `&qdisc->q.lock` returned by `qdisc_lock(q)` ([include/net/sch_generic.h#L581](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n581)), and is used for mutual exclusion across the entire Qdisc hierarchy (`root_lock`).
 
 #### `struct Qdisc` and `TCQ_F_*` Flags
@@ -2444,7 +2444,7 @@ This mechanism delivers two synergistic benefits:
 
 ### 5. Fixed-Point Arithmetic and Rate-to-Time Conversion (`psched_l2t_ns()`)
 
-Because floating-point arithmetic (FPU/SSE) is unavailable inside the kernel, shaper Qdiscs (such as TBF and HTB in the next chapter) use fixed-point multiplication and right shifts via `struct psched_ratecfg` (`include/net/sch_generic.h`, [include/net/sch_generic.h#L1217](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1217)) and `psched_l2t_ns()` ([include/net/sch_generic.h#L1238](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1238)) to compute the nanoseconds needed to transmit a packet of length $$L$$ at rate $$R$$.
+Because floating-point arithmetic (FPU/SSE) is unavailable inside the kernel, shaper Qdiscs (such as TBF and HTB in the next chapter) use fixed-point multiplication and right shifts via `struct psched_ratecfg` (`include/net/sch_generic.h`, [include/net/sch_generic.h#L1217](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1217)) and `psched_l2t_ns()` ([include/net/sch_generic.h#L1238](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/sch_generic.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1238)) to compute the nanoseconds needed to transmit a packet of length $L$ at rate $R$.
 
 ```c
 struct psched_ratecfg {
@@ -2471,7 +2471,7 @@ static inline u64 psched_l2t_ns(const struct psched_ratecfg *r,
 }
 ```
 
-During configuration (`psched_ratecfg_precompute()`), the kernel precomputes the integers `mult` and `shift` such that $$\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$$ from `rate_bytes_ps` (bytes per second, where 1 second is $$10^9\text{ ns}$$). As a result, the per-packet hot path avoids **costly 64-bit division (`div64_u64`) entirely, completing the conversion to nanoseconds with just a single multiplication and bit shift (`((u64)len * r->mult) >> r->shift`)**.
+During configuration (`psched_ratecfg_precompute()`), the kernel precomputes the integers `mult` and `shift` such that $\frac{10^9}{\text{rate}_{\text{bytes/s}}} \approx \frac{\text{mult}}{2^{\text{shift}}}$ from `rate_bytes_ps` (bytes per second, where 1 second is $10^9\text{ ns}$). As a result, the per-packet hot path avoids **costly 64-bit division (`div64_u64`) entirely, completing the conversion to nanoseconds with just a single multiplication and bit shift (`((u64)len * r->mult) >> r->shift`)**.
 
 ---
 

@@ -20,7 +20,7 @@ BBR はネットワークの物理容量を **最大帯域（`max_bw` = BtlBw）
 
 1. **ロス直前の健全な `cwnd` の退避（`bbr_save_cwnd()`）**:
    カーネルがロスを検知して Fast Recovery（`TCP_CA_Recovery`）や RTO タイムアウト（`TCP_CA_Loss`）に入る直前、あるいは `BBR_PROBE_RTT` に入る直前に、その時点の正常な `tp->snd_cwnd` を `ca->prior_cwnd` に保存します。
-   - すでに Recovery / Loss 中（`ca->prev_ca_state >= TCP_CA_Recovery`）または `BBR_PROBE_RTT` 中（`ca->mode == BBR_PROBE_RTT`）である場合は、`tp->snd_cwnd` がすでに小さく絞られている可能性があるため、単純代入で上書きせず $$\text{prior}_{\text{cwnd}} = \max(\text{prior}_{\text{cwnd}}, \text{snd}_{\text{cwnd}})$$ で大きい方の値を保持します。
+   - すでに Recovery / Loss 中（`ca->prev_ca_state >= TCP_CA_Recovery`）または `BBR_PROBE_RTT` 中（`ca->mode == BBR_PROBE_RTT`）である場合は、`tp->snd_cwnd` がすでに小さく絞られている可能性があるため、単純代入で上書きせず $\text{prior}_{\text{cwnd}} = \max(\text{prior}_{\text{cwnd}}, \text{snd}_{\text{cwnd}})$ で大きい方の値を保持します。
 2. **Recovery 第 1 ラウンドのパケット保存則（Packet Conservation）**:
    パケットロスが起きた直後は、ネットワーク内に欠損パケットが存在し不安定な状態です。そのため、今回の ACK で新たに検知されたロスパケット数 `rs->losses` だけ一旦 `cwnd` を減算します（下限 1）：
    $$\text{cwnd} = \max(\text{cwnd} - \text{rs->losses}, 1)$$
@@ -46,7 +46,7 @@ BBR はネットワークの物理容量を **最大帯域（`max_bw` = BtlBw）
 
 Wi-Fi のフレームアグリゲーション、モバイル回線、あるいは受信側 NIC の GRO/LRO（Generic/Large Receive Offload）環境では、本来なら一定間隔で滑らかに返ってくるはずの ACK がネットワーク途中でまとめられ、**「しばらく ACK が全く来ない無音期間のあと、数十パケット分の ACK が一気にドッと届く」** という現象（ACK 集約）が頻繁に発生します。
 
-もし `target_cwnd` を純粋な $$\text{BDP} \times \text{cwnd}_{\text{gain}}$$ だけに制限していると、ACK が途絶えている無音期間中にインフライト数が `snd_cwnd` の上限に達してしまい、ペーシングタイマーが送信可能であっても **cwnd 制限によって送信がストップ（パイプが枯渇）** してしまいます。
+もし `target_cwnd` を純粋な $\text{BDP} \times \text{cwnd}_{\text{gain}}$ だけに制限していると、ACK が途絶えている無音期間中にインフライト数が `snd_cwnd` の上限に達してしまい、ペーシングタイマーが送信可能であっても **cwnd 制限によって送信がストップ（パイプが枯渇）** してしまいます。
 
 #### アルゴリズムのアイデアと数式
 
@@ -73,7 +73,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
    $$\text{epoch}_{\text{us}} = \text{tp}\to\text{delivered}_{\text{mstamp}} - \text{ca}\to\text{epoch}_{\text{mstamp}}$$
    $$\text{expected}_{\text{acked}} = (\text{ca}\to\text{max}_{\text{bw}} \times \text{epoch}_{\text{us}}) \gg 24$$
 2. **エポックのリセット判定**:
-   もしこれまでの累積 ACK 数 `ca->ack_epoch_acked` が期待値 `expected_acked` 以下に落ち着いた場合（`ca->ack_epoch_acked <= expected_acked`）、またはカウンタがオーバーフロー防止閾値 `BBR_ACK_EPOCH_ACKED_RESET_THRESH`（$$2^{20}$$ パケット）に達する場合は、過去の集約バーストが解消されたとみなして新しいエポックをゼロから開始します：
+   もしこれまでの累積 ACK 数 `ca->ack_epoch_acked` が期待値 `expected_acked` 以下に落ち着いた場合（`ca->ack_epoch_acked <= expected_acked`）、またはカウンタがオーバーフロー防止閾値 `BBR_ACK_EPOCH_ACKED_RESET_THRESH`（$2^{20}$ パケット）に達する場合は、過去の集約バーストが解消されたとみなして新しいエポックをゼロから開始します：
    - `ca->ack_epoch_acked = 0`
    - `ca->epoch_mstamp = tp->delivered_mstamp`
    - `expected_acked = 0`
@@ -85,7 +85,7 @@ Wi-Fi のフレームアグリゲーション、モバイル回線、あるい�
 4. **5 RTT ウィンドウによる減衰（Windowed Decay）**:
    大昔の単発バーストによって `ca->extra_acked` が永遠に高く維持されるのを防ぐため、`ca->round_start`（1 RTT ラウンドの開始）ごとに世代カウンタ `ca->extra_acked_win_rtts`（上限 `0x1F`）を 1 増やし、`BBR_EXTRA_ACKED_WIN_RTTS`（`5` ラウンド）に達したら `ca->extra_acked_win_rtts = 0` および `ca->extra_acked = 0` にリセットします。
 5. **`target_cwnd` への補償加算**:
-   `bbr_set_cwnd()` で目標ウィンドウを計算する際、`ca->extra_acked`（ただし暴走を防ぐため $$\text{BDP} = \text{bdp}(\text{sk}, \text{bw}, \text{gain})$$ を上限とする）を上乗せします：
+   `bbr_set_cwnd()` で目標ウィンドウを計算する際、`ca->extra_acked`（ただし暴走を防ぐため $\text{BDP} = \text{bdp}(\text{sk}, \text{bw}, \text{gain})$ を上限とする）を上乗せします：
    $$\text{target}_{\text{cwnd}} = \text{inflight}(\text{sk}, \text{bw}, \text{gain}) + \min(\text{ca}\to\text{extra}_{\text{acked}}, \text{bdp}(\text{sk}, \text{bw}, \text{gain}))$$
 
 ---

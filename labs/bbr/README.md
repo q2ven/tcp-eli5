@@ -35,7 +35,7 @@ Reno も CUBIC も、増加曲線の形（直線か 3 次関数か）が違う�
 逆に、データセンター内の高速スイッチ（**浅いバッファ / Shallow Buffer**）や、Wi-Fi・モバイル回線・長距離光回線のように **輻輳とは無関係なランダムロス** がわずかに発生する環境では、正反対の悲劇が起きます。
 
 - まだパイプがガラガラで帯域にたっぷりと空きがあるにもかかわらず、マイクロバーストや無線ノイズで **たった 1 パケットでもロスが起きると**、Reno は `cwnd` を **0.5 倍** に、CUBIC は **0.7 倍** に機械的に減らしてしまいます。
-- たとえば、帯域 10 Gbps・RTT 100 ms の長距離高速回線（BDP $$\approx$$ 86,000 パケット）を CUBIC で 100% 使い切るには、パケットロス率が 1 億分の 1 以下でなければなりません。ほんの少しでもランダムロスがあると、`cwnd` が何度も切り詰められてスループットが壊滅的に落ち込みます。
+- たとえば、帯域 10 Gbps・RTT 100 ms の長距離高速回線（BDP $\approx$ 86,000 パケット）を CUBIC で 100% 使い切るには、パケットロス率が 1 億分の 1 以下でなければなりません。ほんの少しでもランダムロスがあると、`cwnd` が何度も切り詰められてスループットが壊滅的に落ち込みます。
 
 ### 根本原因
 
@@ -58,7 +58,7 @@ BBR は、送信元から受信先までのネットワーク経路を **1 本�
 
 1. **パイプの「太さ」 ＝ ボトルネック帯域 `BtlBw` (Bottleneck Bandwidth)**
    - 経路上で最も細いリンク（ボトルネック）を、単位時間あたりに通過できる最大データ量です。
-   - 送信側がいくら速くパケットを流し込んでも、受信側に届く速度（**Delivery Rate: 配送レート** ＝ $$\Delta \text{delivered} / \Delta t$$）は決してボトルネックの太さを超えられません。逆に、アプリケーションがデータを少ししか送っていないとき（App-limited）には配送レートは小さくなります。
+   - 送信側がいくら速くパケットを流し込んでも、受信側に届く速度（**Delivery Rate: 配送レート** ＝ $\Delta \text{delivered} / \Delta t$）は決してボトルネックの太さを超えられません。逆に、アプリケーションがデータを少ししか送っていないとき（App-limited）には配送レートは小さくなります。
    - そのため、BBR は ACK ごとに観測される配送レートの **最大値（max-filter）** を追跡することで、パイプの太さ `BtlBw` を推定します。
 2. **パイプの「長さ」 ＝ 往復伝搬遅延 `RTprop` (Round-trip propagation time)**
    - ルータの待ち行列（キュー）が **完全に空（0 パケット）** のときに、パケットが送信元から受信先へ届き、ACK が戻ってくるまでにかかる純粋な物理的往復時間です。
@@ -96,8 +96,8 @@ $$\text{BDP} = \text{BtlBw} \times \text{RTprop}$$
 
 そこで BBR は、`cwnd` でパイプ内の総量に上限をかけるだけでなく、ソケットのペーシングレート（`sk->sk_pacing_rate`）を使って **ボトルネック帯域 `BtlBw` とまったく同じ速度で、パケットを等間隔に滑らかに送り出します**。
 
-- **主役は `sk_pacing_rate`**（パケットを送り出すスピード ＝ $$\text{pacing}_{\text{gain}} \times \text{BtlBw}$$）
-- **安全弁としての `snd_cwnd`**（パイプ内に出せる最大量 ＝ $$\text{cwnd}_{\text{gain}} \times \text{BDP}$$）
+- **主役は `sk_pacing_rate`**（パケットを送り出すスピード ＝ $\text{pacing}_{\text{gain}} \times \text{BtlBw}$）
+- **安全弁としての `snd_cwnd`**（パイプ内に出せる最大量 ＝ $\text{cwnd}_{\text{gain}} \times \text{BDP}$）
 
 この 2 つを両輪として回すことで、BBR はルータに無駄な行列を作ることなく、回線を 100% 使い切ります。
 
@@ -143,13 +143,13 @@ flowchart TD
 ### 1. `BBR_STARTUP` (Step 3 で実装)
 
 - **目的**: 接続開始時、まだ未知であるボトルネック帯域 `BtlBw` を最短時間で見つけ出します。
-- **動作**: `pacing_gain` と `cwnd_gain` をともに $$\frac{2}{\ln 2} \approx 2.89$$ 倍に設定し、1 RTT ごとに送信レートを約 2 倍へ指数関数的に引き上げます。
+- **動作**: `pacing_gain` と `cwnd_gain` をともに $\frac{2}{\ln 2} \approx 2.89$ 倍に設定し、1 RTT ごとに送信レートを約 2 倍へ指数関数的に引き上げます。
 - **終了条件**: パケットロスを待つのではなく、**「アプリ制限でないラウンドにおいて、測定された最大帯域 `max_bw` が 25% 以上伸びないラウンドが 3 回連続した」** 時点で「パイプが満杯に達した（`full_bw_reached`）」と判断し、`BBR_DRAIN` へ移ります。
 
 ### 2. `BBR_DRAIN` (Step 3 で実装)
 
-- **目的**: `BBR_STARTUP` でパイプが満杯になったことを確認するまでの 3 ラウンドの間に、ルータに溜まってしまった余分なキュー（約 $$1.89 \times \text{BDP}$$）を素早く抜きます。
-- **動作**: `pacing_gain` を `STARTUP` の逆数である $$\frac{\ln 2}{2} \approx 0.35$$ 倍に一気に落とします（送信レートが `BtlBw` の 35% になるため、残りの 65% 分の速度でルータのキューが急速に減っていきます）。
+- **目的**: `BBR_STARTUP` でパイプが満杯になったことを確認するまでの 3 ラウンドの間に、ルータに溜まってしまった余分なキュー（約 $1.89 \times \text{BDP}$）を素早く抜きます。
+- **動作**: `pacing_gain` を `STARTUP` の逆数である $\frac{\ln 2}{2} \approx 0.35$ 倍に一気に落とします（送信レートが `BtlBw` の 35% になるため、残りの 65% 分の速度でルータのキューが急速に減っていきます）。
 - **終了条件**: パイプ内の未確認パケット数（`tcp_packets_in_flight()`）がちょうど **1 BDP 以下** まで減った瞬間に、キューが空になったと判断して定常状態の `BBR_PROBE_BW` へ移ります。
 
 ### 3. `BBR_PROBE_BW` (Step 4 で実装)
@@ -157,8 +157,8 @@ flowchart TD
 - **目的**: 通信時間の約 98% を過ごす定常状態です。キューを作らずに `BtlBw` ぴったりの速度で巡航しつつ、定期的に「空き帯域が増えていないか」を探ります。
 - **動作**: 8 つのフェーズからなる `pacing_gain` サイクル **`[5/4, 3/4, 1, 1, 1, 1, 1, 1]`** を、原則として 1 `RTprop`（`min_rtt_us`）ごとに順番に回します。
   - **Phase 0（`5/4 = 1.25` 倍：帯域探査）**: 1 `RTprop` の間だけ、推定 `BtlBw` より 25% 速く送ってみます。もし他のフローが終了して空き帯域が増えていれば、帰ってくる ACK の配送レートが上がり、`max_bw`（`BtlBw`）が上方に更新されます。
-  - **Phase 1（`3/4 = 0.75` 倍：キュー排出）**: もし空き帯域が増えていなかった場合、Phase 0 で 25% 多く送った分（$$0.25 \times \text{BDP}$$）がルータに小さなキューとして溜まっています。そこで次の 1 `RTprop`（または in-flight が 1 BDP 以下に戻るまで）は `0.75` 倍に落として、今自分が作った小さなキューをきれいに消し去ります。
-  - **Phase 2〜7（`1.0` 倍 $$\times$$ 6：巡航）**: 残りの 6 フェーズはぴったり `1.0` 倍（＝ `BtlBw`）で送信し、キューイング遅延ゼロ・帯域利用率 100% の最適点で巡航します。なお、`cwnd_gain` は遅延 ACK や一時的なジッタで送信が詰まらないよう `2.0` 倍に設定されます。
+  - **Phase 1（`3/4 = 0.75` 倍：キュー排出）**: もし空き帯域が増えていなかった場合、Phase 0 で 25% 多く送った分（$0.25 \times \text{BDP}$）がルータに小さなキューとして溜まっています。そこで次の 1 `RTprop`（または in-flight が 1 BDP 以下に戻るまで）は `0.75` 倍に落として、今自分が作った小さなキューをきれいに消し去ります。
+  - **Phase 2〜7（`1.0` 倍 $\times$ 6：巡航）**: 残りの 6 フェーズはぴったり `1.0` 倍（＝ `BtlBw`）で送信し、キューイング遅延ゼロ・帯域利用率 100% の最適点で巡航します。なお、`cwnd_gain` は遅延 ACK や一時的なジッタで送信が詰まらないよう `2.0` 倍に設定されます。
 
 ### 4. `BBR_PROBE_RTT` (Step 5 で実装)
 
@@ -166,14 +166,14 @@ flowchart TD
 - **動作**: **10 秒間**（本ラボでは `packetdrill` のテストを約 2.5 秒で高速に完了させるため **2 秒間** に設定）、一度も `min_rtt_us` を下回る RTT サンプルが観測されなかったら `BBR_PROBE_RTT` に入ります。
   - 直前の健全な `cwnd` を `ca->prior_cwnd` に保存したうえで、**`snd_cwnd` を強制的に `4` パケット（`BBR_MIN_PIPE_CWND`）に絞り込みます**。
   - in-flight が 4 パケット以下に落ちてから **最低 200 ms かつ最低 1 ラウンド（1 RTT）** 維持することで、パイプのキューを完全に空にして真の最小 RTT を測定します。
-  - 測定が終わったら `snd_cwnd` を元の `prior_cwnd` に即座に復元し、`BBR_PROBE_BW` に戻ります（10 秒のうち 200 ms だけなので、帯域のロスはわずか $$200\text{ ms} / 10\text{ s} = 2\%$$ に抑えられます）。
+  - 測定が終わったら `snd_cwnd` を元の `prior_cwnd` に即座に復元し、`BBR_PROBE_BW` に戻ります（10 秒のうち 200 ms だけなので、帯域のロスはわずか $200\text{ ms} / 10\text{ s} = 2\%$ に抑えられます）。
 
 | モード | `pacing_gain` | `cwnd_gain` | 主な役割 | 次のモードへの遷移条件 | 実装ステップ |
 | --- | --- | --- | --- | --- | --- |
-| `BBR_STARTUP` | $$2/\ln 2 \approx 2.89\times$$ | $$2/\ln 2 \approx 2.89\times$$ | 指数関数的にレートを上げて `BtlBw` を素早く探す | 非 App-limited な 3 ラウンド連続で `max_bw` の伸びが $$+25\%$$ 未満 | Step 3 |
-| `BBR_DRAIN` | $$\ln 2 / 2 \approx 0.35\times$$ | $$2/\ln 2 \approx 2.89\times$$ | `STARTUP` で溜まった過剰キューを排出する | `tcp_packets_in_flight(tp) <= 1.0x BDP` | Step 3 |
-| `BBR_PROBE_BW` | `[5/4, 3/4, 1, 1, 1, 1, 1, 1]` | $$2.0\times$$ | 定常状態（1.25x で探り、0.75x で抜き、1.0x で 6 相巡航） | 各フェーズ約 1 `RTprop` ごとに循環（10 秒間 `min_rtt_us` 未更新で `PROBE_RTT` へ） | Step 4 |
-| `BBR_PROBE_RTT` | $$1.0\times$$ | `cwnd = 4` にクランプ | パイプを空にして真の `RTprop`（最小 RTT）を再測定する | `in-flight <= 4` の状態で $$\max(200\text{ ms}, 1\text{ RTT})$$ 経過後、`prior_cwnd` を復元して復帰 | Step 5 |
+| `BBR_STARTUP` | $2/\ln 2 \approx 2.89\times$ | $2/\ln 2 \approx 2.89\times$ | 指数関数的にレートを上げて `BtlBw` を素早く探す | 非 App-limited な 3 ラウンド連続で `max_bw` の伸びが $+25\%$ 未満 | Step 3 |
+| `BBR_DRAIN` | $\ln 2 / 2 \approx 0.35\times$ | $2/\ln 2 \approx 2.89\times$ | `STARTUP` で溜まった過剰キューを排出する | `tcp_packets_in_flight(tp) <= 1.0x BDP` | Step 3 |
+| `BBR_PROBE_BW` | `[5/4, 3/4, 1, 1, 1, 1, 1, 1]` | $2.0\times$ | 定常状態（1.25x で探り、0.75x で抜き、1.0x で 6 相巡航） | 各フェーズ約 1 `RTprop` ごとに循環（10 秒間 `min_rtt_us` 未更新で `PROBE_RTT` へ） | Step 4 |
+| `BBR_PROBE_RTT` | $1.0\times$ | `cwnd = 4` にクランプ | パイプを空にして真の `RTprop`（最小 RTT）を再測定する | `in-flight <= 4` の状態で $\max(200\text{ ms}, 1\text{ RTT})$ 経過後、`prior_cwnd` を復元して復帰 | Step 5 |
 
 ---
 
@@ -183,7 +183,7 @@ BPF `struct_ops`（`struct tcp_congestion_ops`）で BBR を実装する際、Re
 
 ### Reno / CUBIC が使う `.cong_avoid` の限界
 
-Reno や CUBIC は `.cong_avoid(sk, ack, acked)` と `.ssthresh(sk)` を実装していました。しかし、カーネルの ACK 処理（`tcp_ack()` $$\rightarrow$$ `tcp_cong_control()`）において、`.cong_avoid` には BBR にとって致命的な 2 つの制約があります。
+Reno や CUBIC は `.cong_avoid(sk, ack, acked)` と `.ssthresh(sk)` を実装していました。しかし、カーネルの ACK 処理（`tcp_ack()` $\rightarrow$ `tcp_cong_control()`）において、`.cong_avoid` には BBR にとって致命的な 2 つの制約があります。
 
 1. **Recovery や CWR の最中には呼ばれない**:
    - `.cong_avoid` は、ソケットの輻輳状態（`icsk_ca_state`）が正常（`TCP_CA_Open` / `TCP_CA_Disorder`）のときにしか呼ばれません。パケットロスが起きて `TCP_CA_Recovery` や `TCP_CA_CWR` に入ると、カーネル標準の `tcp_cwnd_reduction()`（PRR: Proportional Rate Reduction）が勝手に動いて `cwnd` を減らしてしまい、`.cong_avoid` は完全にスキップされます。
@@ -247,8 +247,8 @@ BBR の `.cong_control` プログラムは、この `rs` を入力として受�
 | ステップ | ディレクトリ | 実装するテーマ | 主な学習ポイント |
 | --- | --- | --- | --- |
 | **Step 1** | [step01-pacing-rate](step01-pacing-rate/) | `.cong_control` フックと Pacing Rate 計算 | `.init` での `SK_PACING_NEEDED` 有効化と初期レート計算、`rs->delivered` / `rs->interval_us` からの瞬間配送レート計算と `sk->sk_pacing_rate` の更新 |
-| **Step 2** | [step02-btlbw-rtprop](step02-btlbw-rtprop/) | `BtlBw`（最大帯域）と `RTprop`（最小 RTT）による BDP 計算 | `min_rtt_us` の最小値フィルタ、`is_app_limited` を考慮した `max_bw` の最大値フィルタ、`bbr_bdp()` による $$\text{BDP} = \lceil \text{BtlBw} \times \text{RTprop} \rceil$$ 計算 |
-| **Step 3** | [step03-startup-drain](step03-startup-drain/) | `STARTUP` から `DRAIN` への遷移（満杯パイプ検出） | パケット単位のラウンド計数、`bbr_check_full_bw_reached()`（3 ラウンド連続で $$+25\%$$ 未満の成長で満杯判定）、`bbr_check_drain()` による過剰キュー排出と `PROBE_BW` 突入 |
+| **Step 2** | [step02-btlbw-rtprop](step02-btlbw-rtprop/) | `BtlBw`（最大帯域）と `RTprop`（最小 RTT）による BDP 計算 | `min_rtt_us` の最小値フィルタ、`is_app_limited` を考慮した `max_bw` の最大値フィルタ、`bbr_bdp()` による $\text{BDP} = \lceil \text{BtlBw} \times \text{RTprop} \rceil$ 計算 |
+| **Step 3** | [step03-startup-drain](step03-startup-drain/) | `STARTUP` から `DRAIN` への遷移（満杯パイプ検出） | パケット単位のラウンド計数、`bbr_check_full_bw_reached()`（3 ラウンド連続で $+25\%$ 未満の成長で満杯判定）、`bbr_check_drain()` による過剰キュー排出と `PROBE_BW` 突入 |
 | **Step 4** | [step04-probe-bw](step04-probe-bw/) | `PROBE_BW` の 8 相ゲインサイクル | `bbr_pacing_gain[] = {5/4, 3/4, 1, 1, 1, 1, 1, 1}`、`bbr_is_next_cycle_phase()` による探査（1.25x）・排出（0.75x）・巡航（1.0x）の各終了条件の実装 |
 | **Step 5** | [step05-probe-rtt](step05-probe-rtt/) | `PROBE_RTT` への遷移とキューの排出（`cwnd = 4`） | `min_rtt_stamp` による `RTprop` の有効期限管理、`prior_cwnd` の退避、`snd_cwnd = 4` クランプと「200 ms かつ 1 ラウンド完了」後のウィンドウ復元 |
 | **Step 6** | [step06-loss-ack-aggregation](step06-loss-ack-aggregation/) | Loss 時の `cwnd` 保存・復元と ACK 集約（`extra_acked`）補償 | Recovery 第 1 ラウンドのパケット保存則（Packet Conservation）、Recovery 脱出時の `prior_cwnd` 復元、Wi-Fi / GRO 環境のバースト ACK を補償する `extra_acked` の算出 |

@@ -29,7 +29,7 @@ To solve this, M. Shreedhar and G. Varghese invented **Deficit Round Robin (DRR)
 - **`QUANTUM`**: The baseline byte credit allotted to each flow per scheduling round (`1500` bytes in this lab).
 - **`credit`**: The current transmission allowance (in bytes) held by the flow.
 - **Rules**:
-  - If the head packet's size is $$\le \text{credit}$$, the packet is transmitted and `credit -= packet_len`.
+  - If the head packet's size is $\le \text{credit}$, the packet is transmitted and `credit -= packet_len`.
   - When `credit <= 0`, the flow has used its round allowance: add `QUANTUM` (`credit += QUANTUM`) and move the flow to the back of the queue.
 
 ### 2.3 The 2-List Architecture: `fq_new_flows` vs `fq_old_flows`
@@ -72,7 +72,7 @@ Because intermittent sparse flows (Flow B) arrive as detached flows, they enter 
 
 ### 2.4 Concrete Trace (`test.pkt` Scenario)
 
-Parameters: `INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, Packet size $$\approx 1028$$ bytes (UDP 1000B payload + headers), `BOTTLENECK_NS = 2 ms`.
+Parameters: `INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, Packet size $\approx 1028$ bytes (UDP 1000B payload + headers), `BOTTLENECK_NS = 2 ms`.
 
 | Time | Event | Flow A State | Flow B State | Packet Sent | Explanation |
 | :--- | :--- | :--- | :--- | :--- | :--- |

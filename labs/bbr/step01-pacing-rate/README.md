@@ -34,7 +34,7 @@ flowchart LR
 
 ### 配送レート（Delivery Rate）と STARTUP ゲインの計算式
 
-ACK が到着するたびに、Linux カーネルは「直近の観測区間 `interval_us`（マイクロ秒）の間に、何個のセグメント `delivered` が相手に届いたか」を計測します。1 セグメントあたりのペイロードサイズを `mss_cache`（バイト）、1 秒を `USEC_PER_SEC = 1,000,000` マイクロ秒とすると、瞬間配送レート $$\text{bw}$$（bytes/sec）は次の式で求まります。
+ACK が到着するたびに、Linux カーネルは「直近の観測区間 `interval_us`（マイクロ秒）の間に、何個のセグメント `delivered` が相手に届いたか」を計測します。1 セグメントあたりのペイロードサイズを `mss_cache`（バイト）、1 秒を `USEC_PER_SEC = 1,000,000` マイクロ秒とすると、瞬間配送レート $\text{bw}$（bytes/sec）は次の式で求まります。
 
 $$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
@@ -44,9 +44,9 @@ C 言語（および BPF）の整数除算では小数点以下が切り捨て�
 
 #### 固定小数点によるゲイン（`BBR_HIGH_GAIN`）の適用
 
-コネクション開始直後の **STARTUP フェーズ**（Reno のスロースタートに相当）では、回線の最大帯域を素早く探索するため、計測された配送レートよりも高いレートで送信します。BBR の理論値は、1 RTT ごとに送信レートを 2 倍にするゲイン $$2 / \ln(2) \approx 2.885$$ です。
+コネクション開始直後の **STARTUP フェーズ**（Reno のスロースタートに相当）では、回線の最大帯域を素早く探索するため、計測された配送レートよりも高いレートで送信します。BBR の理論値は、1 RTT ごとに送信レートを 2 倍にするゲイン $2 / \ln(2) \approx 2.885$ です。
 
-カーネルおよび BPF プログラム内では浮動小数点数（`float` / `double`）を使用できないため、BBR は `BBR_SCALE = 10`（すなわち基準単位 `BBR_UNIT = 1 << 10 = 1024` が `1.0x`）の **固定小数点表現** を用います。このラボでは STARTUP ゲインを `BBR_HIGH_GAIN = 2885`（$$2885 / 1024 \approx 2.817\text{x}$$）と定義し、次のように掛け算と右シフトでペーシングレートを求めます。
+カーネルおよび BPF プログラム内では浮動小数点数（`float` / `double`）を使用できないため、BBR は `BBR_SCALE = 10`（すなわち基準単位 `BBR_UNIT = 1 << 10 = 1024` が `1.0x`）の **固定小数点表現** を用います。このラボでは STARTUP ゲインを `BBR_HIGH_GAIN = 2885`（$2885 / 1024 \approx 2.817\text{x}$）と定義し、次のように掛け算と右シフトでペーシングレートを求めます。
 
 $$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
@@ -64,12 +64,12 @@ $$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_
 
 1. **ハンドシェイク直後（`.init`）**:
    - 初期 `snd_cwnd = 10` セグメント、SYN/SYN-ACK で計測された初期 RTT が `100 ms`（`rtt_us = 100,000` us）のとき：
-   - $$\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$$（100 KB/s）
-   - $$\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$$（約 281.7 KB/s）
+   - $\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$（100 KB/s）
+   - $\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$（約 281.7 KB/s）
 2. **データ 10 セグメント送信後の ACK 到着時（`.cong_control`）**:
    - `10` セグメント（10,000 バイト）が `10 ms`（`interval_us = 10,000` us）で配送されたことを示す ACK が到着したとき（`rs->delivered = 10`, `rs->interval_us = 10000`）：
-   - $$\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$$（1.0 MB/s）
-   - $$\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$$（約 2.82 MB/s）
+   - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$（1.0 MB/s）
+   - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$（約 2.82 MB/s）
 
 ### カーネルが提供する構造体とフィールド（BPF から使える部品）
 

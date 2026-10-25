@@ -4,7 +4,7 @@
 
 This hands-on curriculum walks you through implementing and testing **three TCP congestion control algorithms (`reno`, `cubic`, `bbr`)** and **three packet schedulers / Qdiscs (`qdisc-fifo`, `qdisc-fq`, `qdisc-fq-codel`)** — 6 tracks and 18 steps in total — from scratch, step by step, using Linux kernel BPF `struct_ops` (`struct tcp_congestion_ops` and `struct Qdisc_ops`) and `packetdrill`.
 
-No prior familiarity with these algorithms is assumed. Every track (`README.en.md`) and every step begins with a first-principles explanation of **why the algorithm exists, how its state machine and formulas work, and what kernel structs and BPF kfuncs are already provided**, followed by **Socratic design checkpoints (VibeWise style)** $$\to$$ **BPF implementation** $$\to$$ **deterministic `packetdrill` verification**.
+No prior familiarity with these algorithms is assumed. Every track (`README.en.md`) and every step begins with a first-principles explanation of **why the algorithm exists, how its state machine and formulas work, and what kernel structs and BPF kfuncs are already provided**, followed by **Socratic design checkpoints (VibeWise style)** $\to$ **BPF implementation** $\to$ **deterministic `packetdrill` verification**.
 
 ---
 

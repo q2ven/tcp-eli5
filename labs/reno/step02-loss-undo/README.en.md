@@ -57,7 +57,7 @@ NewReno's `.undo_cwnd(sk)` returns the maximum of the current window and the sav
 
 $$\text{cwnd}_{\text{undo}} = \max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$
 
-Why return $$\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$ instead of simply returning $$\text{loss}_{\text{cwnd}}$$? Because during a spurious Recovery or Loss episode, incoming ACKs might have already grown `tp->snd_cwnd` past the initial `loss_cwnd` by the time the undo is triggered. Taking the maximum guarantees that undoing a window reduction never accidentally shrinks a window that has already grown larger. (Meanwhile, the TCP core automatically restores `snd_ssthresh` from `tp->prior_ssthresh`.)
+Why return $\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$ instead of simply returning $\text{loss}_{\text{cwnd}}$? Because during a spurious Recovery or Loss episode, incoming ACKs might have already grown `tp->snd_cwnd` past the initial `loss_cwnd` by the time the undo is triggered. Taking the maximum guarantees that undoing a window reduction never accidentally shrinks a window that has already grown larger. (Meanwhile, the TCP core automatically restores `snd_ssthresh` from `tp->prior_ssthresh`.)
 
 ### Concrete Numerical Example and Sequence Diagram (`snd_cwnd = 10`)
 
@@ -251,7 +251,7 @@ u32 BPF_PROG(bpf_reno2_ssthresh, struct sock *sk)
 }
 ```
 
-- The right shift `tp->snd_cwnd >> 1U` computes integer division by 2 ($$\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$$), and `max(..., 2U)` enforces the lower bound of 2 segments required by RFC 5681 §3.1.
+- The right shift `tp->snd_cwnd >> 1U` computes integer division by 2 ($\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$), and `max(..., 2U)` enforces the lower bound of 2 segments required by RFC 5681 §3.1.
 - Before returning, it saves the pre-reduction `tp->snd_cwnd` into `ca->loss_cwnd` so `bpf_reno2_undo_cwnd()` can restore it if the loss turns out to be spurious.
 
 ### 3. Handling Transition to `TCP_CA_Loss`: `bpf_reno2_set_state()`

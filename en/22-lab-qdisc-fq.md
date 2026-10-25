@@ -116,7 +116,7 @@ This track utilizes modern **BPF Graph Data Structures** introduced in Linux 6.x
 | :--- | :--- |
 | `struct_ops` (`struct Qdisc_ops`) | Implements and registers a kernel Qdisc dynamically and safely via BPF |
 | `bpf_list_head` / `bpf_list_node` | Implements the DRR `fq_new_flows` and `fq_old_flows` scheduling queues |
-| `bpf_rb_root` / `bpf_rb_node` | Manages timestamp-ordered packet queues and throttled flows (`fq_delayed`) in $$O(\log N)$$ time |
+| `bpf_rb_root` / `bpf_rb_node` | Manages timestamp-ordered packet queues and throttled flows (`fq_delayed`) in $O(\log N)$ time |
 | `bpf_refcount` | Provides safe shared ownership of flow nodes across the hash map (flow table) and active scheduling lists |
 | `bpf_kptr_xchg()` | Atomically transfers and exchanges kernel object ownership |
 | `bpf_qdisc_watchdog_schedule()` | Kernel kfunc to schedule high-resolution wakeups for paced packet departure |
@@ -183,7 +183,7 @@ To solve this, M. Shreedhar and G. Varghese invented **Deficit Round Robin (DRR)
 - **`QUANTUM`**: The baseline byte credit allotted to each flow per scheduling round (`1500` bytes in this lab).
 - **`credit`**: The current transmission allowance (in bytes) held by the flow.
 - **Rules**:
-  - If the head packet's size is $$\le \text{credit}$$, the packet is transmitted and `credit -= packet_len`.
+  - If the head packet's size is $\le \text{credit}$, the packet is transmitted and `credit -= packet_len`.
   - When `credit <= 0`, the flow has used its round allowance: add `QUANTUM` (`credit += QUANTUM`) and move the flow to the back of the queue.
 
 ### 2.3 The 2-List Architecture: `fq_new_flows` vs `fq_old_flows`
@@ -226,7 +226,7 @@ Because intermittent sparse flows (Flow B) arrive as detached flows, they enter 
 
 ### 2.4 Concrete Trace (`test.pkt` Scenario)
 
-Parameters: `INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, Packet size $$\approx 1028$$ bytes (UDP 1000B payload + headers), `BOTTLENECK_NS = 2 ms`.
+Parameters: `INITIAL_QUANTUM = 2000`, `QUANTUM = 1500`, Packet size $\approx 1028$ bytes (UDP 1000B payload + headers), `BOTTLENECK_NS = 2 ms`.
 
 | Time | Event | Flow A State | Flow B State | Packet Sent | Explanation |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -991,7 +991,7 @@ The packet's scheduled departure time `time_to_send` is calculated as follows:
 2. **Socket pacing rate (`sk_max_pacing_rate`) active**:
    Anchor against the later of the flow's scheduled next packet time or current time:
    $$\text{time to send} = \max(\text{flow} \to \text{next packet time}, \text{now})$$
-   Advance the flow's next eligible transmission timestamp by the transmission duration $$\Delta t$$:
+   Advance the flow's next eligible transmission timestamp by the transmission duration $\Delta t$:
    $$\text{flow} \to \text{next packet time} = \text{time to send} + \frac{\text{packet len} \times 10^9}{\text{rate}}$$
 3. **Otherwise**: Immediately transmittable (`time_to_send = now`).
 
@@ -1015,7 +1015,7 @@ To prevent head-of-line blocking and memory exhaustion, FQ enforces a **horizon 
 
 ## 3. Concrete Trace (`test.pkt` Scenario)
 
-Parameters: `SO_MAX_PACING_RATE = 200,000` bytes/sec (200 KB/s), packet length $$\approx 1066$$ bytes.
+Parameters: `SO_MAX_PACING_RATE = 200,000` bytes/sec (200 KB/s), packet length $\approx 1066$ bytes.
 Pacing delay per packet:
 $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.33 \text{ ms}$$
 
@@ -1025,7 +1025,7 @@ $$\Delta t = \frac{1066 \times 10^9}{200,000} = 5,330,000 \text{ ns} \approx 5.3
 | Inspection of Pkt 2 | — | Pkt 2 is due at `+5.33 ms` (future).<br>Flow is throttled into `fq_delayed`, timer armed. |
 | Timer fires (+5.33 ms) | **~ +0.005** | Pkt 2 (1001:2001) **transmitted via Watchdog**!<br>`time_next_packet` advances to `now + 10.66 ms`. |
 | Timer fires (+10.66 ms) | **~ +0.010** | Pkt 3 (2001:3001) **transmitted via Watchdog**! |
-| Set `SO_MAX_PACING_RATE = 100` B/s | — | For 1000B packets, $$\Delta t = \frac{1066 \times 10^9}{100} > 10$$ seconds! |
+| Set `SO_MAX_PACING_RATE = 100` B/s | — | For 1000B packets, $\Delta t = \frac{1066 \times 10^9}{100} > 10$ seconds! |
 | `write(4, ..., 2000)` (2 segments) | **+0.000** | Pkt 1 (3001:4001) is transmitted immediately;<br>`time_next_packet` advances to `now + 10.66s`. |
 | Enqueue of Pkt 2 | — | Pkt 2 is scheduled at `now + 10.66s`, which **exceeds the 2s horizon**!<br>**Dropped immediately** via `bpf_qdisc_skb_drop()`! |
 
