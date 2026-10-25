@@ -27,7 +27,7 @@ To solve both problems, BBR attaches a **filter expiration window `BBR_MIN_RTT_W
   Whenever an ACK produces a valid RTT sample `rs->rtt_us >= 0` that is **strictly smaller** than the current estimate (`(__u32)rs->rtt_us < ca->min_rtt_us`), BBR updates `ca->min_rtt_us = rs->rtt_us` and records the current timestamp `ca->min_rtt_stamp = tp->tcp_mstamp`. Using strict `<` rather than `<=` is essential: if identical RTT samples repeated continuously (e.g. under a constant standing queue or coarse timestamp granularity), `<=` would keep refreshing `ca->min_rtt_stamp` and the window would never expire.
 - **Detecting Filter Expiry (`filter_expired`)**:
   If more than `BBR_MIN_RTT_WIN_US` microseconds have elapsed since `ca->min_rtt_stamp`, the filter expires:
-  $$\text{filter\_expired} \iff \text{tp->tcp\_mstamp} > \text{ca->min\_rtt\_stamp} + \text{BBR\_MIN\_RTT\_WIN\_US}$$
+  $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
   When `filter_expired` is true, as long as the ACK was not artificially delayed by the receiver's delayed-ACK timer (`!rs->is_ack_delayed`), BBR overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->min_rtt_stamp = tp->tcp_mstamp` (even if `rs->rtt_us >= ca->min_rtt_us`) and transitions into `BBR_PROBE_RTT`.
 
 ### Why Clamp `cwnd = 4` and Wait for Both 200 ms and 1 Packet-Timed Round?

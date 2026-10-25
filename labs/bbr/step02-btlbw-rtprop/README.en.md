@@ -26,7 +26,7 @@ Each time an ACK arrives, the TCP sender observes an instantaneous **RTT sample 
 
 A crucial edge case arises when the application itself does not supply enough data to keep the network pipe full — for instance, between HTTP requests, during interactive SSH sessions, or after a brief pause between writes. This condition is called being **application-limited (app-limited)**.
 
-Suppose a flow on a $1000\text{ pkts/s}$ link sends a 10-packet burst at line rate (measuring $\text{max\_bw} = 1000\text{ pkts/s}$), and then the application pauses for $30\text{ ms}$ before writing just 2 packets. The delivery interval stretches to $\Delta t = 50\text{ ms}$, yielding an apparent delivery rate of $2 / 50\text{ ms} = 40\text{ pkts/s}$. The network did not become $25\times$ slower; **the application simply had nothing to send**.
+Suppose a flow on a $1000\text{ pkts/s}$ link sends a 10-packet burst at line rate (measuring $\text{max}_{\text{bw}} = 1000\text{ pkts/s}$), and then the application pauses for $30\text{ ms}$ before writing just 2 packets. The delivery interval stretches to $\Delta t = 50\text{ ms}$, yielding an apparent delivery rate of $2 / 50\text{ ms} = 40\text{ pkts/s}$. The network did not become $25\times$ slower; **the application simply had nothing to send**.
 
 The Linux kernel's rate estimator (`tcp_rate.c`) automatically detects whenever a rate sample was collected while the sender was not filling the pipe and sets `rs->is_app_limited = true`. BBR enforces a strict invariant on app-limited samples:
 
@@ -63,13 +63,13 @@ Because floating-point arithmetic is not permitted in the kernel or BPF programs
 
 - **`BW_SCALE = 24` (`BW_UNIT = 1U << 24 = 16,777,216`)**:
   Because `rs->delivered / rs->interval_us` in packets per microsecond is almost always a fraction less than `1`, BBR scales the numerator by `BW_UNIT` before dividing:
-  $$\text{bw} = \left\lfloor \frac{\text{rs->delivered} \times \text{BW\_UNIT}}{\text{rs->interval\_us}} \right\rfloor$$
+  $$\text{bw} = \left\lfloor \frac{\text{rs}\to\text{delivered} \times \text{BW}_{\text{UNIT}}}{\text{rs}\to\text{interval}_{\text{us}}} \right\rfloor$$
 - **`BBR_SCALE = 8` (`BBR_UNIT = 1U << 8 = 256`)**:
   Fixed-point scale for pacing and cwnd gains. A unity gain ($1.0\times$) is `BBR_UNIT` (`256`).
 
 Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in $\mu\text{s}$), and `gain` (scaled by $2^8$), `bbr_bdp()` computes the BDP in packets as follows:
 
-1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $\text{BDP} \times \text{BW\_UNIT}$).
+1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $\text{BDP} \times \text{BW}_{\text{UNIT}}$).
 2. Multiply by `gain`, shift right by `BBR_SCALE` (`8` bits), and perform **ceiling division** by `BW_UNIT`:
    ```c
    return (((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT;
@@ -77,7 +77,7 @@ Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in
    Why **ceiling division** (`+ BW_UNIT - 1`) rather than integer truncation? If truncation rounded `bdp` down by even 1 packet below the true BDP (e.g., $9.8 \to 9$), `snd_cwnd` would cap in-flight data below the bottleneck capacity, preventing the sender from ever filling the pipe or measuring the true bandwidth — a permanent negative feedback loop.
 3. If either `ca->min_rtt_us` or `bw` is not yet initialised (`0`), `bbr_bdp()` returns a safe default initial window of `10U` packets.
 4. Finally, BBR adds a 4-packet margin (`bdp + 4U`, floored at `BBR_CWND_MIN_TARGET = 4U`) to `tp->snd_cwnd` to absorb receiver delayed ACKs and TSO/GSO burst quantisation:
-   $$\text{snd\_cwnd} = \max(\text{bdp} + 4, 4)$$
+   $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
 
 ### Counting Packet-Timed Round Trips (`round_cnt`)
 
@@ -265,7 +265,7 @@ static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
 }
 ```
 
-- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min\_rtt\_us} \times \text{gain} \gg 8) / 2^{24} \rceil$.
+- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min}_{\text{rtt,us}} \times \text{gain} \gg 8) / 2^{24} \rceil$.
 
 ### 4. Initialisation (`bpf_bbr2_init()`) and Per-ACK Control (`bpf_bbr2_cong_control()`)
 

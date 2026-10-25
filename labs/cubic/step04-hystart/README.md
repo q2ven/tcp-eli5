@@ -61,7 +61,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 
 - **直感的な仕組み**:
   Slow Start 中に送信側が 1 ラウンド分のパケット群を送出すると、それらのパケットはボトルネック回線の帯域幅に応じた間隔で順番に受信側へ届き、その応答である ACK も密に連なった「列車（ACK Train）」となって送信側へ戻ってきます。
-  この ACK Train の先頭（`ca->round_start`）から末尾までの継続時間は、1 ラウンド分のデータがボトルネックを通過するのに要した時間を表します。往復の最小伝搬遅延 `ca->delay_min` のうち片道分はおおよそ $\text{delay\_min} / 2$ であるため、**途切れない ACK Train がラウンド開始から $\text{delay\_min} / 2$ 以上続いたなら、送出したデータ量がすでに片道パイプ容量を埋め尽くしている** と判断できます。
+  この ACK Train の先頭（`ca->round_start`）から末尾までの継続時間は、1 ラウンド分のデータがボトルネックを通過するのに要した時間を表します。往復の最小伝搬遅延 `ca->delay_min` のうち片道分はおおよそ $\text{delay}_{\min} / 2$ であるため、**途切れない ACK Train がラウンド開始から $\text{delay}_{\min} / 2$ 以上続いたなら、送出したデータ量がすでに片道パイプ容量を埋め尽くしている** と判断できます。
 - **判定ルールと数式**:
   1. 直前の ACK からの経過時間が `HYSTART_ACK_DELTA_US`（$2000\ \mu\text{s} = 2\text{ ms}$）以内かどうかを符号付き 32 ビット差分で判定します：
      ```c
@@ -93,17 +93,17 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
          ca->sample_cnt++;
      ```
   3. `ca->sample_cnt >= HYSTART_MIN_SAMPLES`（8 サンプル以上収集済み）になったら、`ca->curr_rtt` が最小 RTT `ca->delay_min` に動的閾値 $\Delta_{\text{thresh}}$ を足した値以上かを判定します：
-     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay\_min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
+     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay}_{\min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
      ```c
      if (ca->curr_rtt >= ca->delay_min + clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)) {
          ca->found = 1;
          tp->snd_ssthresh = tp->snd_cwnd;
      }
      ```
-  - **なぜ $\text{delay\_min} \gg 3$（$12.5\%$）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
+  - **なぜ $\text{delay}_{\min} \gg 3$（$12.5\%$）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
     - 基本は最小 RTT の $1/8$（`ca->delay_min >> 3`）を許容キューイング遅延とします。
-    - **下限 `HYSTART_DELAY_MIN = 4000U`（$4\text{ ms}$）**: データセンターや LAN など $\text{delay\_min} \le 1\text{ ms}$ の超低遅延環境では、$\text{delay\_min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
-    - **上限 `HYSTART_DELAY_MAX = 16000U`（$16\text{ ms}$）**: 衛星回線や大陸間回線など $\text{delay\_min} = 200\text{ ms}$ を超える長遅延環境では、$\text{delay\_min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
+    - **下限 `HYSTART_DELAY_MIN = 4000U`（$4\text{ ms}$）**: データセンターや LAN など $\text{delay}_{\min} \le 1\text{ ms}$ の超低遅延環境では、$\text{delay}_{\min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
+    - **上限 `HYSTART_DELAY_MAX = 16000U`（$16\text{ ms}$）**: 衛星回線や大陸間回線など $\text{delay}_{\min} = 200\text{ ms}$ を超える長遅延環境では、$\text{delay}_{\min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
 
 ---
 

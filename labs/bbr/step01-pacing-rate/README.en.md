@@ -36,7 +36,7 @@ flowchart LR
 
 On every incoming ACK, the Linux kernel's rate sampling engine (`tcp_rate_gen()`) measures how many segments (`delivered`) were delivered to the peer over the elapsed measurement interval (`interval_us`, in microseconds). Given the segment payload size `mss_cache` (in bytes) and `USEC_PER_SEC = 1,000,000` microseconds per second, the instantaneous delivery rate $\text{bw}$ in bytes per second is:
 
-$$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss\_cache} \times 1,000,000}{\text{interval\_us}}$$
+$$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
 #### Why Multiply Before Dividing in Integer Arithmetic?
 
@@ -48,15 +48,15 @@ When a connection starts in the **STARTUP** phase (BBR's equivalent of Slow Star
 
 Because floating-point instructions (`float` / `double`) are forbidden in the Linux kernel and BPF programs, BBR represents gains as fixed-point integers scaled by $2^{10} = 1024$ (`BBR_SCALE = 10`, where `BBR_UNIT = 1 << 10 = 1024` represents a `1.0x` multiplier). In this lab, the STARTUP gain is defined as `BBR_HIGH_GAIN = 2885` ($2885 / 1024 \approx 2.817\text{x}$). Applying the gain is a 64-bit multiplication followed by a right shift by `BBR_SCALE`:
 
-$$\text{pacing\_rate} = \frac{\text{bw} \times \text{BBR\_HIGH\_GAIN}}{2^{\text{BBR\_SCALE}}} = (\text{bw} \times 2885) \gg 10$$
+$$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
 #### Initialising the Pacing Rate at Connection Start (`.init`)
 
 When the 3-way handshake finishes and `.init(sk)` runs, no data segments have been acknowledged yet, so no `rate_sample` exists. To prevent the initial congestion window (`snd_cwnd = 10` segments) from being transmitted as an unpaced line-rate burst, BBR estimates an initial bandwidth from `snd_cwnd` and the handshake RTT (`rtt_us`), scales it by `BBR_HIGH_GAIN`, and enables TCP internal pacing:
 
-$$\text{init\_bw} = \frac{\text{snd\_cwnd} \times \text{mss\_cache} \times 1,000,000}{\text{rtt\_us}}$$
+$$\text{init}_{\text{bw}} = \frac{\text{snd}_{\text{cwnd}} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{rtt}_{\text{us}}}$$
 
-$$\text{init\_pacing\_rate} = (\text{init\_bw} \times \text{BBR\_HIGH\_GAIN}) \gg \text{BBR\_SCALE}$$
+$$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_{\text{HIGH,GAIN}}) \gg \text{BBR}_{\text{SCALE}}$$
 
 ### Concrete Numerical Walkthrough (`test.pkt` Numbers)
 
@@ -64,12 +64,12 @@ Let's trace the exact numbers from our test scenario where the payload MSS is `m
 
 1. **Right after the 3-way handshake (`.init`)**:
    - Initial `snd_cwnd = 10` segments, and the SYN/SYN-ACK RTT is `100 ms` (`rtt_us = 100,000` us):
-   - $\text{init\_bw} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$ (100 KB/s)
-   - $\text{init\_pacing\_rate} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$ (~281.7 KB/s)
+   - $\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$ (100 KB/s)
+   - $\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$ (~281.7 KB/s)
 2. **When the first flight of 10 segments is ACKed after 10 ms (`.cong_control`)**:
    - The ACK reports `rs->delivered = 10` segments delivered over `rs->interval_us = 10,000` us (10 ms):
    - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$ (1.0 MB/s)
-   - $\text{pacing\_rate} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
+   - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
 
 ### What the Kernel Already Provides (Structures, Fields, and Hooks)
 

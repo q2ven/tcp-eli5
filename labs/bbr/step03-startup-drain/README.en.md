@@ -23,12 +23,12 @@ Using this physical property, BBR detects that the pipe is full (`full_bw_reache
 
 > **Full Pipe Detection Rule**:
 > At the end of each non-application-limited (`rs->is_app_limited == 0`) packet-timed round trip (`round_start == 1`), compare the current maximum delivery rate `max_bw` against the baseline `full_bw`:
-> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($\text{max\_bw} \ge 1.25 \times \text{full\_bw}$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
+> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($\text{max}_{\text{bw}} \ge 1.25 \times \text{full}_{\text{bw}}$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
 > - If `max_bw` grew by **less than 25%**, increment `full_bw_cnt`. Once this happens for **3 consecutive non-app-limited rounds (`full_bw_cnt >= 3`)**, BBR concludes that the pipe is full and sets `full_bw_reached = 1`.
 
 In fixed-point arithmetic (`BBR_SCALE = 8`, where `BBR_UNIT = 256` represents `1.0x`), the `1.25x` growth factor is `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320`, and the threshold is computed as:
 
-$$\text{bw\_thresh} = \frac{\text{full\_bw} \times \text{bbr\_full\_bw\_thresh}}{2^{\text{BBR\_SCALE}}} = \left(\text{full\_bw} \times 320\right) \gg 8$$
+$$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{\text{bw,thresh}}}{2^{\text{BBR}_{\text{SCALE}}}} = \left(\text{full}_{\text{bw}} \times 320\right) \gg 8$$
 
 ### Counting Packet-Timed Round Trips Without Wall-Clock Timers
 

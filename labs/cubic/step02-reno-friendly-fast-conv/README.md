@@ -31,8 +31,8 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 
 鍵になるのは、**今回のパケットロスが起きたときの `cwnd` と、前回のロス時に記録した `last_max_cwnd`（$W_{\max}$）の大小関係**です。
 
-- **$\text{cwnd} \ge \text{last\_max\_cwnd}$ のとき**: 前回の最大ウィンドウ $W_{\max}$ まで無事に回復し、さらにその先（凸領域）を探索している途中でロスが起きています。つまりボトルネックの空き帯域は減っておらず、通常通り `last_max_cwnd = cwnd` と記録すれば十分です。
-- **$\text{cwnd} < \text{last\_max\_cwnd}$ のとき**: 前回の $W_{\max}$ に戻るよりも手前で再びパケットロスが起きています。これは「新しい競合フローが参入したため、自分が使える帯域の上限が前回の $W_{\max}$ より狭くなった」という強いシグナルです。
+- **$\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の最大ウィンドウ $W_{\max}$ まで無事に回復し、さらにその先（凸領域）を探索している途中でロスが起きています。つまりボトルネックの空き帯域は減っておらず、通常通り `last_max_cwnd = cwnd` と記録すれば十分です。
+- **$\text{cwnd} < \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の $W_{\max}$ に戻るよりも手前で再びパケットロスが起きています。これは「新しい競合フローが参入したため、自分が使える帯域の上限が前回の $W_{\max}$ より狭くなった」という強いシグナルです。
 
 このとき、もし単純に `last_max_cwnd = cwnd` とだけ更新すると、次のエポックでもこの `cwnd` を目標プラトーとして粘ってしまいます。そこで **Fast Convergence** では、`cwnd < last_max_cwnd` でロスが起きた場合、次の目標プラトー $W_{\max}$ を「ロス直前のウィンドウ $\text{cwnd}$」と「ロス直後の減速ウィンドウ $\beta \cdot \text{cwnd}$」の **中間値（平均）** まで一気に引き下げます。
 
@@ -57,7 +57,7 @@ cwnd
 
 `starter.bpf.c` / `solution.bpf.c` では、浮動小数点を使わずに `BICTCP_BETA_SCALE = 1024` を分母とする固定小数点で $\beta$ を表しています（`beta = 717`、すなわち $717 / 1024 \approx 0.7002$）。したがって、$\frac{1 + \beta}{2}$ を掛ける整数演算は以下の式になります。
 
-$$\text{last\_max\_cwnd} = \left\lfloor \frac{\text{cwnd} \times (\text{BICTCP\_BETA\_SCALE} + \text{beta})}{2 \times \text{BICTCP\_BETA\_SCALE}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
+$$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
 なお、`ssthresh` 自体の戻り値は Fast Convergence の有無にかかわらず、常に通常の乗法的減少 $\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$ です。
 
@@ -108,7 +108,7 @@ static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
 
 `BICTCP_BETA_SCALE = 1024`、`beta = 717` を代入すると、整数除算により `beta_scale = 4642 / 307 = 15`（実数換算で $15 / 8 = 1.875$）となります。したがって、`ca->tcp_cwnd` を $+1$ 進めるのに必要な ACK 数 `delta` は、8 で割る右シフト `>> 3` を使って次のように求まります。
 
-$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \right\rfloor = \text{(cwnd * beta\_scale) >> 3}$$
+$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}}}{8} \right\rfloor = ((\text{cwnd} \times \text{beta}_{\text{scale}}) \gg 3)$$
 
 `bictcp_update(sk, cwnd, acked)` における Reno-friendly 領域の状態遷移ルールは以下の 4 ステップです。
 
@@ -127,13 +127,13 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \r
 3. **`ca->cnt` のクランプ（増加ペースの引き上げ）**:
    `bpf_cubic4_cong_avoid_ai(tp, ca->cnt, acked)` は、「`ca->cnt` 個のセグメントが ACK されるごとに `tp->snd_cwnd` を $+1$ 増やす」関数です。つまり **`ca->cnt` が小さいほど `cwnd` は速く成長します**。
    もし `ca->tcp_cwnd > cwnd`（Reno 推定ウィンドウの方が現在の `cwnd` を追い越している状態）であれば、1 RTT（`cwnd` 個の ACK）あたり `ca->tcp_cwnd - cwnd` セグメント増やす必要があるため、1 セグメント増やすのに必要な ACK 間隔 `max_cnt` は次式になります。
-   $$\text{max\_cnt} = \left\lfloor \frac{\text{cwnd}}{\text{ca->tcp\_cwnd} - \text{cwnd}} \right\rfloor$$
+   $$\text{max}_{\text{cnt}} = \left\lfloor \frac{\text{cwnd}}{\text{ca}\to\text{tcp}_{\text{cwnd}} - \text{cwnd}} \right\rfloor$$
    三次関数が計算した `ca->cnt` がこの `max_cnt` より大きい（＝三次関数の方が成長が遅い）場合、`if (ca->cnt > max_cnt) ca->cnt = max_cnt;` として `ca->cnt` を引き下げ、Reno 相当の成長速度を保証します。
 4. **最小値 `2U` の保証**:
    最後に既存の `ca->cnt = max(ca->cnt, 2U);` によって、輻輳回避フェーズで少なくとも 2 ACK に 1 回の増加ペースを超えないよう下限を設定します。
 
 - **数値例（`test.pkt` のプラトー突破シナリオ）**:
-  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（$= \text{last\_max\_cwnd}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
+  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（$= \text{last}_{\max,\text{cwnd}}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
   - `cwnd = 11` のプラトーでは、$t < K \approx 1.71\text{ s}$ の間、純粋な三次関数は `bic_target = 11 == cwnd` となるため `ca->cnt = 100 * 11 = 1100` を返し、1100 パケット ACK されるまで `cwnd` が増えない「ほぼ停止状態」になります。
   - 一方、Reno-friendly 領域では `cwnd = 11` のとき `delta = (11 * 15) >> 3 = 165 >> 3 = 20` です。11 パケットのフライトを 4 回（計 44 ACKs）送ると、`ack_cnt` が 20 を 2 回超えて `ca->tcp_cwnd` が `10 -> 11 -> 12` へと進みます。
   - `ca->tcp_cwnd (12) > cwnd (11)` となった瞬間、`max_cnt = 11 / (12 - 11) = 11` が計算され、`ca->cnt` は `1100` から `11` にクランプされます。その結果、プラトーの最中であっても 11 パケットの ACK で `cwnd` が `12` へと成長します。

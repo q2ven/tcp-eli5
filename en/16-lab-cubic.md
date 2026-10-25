@@ -149,11 +149,11 @@ While the mathematical equation computes a target window size $W_{\text{cubic}}(
 On each incoming ACK in Congestion Avoidance, `bictcp_update()` translates the cubic curve into `ca->cnt` in three steps:
 
 1. **Look ahead 1 RTT to compute `bic_target`**:
-   Add the connection's minimum RTT (`ca->delay_min`) to the elapsed time since `ca->epoch_start` ($t = \text{now} - \text{epoch\_start} + \text{delay\_min}$) and evaluate $W_{\text{cubic}}(t)$. This gives **`bic_target`**, the window size CUBIC wants to reach **one RTT from now**.
+   Add the connection's minimum RTT (`ca->delay_min`) to the elapsed time since `ca->epoch_start` ($t = \text{now} - \text{epoch}_{\text{start}} + \text{delay}_{\min}$) and evaluate $W_{\text{cubic}}(t)$. This gives **`bic_target`**, the window size CUBIC wants to reach **one RTT from now**.
 2. **Convert the desired 1-RTT window gain into an ACK interval `ca->cnt`**:
    Over the next RTT, roughly `cwnd` segments will be acknowledged. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs, we need `bic_target - cwnd` increments of $+1$:
    - **When `bic_target > cwnd`**:
-     $$\text{ca->cnt} = \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}}$$
+     $$\text{ca}\to\text{cnt} = \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}}$$
      For example, if `cwnd = 100` and `bic_target = 110` ($+10$ segments wanted over the next RTT), then `ca->cnt = 100 / (110 - 100) = 10`. Incrementing `snd_cwnd` by $+1$ every $10$ ACKed segments yields $+10$ segments after $100$ ACKs (1 RTT).
    - **When `bic_target <= cwnd` (at the plateau)**:
      No immediate growth is needed, so CUBIC sets `ca->cnt = 100 * cwnd` (requiring 100 full RTTs just to gain $+1$ segment), effectively freezing window growth.
@@ -204,7 +204,7 @@ flowchart TD
 
 ### Step 3 (`step03-idle-epoch-shift`): Shifting `epoch_start` After an Idle Period
 - **What you will build**:
-  - Because Reno only advances its window when ACKs arrive, its clock naturally pauses whenever the application stops sending data. CUBIC, however, computes $W_{\text{cubic}}(t)$ from wall-clock elapsed time $t = \text{now} - \text{ca->epoch\_start}$.
+  - Because Reno only advances its window when ACKs arrive, its clock naturally pauses whenever the application stops sending data. CUBIC, however, computes $W_{\text{cubic}}(t)$ from wall-clock elapsed time $t = \text{now} - \text{ca}\to\text{epoch}_{\text{start}}$.
   - If an application goes idle (`in_flight == 0`) for several seconds during Congestion Avoidance and then resumes sending, `ca->epoch_start` would remain stuck in the past. On the very first ACK after resuming, $t$ would leap several seconds forward into the steep convex region ($t \gg K$), causing `bic_target` to explode and `cwnd` to jump by $1.5\times$ in a single RTT (a bug explicitly forbidden by [RFC 9438 §5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8)).
   - You will implement the `.cwnd_event_tx_start` hook (`CA_EVENT_TX_START`) to measure the idle duration `delta = now - tp->lsndtime` and shift `ca->epoch_start += delta` forward (clamped at `now`), cleanly excluding idle periods from the cubic clock.
 
@@ -305,15 +305,15 @@ A single cubic equation naturally produces three distinct phases:
 
 The kernel's generalised linear counter `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` increases `snd_cwnd` by $+1$ for every `ca->cnt` acknowledged segments. How does CUBIC translate a continuous target curve $W_{\text{cubic}}(t)$ into the discrete interval `ca->cnt`?
 
-1. **Looking one RTT ahead via $t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$**:
-   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $W_{\text{cubic}}(t)$ at $t = \text{now} - \text{epoch\_start} = 0$, we would get $W_{\text{cubic}}(0) = \text{cwnd}$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
+1. **Looking one RTT ahead via $t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$**:
+   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $W_{\text{cubic}}(t)$ at $t = \text{now} - \text{epoch}_{\text{start}} = 0$, we would get $W_{\text{cubic}}(0) = \text{cwnd}$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
    Instead, CUBIC adds the connection's minimum RTT (`delay_min`) to look one RTT ahead:
-   $$t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$$
+   $$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$$
    Evaluating `bic_target` $= W_{\text{cubic}}(t)$ tells us **what window size we want to reach one RTT from now**.
 2. **Converting `bic_target` into `ca->cnt`**:
    Over the next RTT, roughly `cwnd` segments will be ACKed. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs (an increase of `bic_target - cwnd` segments), we must increment `snd_cwnd` by $+1$ every:
    - **When `bic_target > cwnd`**:
-     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}} \right\rfloor$$
+     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}} \right\rfloor$$
    - **When `bic_target <= cwnd` (at the $W_{\max}$ plateau)**:
      To prevent division by zero or negative values and keep the window virtually flat, CUBIC sets `ca->cnt = 100 * cwnd` (only $+1$ segment per 100 RTTs).
    - **Initial epoch with no prior loss (`last_max_cwnd == 0` and `ca->cnt > 20`)**:
@@ -334,12 +334,12 @@ Because neither the Linux kernel nor BPF allows floating-point instructions, CUB
 
 With these fixed-point constants, every formula reduces to integer shifts, multiplications, and divisions:
 - **Time to origin `bic_K` (in `BICTCP_HZ` units)**:
-  $$K_{\text{hz}} = \sqrt[3]{\text{cube\_factor} \times (W_{\max} - \text{cwnd})}$$
+  $$K_{\text{hz}} = \sqrt[3]{\text{cube}_{\text{factor}} \times (W_{\max} - \text{cwnd})}$$
 - **Elapsed time `t` (microseconds $\to$ `BICTCP_HZ` units)**:
-  $$\text{t} = \frac{((\text{now\_us} - \text{epoch\_start}) + \text{delay\_min}) \ll 10}{1,000,000}$$
+  $$\text{t} = \frac{((\text{now}_{\text{us}} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}) \ll 10}{1,000,000}$$
 - **Cubic distance from origin `delta` $= C |t - K|^3$**:
-  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $\text{offs} = |t - \text{bic\_K}|$, and then shift right by $10 + 3 \times 10 = 40$ bits to undo the scaling of $C$ ($2^{10}$) and $\text{offs}^3$ ($2^{30}$):
-  $$\text{delta} = (\text{cube\_rtt\_scale} \times \text{offs}^3) \gg (10 + 3 \times \text{BICTCP\_HZ})$$
+  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $\text{offs} = |t - \text{bic}_{K}|$, and then shift right by $10 + 3 \times 10 = 40$ bits to undo the scaling of $C$ ($2^{10}$) and $\text{offs}^3$ ($2^{30}$):
+  $$\text{delta} = (\text{cube}_{\text{rtt,scale}} \times \text{offs}^3) \gg (10 + 3 \times \text{BICTCP}_{\text{HZ}})$$
   In the concave region (`t < ca->bic_K`), `bic_target = ca->bic_origin_point - delta`; in the convex region (`t >= ca->bic_K`), `bic_target = ca->bic_origin_point + delta`.
 
 ##### How `cubic_root(__u64 a)` Computes $\lfloor \sqrt[3]{a} \rfloor$ in Integer Arithmetic
@@ -369,7 +369,7 @@ Let's trace the exact numbers on a connection with RTT = $100\text{ ms}$ (`delay
    - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523` ($2523 / 1024 \approx 2.46\text{ s}$)
 3. **Evolution of `bic_target` and `ca->cnt` across all five flights**:
 
-| Flight | Elapsed $\text{now} - \text{epoch\_start}$ | Lookahead $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
+| Flight | Elapsed $\text{now} - \text{epoch}_{\text{start}}$ | Lookahead $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Flight 1** | $0.0\text{ s}$ | $102$ ($0.1\text{ s}$) | $2421$ | $5$ | Concave: $20 - 5 = 15$ | $14 / (15 - 14) = 14$ | $14 \to 15$ |
 | **Flight 2** | $0.6\text{ s}$ | $716$ ($0.7\text{ s}$) | $1807$ | $2$ | Concave: $20 - 2 = 18$ | $15 / (18 - 15) = 5$ | $15 \to 18$ ($+3$ jump) |
@@ -1381,8 +1381,8 @@ How can a sender tell that a new competing flow has joined the bottleneck and re
 
 The clue lies in **comparing the current `cwnd` at the moment of packet loss against `ca->last_max_cwnd` ($W_{\max}$) from the previous loss event**:
 
-- **When $\text{cwnd} \ge \text{last\_max\_cwnd}$**: The flow successfully recovered all the way to its previous maximum $W_{\max}$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
-- **When $\text{cwnd} < \text{last\_max\_cwnd}$**: The flow suffered another packet loss *before* it could even climb back to its previous $W_{\max}$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
+- **When $\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$**: The flow successfully recovered all the way to its previous maximum $W_{\max}$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
+- **When $\text{cwnd} < \text{last}_{\max,\text{cwnd}}$**: The flow suffered another packet loss *before* it could even climb back to its previous $W_{\max}$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
 
 Without Fast Convergence, setting `last_max_cwnd = cwnd` would place the next cubic plateau right at `cwnd`, causing the flow to hold on to bandwidth stubbornly. **Fast Convergence** resolves this: whenever loss occurs with `cwnd < last_max_cwnd`, it proactively lowers $W_{\max}$ further—to the **midpoint (average)** between the pre-loss window $\text{cwnd}$ ($1.0 \times \text{cwnd}$) and the post-loss window $\beta \cdot \text{cwnd}$:
 
@@ -1407,7 +1407,7 @@ cwnd
 
 In `starter.bpf.c` and `solution.bpf.c`, $\beta$ is represented in fixed-point arithmetic using `BICTCP_BETA_SCALE = 1024` and `beta = 717` ($717 / 1024 \approx 0.7002$). Multiplying `cwnd` by $\frac{1 + \beta}{2}$ in integer arithmetic therefore becomes:
 
-$$\text{last\_max\_cwnd} = \left\lfloor \frac{\text{cwnd} \times (\text{BICTCP\_BETA\_SCALE} + \text{beta})}{2 \times \text{BICTCP\_BETA\_SCALE}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
+$$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
 Note that the slow-start threshold returned by `.ssthresh` remains the standard multiplicative decrease $\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$.
 
@@ -1458,7 +1458,7 @@ static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
 
 With `BICTCP_BETA_SCALE = 1024` and `beta = 717`, integer division yields `beta_scale = 4642 / 307 = 15` (representing $15 / 8 = 1.875$ RTTs). The number of ACKed segments `delta` needed to increment `ca->tcp_cwnd` by 1 is therefore obtained by shifting right by 3 (`>> 3`, i.e. dividing by 8):
 
-$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \right\rfloor = \text{(cwnd * beta\_scale) >> 3}$$
+$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}}}{8} \right\rfloor = ((\text{cwnd} \times \text{beta}_{\text{scale}}) \gg 3)$$
 
 In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four steps:
 
@@ -1478,7 +1478,7 @@ In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four s
 3. **Clamp `ca->cnt` when `ca->tcp_cwnd > cwnd`**:
    Recall how `bpf_cubic4_cong_avoid_ai(tp, ca->cnt, acked)` works: it increments `tp->snd_cwnd` by 1 every `ca->cnt` ACKed segments. That means a **smaller** `ca->cnt` produces **faster** window growth.
    When `ca->tcp_cwnd > cwnd` (the Reno-equivalent window is ahead of `cwnd`), reaching `ca->tcp_cwnd` over one RTT (`cwnd` ACKs) requires adding 1 segment every `max_cnt` ACKs:
-   $$\text{max\_cnt} = \left\lfloor \frac{\text{cwnd}}{\text{ca->tcp\_cwnd} - \text{cwnd}} \right\rfloor$$
+   $$\text{max}_{\text{cnt}} = \left\lfloor \frac{\text{cwnd}}{\text{ca}\to\text{tcp}_{\text{cwnd}} - \text{cwnd}} \right\rfloor$$
    If the cubic curve's `ca->cnt` is larger (slower) than `max_cnt`, we clamp `ca->cnt` downwards:
    ```c
    if (ca->tcp_cwnd > cwnd) {
@@ -2584,21 +2584,21 @@ Classical TCP Reno (AIMD) advances `snd_cwnd` purely by counting arriving ACKs. 
 
 CUBIC, by contrast, computes its target window `bic_target` ($W_{\text{cubic}}(t)$) in Congestion Avoidance as a cubic function of the **wall-clock time $t$ elapsed since the current epoch began**:
 
-$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\text{epoch\_start}} + d_{\min}$$
+$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 What happens if a flow in Congestion Avoidance sits idle for 2 seconds and then resumes sending?
 
-If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{tcp\_jiffies32} - \text{ca->epoch\_start}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
+If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
 
 #### 2.2 The Solution: Horizontal Time Shift (`+= delta`), Not Epoch Reset (`= 0`)
 
 To exclude the idle duration $\Delta_{\text{idle}}$ from the elapsed time $t$, we shift `ca->epoch_start` forward by $\Delta_{\text{idle}}$ at the exact moment transmission resumes:
 
-$$t_{\text{epoch\_start}} \leftarrow t_{\text{epoch\_start}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\text{last\_send}}$$
+$$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
 When the next ACK arrives, the idle gap cancels out of the elapsed time calculation:
 
-$$t_{\text{after}} = t_{\text{now}} - (t_{\text{epoch\_start}} + \Delta_{\text{idle}}) = (t_{\text{last\_send}} + \Delta_{\text{idle}}) - t_{\text{epoch\_start}} - \Delta_{\text{idle}} = t_{\text{last\_send}} - t_{\text{epoch\_start}}$$
+$$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}}) = (t_{\\text{last}} + \Delta_{\text{idle}}) - t_{\\text{epoch}} - \Delta_{\text{idle}} = t_{\\text{last}} - t_{\\text{epoch}}$$
 
 ```text
   cwnd
@@ -2634,7 +2634,7 @@ Consider the following sequence of events:
 
 At $T_2$, the idle duration since the last send is $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$. Adding $\Delta_{\text{idle}}$ to `ca->epoch_start` gives:
 
-$$\text{ca->epoch\_start} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
 `ca->epoch_start` has moved into the **future** by $T_1 - T_0$ beyond `now` ($T_2$)!
 
@@ -2737,7 +2737,7 @@ Right after `ca->epoch_start += delta;`, why do we need `if (after(ca->epoch_sta
 
 As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($T_0$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($T_1 > T_0$). If the last packet before recovery completes was sent at $T_0$, the epoch started on an ACK at $T_1 > T_0$ without sending new data, and the flow then sat idle until $T_2$ (`now`), then:
 
-$$\text{ca->epoch\_start} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 placing `ca->epoch_start` in the future relative to `now`!
 If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $2^{64}$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.
@@ -3639,7 +3639,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
 
 - **Intuition**:
   During Slow Start, packets sent in a round traverse the bottleneck link back-to-back at the bottleneck bandwidth rate. Their corresponding ACKs return to the sender closely spaced (within `HYSTART_ACK_DELTA_US = 2000` $\mu\text{s}$ = $2\text{ ms}$ of one another), forming a dense "ACK train".
-  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $\text{delay\_min} / 2$ in each direction), **an unbroken ACK train lasting at least $\text{delay\_min} / 2$ indicates that the flight of packets has filled the forward bottleneck pipe**.
+  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $\text{delay}_{\min} / 2$ in each direction), **an unbroken ACK train lasting at least $\text{delay}_{\min} / 2$ indicates that the flight of packets has filled the forward bottleneck pipe**.
 - **Exact Rule and Formula**:
   1. Check whether the time elapsed since the previous ACK in the train (`ca->last_ack`) is at most `HYSTART_ACK_DELTA_US` ($2000\ \mu\text{s}$):
      ```c
@@ -3671,7 +3671,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
          ca->sample_cnt++;
      ```
   3. Once `ca->sample_cnt >= HYSTART_MIN_SAMPLES` (at least 8 samples collected in this round), compare `ca->curr_rtt` against `ca->delay_min` plus a clamped threshold $\Delta_{\text{thresh}}$:
-     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay\_min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
+     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay}_{\min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
      ```c
      if (ca->curr_rtt >= ca->delay_min + clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)) {
          ca->found = 1;
@@ -3680,8 +3680,8 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
      ```
   - **Why clamp `delay_min >> 3` ($12.5\%$) between $4\text{ ms}$ and $16\text{ ms}$?**:
     - By default, HyStart tolerates a queueing delay of $1/8$ ($12.5\%$) of the baseline RTT (`ca->delay_min >> 3`).
-    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($4\text{ ms}$)**: On low-latency data-centre or LAN paths where $\text{delay\_min} \le 1\text{ ms}$, $\text{delay\_min} / 8$ is only $125\ \mu\text{s}$—smaller than normal TSO/GRO batching jitter. Enforcing a $4\text{ ms}$ floor prevents premature Slow Start exits.
-    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($16\text{ ms}$)**: On long-delay paths (e.g., transcontinental or satellite links with $\text{delay\_min} > 200\text{ ms}$), waiting for $\text{delay\_min} / 8 > 25\text{ ms}$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $16\text{ ms}$.
+    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($4\text{ ms}$)**: On low-latency data-centre or LAN paths where $\text{delay}_{\min} \le 1\text{ ms}$, $\text{delay}_{\min} / 8$ is only $125\ \mu\text{s}$—smaller than normal TSO/GRO batching jitter. Enforcing a $4\text{ ms}$ floor prevents premature Slow Start exits.
+    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($16\text{ ms}$)**: On long-delay paths (e.g., transcontinental or satellite links with $\text{delay}_{\min} > 200\text{ ms}$), waiting for $\text{delay}_{\min} / 8 > 25\text{ ms}$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $16\text{ ms}$.
 
 ---
 

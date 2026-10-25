@@ -21,7 +21,7 @@ TCP でデータを送るとき、送信側が「いま確認応答（ACK）を�
 
 そのため、TCP の送信側は常に **2 つのウィンドウの小さい方** で送信量を抑えます。
 
-$$\text{送信可能な上限 (In-Flight 上限)} = \min(\text{snd\_cwnd}, \text{snd\_wnd})$$
+$$\text{送信可能な上限 (In-Flight 上限)} = \min(\text{snd}_{\text{cwnd}}, \text{snd}_{\text{wnd}})$$
 
 問題は、**途中のルータが「いま道路がどれくらい空いているか」を直接教えてはくれない** ということです。そこで送信側が「少しずつ送る量を増やして道路の限界を探り、パケットが落ちたら減速する」という試行錯誤を行うアルゴリズムが **輻輳制御（Congestion Control）** です。
 
@@ -245,7 +245,7 @@ TCP Reno では、パケットロスを検知したとき、およびそのロ�
 
 - **Multiplicative Decrease（乗算的減少：`.ssthresh()`）**: パケットロスが起きたということは、現在の `cwnd` は経路容量を超えていたことを意味します。Reno は新しい `ssthresh` を現在の `cwnd` の半分（$\lfloor \text{cwnd} / 2 \rfloor$、ビットシフトで `snd_cwnd >> 1U`）に引き下げます。ただし RFC 5681 の規定により、ウィンドウが完全に詰まらないよう最小値 `2U` を下回らないようにします：
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（$\max(\text{snd\_cwnd}, \text{prior\_cwnd})$）へウィンドウを復元します。
+- **ウィンドウ縮小の取り消し（`.undo_cwnd()`）**: タイムアウトや重複 ACK で一度 `cwnd` を減らした後に、DSACK 等によって「実はパケットはロスしておらず遅れて届いただけだった」と判明した場合、カーネルはロス突入前に保存しておいた `prior_cwnd` と現在の `snd_cwnd` の大きい方（$\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$）へウィンドウを復元します。
 
 #### 2.6 カーネルがすでに提供している構造体・フィールド・ヘルパー一覧
 
@@ -402,7 +402,7 @@ __u32 BPF_PROG(bpf_reno1_ssthresh, struct sock *sk)
 ```
 
 - パケットロス検知時に新しい `snd_ssthresh` を返します。
-- 整数右シフト `tp->snd_cwnd >> 1U` で $\lfloor \text{snd\_cwnd} / 2 \rfloor$ を計算し、RFC 5681 の下限値 `2U` と `max()` をとります。
+- 整数右シフト `tp->snd_cwnd >> 1U` で $\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$ を計算し、RFC 5681 の下限値 `2U` と `max()` をとります。
 
 #### 4.3 `bpf_reno1_cong_avoid()` — Slow Start と Reno Additive Increase（TODO 2〜4）
 
@@ -753,11 +753,11 @@ TCP は「3 回の重複 ACK（または SACK で 3 パケット分の追い越�
 
 重複 ACK によって **Fast Recovery（高速回復, `TCP_CA_Recovery`）** に入るか、あるいは再送タイムアウト（RTO）によって **Loss 状態（`TCP_CA_Loss`）** に入るとき、Reno は現在の輻輳ウィンドウ `snd_cwnd` を半分に減らした値を新しいスロースタートしきい値 `snd_ssthresh` とします（ただし RFC 5681 §3.1 に従い、最低値は 2 セグメントとします）。
 
-$$\text{ssthresh} = \max\left(\left\lfloor \frac{\text{snd\_cwnd}}{2} \right\rfloor, 2\right)$$
+$$\text{ssthresh} = \max\left(\left\lfloor \frac{\text{snd}_{\text{cwnd}}}{2} \right\rfloor, 2\right)$$
 
 同時に、あとで「誤検出だった」と判明したときに元のウィンドウサイズへ戻せるよう、縮小前の `snd_cwnd` をソケットごとの変数 `loss_cwnd` に退避しておきます。
 
-$$\text{loss\_cwnd} = \text{snd\_cwnd}$$
+$$\text{loss}_{\text{cwnd}} = \text{snd}_{\text{cwnd}}$$
 
 ##### ② TCP コア（PRR）と輻輳制御フック `.ssthresh` の役割分担
 
@@ -781,9 +781,9 @@ DSACK（または TCP タイムスタンプを用いた Eifel Detection, RFC 352
 
 Reno の `.undo_cwnd(sk)` は、現在の `snd_cwnd` とロス前に退避しておいた `loss_cwnd` の大きい方を返します。
 
-$$\text{cwnd}_{\text{undo}} = \max(\text{snd\_cwnd}, \text{loss\_cwnd})$$
+$$\text{cwnd}_{\text{undo}} = \max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$
 
-なぜ単純に `loss_cwnd` を返すのではなく $\max(\text{snd\_cwnd}, \text{loss\_cwnd})$ を取るのでしょうか？誤検出された Recovery や Loss の最中にも ACK が到着してウィンドウが成長し、Undo が発動した時点の `tp->snd_cwnd` がすでにロス開始時の `loss_cwnd` を上回っているケースがあるからです。$\max$ を取ることで、Undo によってかえってウィンドウが縮んでしまう逆転現象を防ぎます（なお、`snd_ssthresh` 自体は TCP コア側が `tp->prior_ssthresh` から自動的に復元します）。
+なぜ単純に `loss_cwnd` を返すのではなく $\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$ を取るのでしょうか？誤検出された Recovery や Loss の最中にも ACK が到着してウィンドウが成長し、Undo が発動した時点の `tp->snd_cwnd` がすでにロス開始時の `loss_cwnd` を上回っているケースがあるからです。$\max$ を取ることで、Undo によってかえってウィンドウが縮んでしまう逆転現象を防ぎます（なお、`snd_ssthresh` 自体は TCP コア側が `tp->prior_ssthresh` から自動的に復元します）。
 
 #### 具体例とシーケンス図（`snd_cwnd = 10` からの Reordering と Undo）
 
@@ -977,7 +977,7 @@ u32 BPF_PROG(bpf_reno2_ssthresh, struct sock *sk)
 }
 ```
 
-- ビット右シフト `tp->snd_cwnd >> 1U` で整数の 2 除算（$\lfloor \text{snd\_cwnd} / 2 \rfloor$）を計算し、`max(..., 2U)` で RFC 5681 §3.1 の下限 `2` を保証します。
+- ビット右シフト `tp->snd_cwnd >> 1U` で整数の 2 除算（$\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$）を計算し、`max(..., 2U)` で RFC 5681 §3.1 の下限 `2` を保証します。
 - 同時に、あとで DSACK Undo が起きたときに戻せるよう、縮小前の `tp->snd_cwnd` を `ca->loss_cwnd` に退避します。
 
 #### 3. `TCP_CA_Loss` 状態への遷移処理: `bpf_reno2_set_state()`

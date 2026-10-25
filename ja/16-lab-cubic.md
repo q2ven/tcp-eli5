@@ -148,11 +148,11 @@ flowchart LR
 具体的には、ACK が届くたびに `bictcp_update()` が次の手順で `ca->cnt` を計算します。
 
 1. **1 RTT 先の目標窓 `bic_target` を求める**:
-   現在時刻 `now` からの経過時間に最小 RTT（`ca->delay_min`）を足した「1 RTT 後の時刻 $t = \text{now} - \text{epoch\_start} + \text{delay\_min}$」における $W_{\text{cubic}}(t)$ を計算し、これを **`bic_target`** とします。
+   現在時刻 `now` からの経過時間に最小 RTT（`ca->delay_min`）を足した「1 RTT 後の時刻 $t = \text{now} - \text{epoch}_{\text{start}} + \text{delay}_{\min}$」における $W_{\text{cubic}}(t)$ を計算し、これを **`bic_target`** とします。
 2. **この 1 RTT で増やしたい個数から逆算して `ca->cnt` を決める**:
    1 RTT の間に到着する ACK の総数は、おおよそ現在の窓サイズ `cwnd` 個です。1 RTT 後に `cwnd` を `bic_target` まで到達させるには、`cwnd` 個の ACK が返ってくる間に `bic_target - cwnd` 回だけ `snd_cwnd++` を実行すればよいことになります。
    - **`bic_target > cwnd` のとき**:
-     $$\text{ca->cnt} = \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}}$$
+     $$\text{ca}\to\text{cnt} = \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}}$$
      たとえば現在 `cwnd = 100` で、1 RTT 先の目標が `bic_target = 110`（あと $+10$ 増やしたい）なら、`ca->cnt = 100 / (110 - 100) = 10` となります。つまり「10 パケット ACK されるごとに `snd_cwnd` を $+1$ する」ペースにすれば、100 パケット分の ACK（1 RTT）でちょうど $+10$ 増えて `110` に到達します。
    - **`bic_target <= cwnd` のとき（プラトー付近）**:
      今すぐ窓を増やす必要はないため、`ca->cnt = 100 * cwnd`（100 RTT かけてやっと $+1$ する程度）という非常に大きな値を設定し、事実上ウィンドウの増加をストップさせます。
@@ -203,7 +203,7 @@ flowchart TD
 
 ### Step 3 (`step03-idle-epoch-shift`): アイドル期間後の `epoch_start` シフト
 - **学ぶこと**:
-  - Reno は ACK が届いたときだけ時計が進むので、アプリが送信を休止（アイドル）している間は自然に成長が止まります。しかし CUBIC は実時間 $t = \text{now} - \text{ca->epoch\_start}$ を見るため、Congestion Avoidance 中にアプリが数秒間データを送らずに休むと、その休んでいた時間まで $t$ に加算されてしまいます。
+  - Reno は ACK が届いたときだけ時計が進むので、アプリが送信を休止（アイドル）している間は自然に成長が止まります。しかし CUBIC は実時間 $t = \text{now} - \text{ca}\to\text{epoch}_{\text{start}}$ を見るため、Congestion Avoidance 中にアプリが数秒間データを送らずに休むと、その休んでいた時間まで $t$ に加算されてしまいます。
   - すると送信を再開した直後の最初の ACK で、$t$ が一気に数秒先の $t \gg K$（急激な凸領域）へワープしてしまい、たった 1 RTT で `cwnd` が 1.5 倍に大爆発します（[RFC 9438 §5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) で明確に禁止されている挙動です）。
   - これを防ぐため、飛行中パケット 0（`in_flight == 0`）から送信を再開した瞬間に発火する `CA_EVENT_TX_START`（`.cwnd_event_tx_start` フック）を捕捉し、休んでいた時間 `delta = now - tp->lsndtime` の分だけ `ca->epoch_start += delta` と未来へシフトさせて、3 次関数の時計を一時停止させる仕組みを実装します。
 
@@ -304,13 +304,13 @@ cwnd_epoch (14) +     *       最初は一気に駆け上がり、W_max に近�
 
 カーネルの輻輳回避処理は、「`ca->cnt` 個のセグメントが ACK されるごとに `snd_cwnd` を $+1$ する」という汎用カウンタ関数 `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` で動いています。では、連続関数の $W_{\text{cubic}}(t)$ をどのように `ca->cnt` に変換するのでしょうか？
 
-1. **1 RTT 先の時刻 $t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$ を評価する**:
-   エポック開始時刻 `epoch_start` は、輻輳回避の最初の ACK を受け取った瞬間に `now_us` で初期化されます。もし $t = \text{now} - \text{epoch\_start}$ のまま計算すると、最初の ACK 時点で $t = 0$ となり、$W_{\text{cubic}}(0) = \text{cwnd}$ となって目標ウィンドウが現在の `cwnd` から全く増えません。
-   そこで CUBIC は、観測された最小 RTT（`delay_min`）を足した **$t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$**（「今から 1 RTT 後に到達していたい目標時刻」）における目標ウィンドウ `bic_target` $= W_{\text{cubic}}(t)$ を計算します。
+1. **1 RTT 先の時刻 $t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$ を評価する**:
+   エポック開始時刻 `epoch_start` は、輻輳回避の最初の ACK を受け取った瞬間に `now_us` で初期化されます。もし $t = \text{now} - \text{epoch}_{\text{start}}$ のまま計算すると、最初の ACK 時点で $t = 0$ となり、$W_{\text{cubic}}(0) = \text{cwnd}$ となって目標ウィンドウが現在の `cwnd` から全く増えません。
+   そこで CUBIC は、観測された最小 RTT（`delay_min`）を足した **$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$**（「今から 1 RTT 後に到達していたい目標時刻」）における目標ウィンドウ `bic_target` $= W_{\text{cubic}}(t)$ を計算します。
 2. **`bic_target` から `ca->cnt` を逆算する**:
    現在のウィンドウが `cwnd` のとき、これからの 1 RTT で到着する ACK の総数は約 `cwnd` 個です。1 RTT 後にウィンドウを `bic_target` まで増やす（つまり 1 RTT の間に `bic_target - cwnd` 個だけ `+1` する）には、何個の ACK ごとに `+1` すればよいでしょうか？
    - **`bic_target > cwnd` のとき**:
-     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}} \right\rfloor$$
+     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}} \right\rfloor$$
    - **`bic_target <= cwnd` のとき（$t \approx K$ のプラトー）**:
      分母が $0$ 以下になるため、非常にゆっくりとした増加（100 RTT で $+1$）を表す `ca->cnt = 100 * cwnd` を設定します。
    - **過去のロス履歴がない初期エポック（`last_max_cwnd == 0` かつ `ca->cnt > 20`）**:
@@ -331,14 +331,14 @@ Linux カーネルや BPF プログラムでは浮動小数点（`float` / `doub
 
 この単位系を使うと、各計算はすべて整数シフトと乗除算だけで書けます。
 - **変曲点までの時間 `bic_K`（単位：`BICTCP_HZ`）**:
-  $$K_{\text{hz}} = \sqrt[3]{\text{cube\_factor} \times (W_{\max} - \text{cwnd})}$$
+  $$K_{\text{hz}} = \sqrt[3]{\text{cube}_{\text{factor}} \times (W_{\max} - \text{cwnd})}$$
 - **経過時間 `t`（マイクロ秒 $\to$ `BICTCP_HZ` 単位）**:
-  $$\text{t} = \frac{((\text{now\_us} - \text{epoch\_start}) + \text{delay\_min}) \ll 10}{1,000,000}$$
+  $$\text{t} = \frac{((\text{now}_{\text{us}} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}) \ll 10}{1,000,000}$$
 - **原点からの差分 `delta` $= C |t - K|^3$**:
-  符号なし整数 `__u64` で安全に計算するため、まず絶対値 $\text{offs} = |t - \text{bic\_K}|$ を取り、
-  $$\text{delta} = (\text{cube\_rtt\_scale} \times \text{offs}^3) \gg (10 + 3 \times 10)$$
+  符号なし整数 `__u64` で安全に計算するため、まず絶対値 $\text{offs} = |t - \text{bic}_{K}|$ を取り、
+  $$\text{delta} = (\text{cube}_{\text{rtt,scale}} \times \text{offs}^3) \gg (10 + 3 \times 10)$$
   （$C = 410 / 2^{10}$ と $\text{offs}^3$ の時間スケール $(2^{10})^3 = 2^{30}$ の合計 $40$ ビット分を右シフトで戻します。）
-  $t < \text{bic\_K}$（凹領域）なら `bic_target = bic_origin_point - delta`、$t \ge \text{bic\_K}$（凸領域）なら `bic_target = bic_origin_point + delta` となります。
+  $t < \text{bic}_{K}$（凹領域）なら `bic_target = bic_origin_point - delta`、$t \ge \text{bic}_{K}$（凸領域）なら `bic_target = bic_origin_point + delta` となります。
 
 ##### 固定小数点の立方根 `cubic_root(__u64 a)` の仕組み
 
@@ -367,7 +367,7 @@ RTT = $100\text{ ms}$（`delay_min = 100,000` usec）の接続で、`cwnd = 20` 
    - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523`（秒に直すと $2523 / 1024 \approx 2.46\text{ 秒}$）
 3. **経過時間ごとの `bic_target` と `ca->cnt` の推移**:
 
-| フライト | 経過時間 $\text{now} - \text{epoch\_start}$ | 先読み時刻 $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | 領域と `bic_target` | `ca->cnt` | 1 RTT 後の `cwnd` |
+| フライト | 経過時間 $\text{now} - \text{epoch}_{\text{start}}$ | 先読み時刻 $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | 領域と `bic_target` | `ca->cnt` | 1 RTT 後の `cwnd` |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Flight 1** | $0.0\text{ s}$ | $102$ ($0.1\text{ s}$) | $2421$ | $5$ | 凹領域：$20 - 5 = 15$ | $14 / (15 - 14) = 14$ | $14 \to 15$ |
 | **Flight 2** | $0.6\text{ s}$ | $716$ ($0.7\text{ s}$) | $1807$ | $2$ | 凹領域：$20 - 2 = 18$ | $15 / (18 - 15) = 5$ | $15 \to 18$（$+3$ 急伸） |
@@ -1379,8 +1379,8 @@ $$W_{\text{cubic}}(t) = C(t - K)^3 + W_{\max}, \quad K = \sqrt[3]{\frac{W_{\max}
 
 鍵になるのは、**今回のパケットロスが起きたときの `cwnd` と、前回のロス時に記録した `last_max_cwnd`（$W_{\max}$）の大小関係**です。
 
-- **$\text{cwnd} \ge \text{last\_max\_cwnd}$ のとき**: 前回の最大ウィンドウ $W_{\max}$ まで無事に回復し、さらにその先（凸領域）を探索している途中でロスが起きています。つまりボトルネックの空き帯域は減っておらず、通常通り `last_max_cwnd = cwnd` と記録すれば十分です。
-- **$\text{cwnd} < \text{last\_max\_cwnd}$ のとき**: 前回の $W_{\max}$ に戻るよりも手前で再びパケットロスが起きています。これは「新しい競合フローが参入したため、自分が使える帯域の上限が前回の $W_{\max}$ より狭くなった」という強いシグナルです。
+- **$\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の最大ウィンドウ $W_{\max}$ まで無事に回復し、さらにその先（凸領域）を探索している途中でロスが起きています。つまりボトルネックの空き帯域は減っておらず、通常通り `last_max_cwnd = cwnd` と記録すれば十分です。
+- **$\text{cwnd} < \text{last}_{\max,\text{cwnd}}$ のとき**: 前回の $W_{\max}$ に戻るよりも手前で再びパケットロスが起きています。これは「新しい競合フローが参入したため、自分が使える帯域の上限が前回の $W_{\max}$ より狭くなった」という強いシグナルです。
 
 このとき、もし単純に `last_max_cwnd = cwnd` とだけ更新すると、次のエポックでもこの `cwnd` を目標プラトーとして粘ってしまいます。そこで **Fast Convergence** では、`cwnd < last_max_cwnd` でロスが起きた場合、次の目標プラトー $W_{\max}$ を「ロス直前のウィンドウ $\text{cwnd}$」と「ロス直後の減速ウィンドウ $\beta \cdot \text{cwnd}$」の **中間値（平均）** まで一気に引き下げます。
 
@@ -1405,7 +1405,7 @@ cwnd
 
 `starter.bpf.c` / `solution.bpf.c` では、浮動小数点を使わずに `BICTCP_BETA_SCALE = 1024` を分母とする固定小数点で $\beta$ を表しています（`beta = 717`、すなわち $717 / 1024 \approx 0.7002$）。したがって、$\frac{1 + \beta}{2}$ を掛ける整数演算は以下の式になります。
 
-$$\text{last\_max\_cwnd} = \left\lfloor \frac{\text{cwnd} \times (\text{BICTCP\_BETA\_SCALE} + \text{beta})}{2 \times \text{BICTCP\_BETA\_SCALE}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
+$$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
 なお、`ssthresh` 自体の戻り値は Fast Convergence の有無にかかわらず、常に通常の乗法的減少 $\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$ です。
 
@@ -1456,7 +1456,7 @@ static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
 
 `BICTCP_BETA_SCALE = 1024`、`beta = 717` を代入すると、整数除算により `beta_scale = 4642 / 307 = 15`（実数換算で $15 / 8 = 1.875$）となります。したがって、`ca->tcp_cwnd` を $+1$ 進めるのに必要な ACK 数 `delta` は、8 で割る右シフト `>> 3` を使って次のように求まります。
 
-$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \right\rfloor = \text{(cwnd * beta\_scale) >> 3}$$
+$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}}}{8} \right\rfloor = ((\text{cwnd} \times \text{beta}_{\text{scale}}) \gg 3)$$
 
 `bictcp_update(sk, cwnd, acked)` における Reno-friendly 領域の状態遷移ルールは以下の 4 ステップです。
 
@@ -1475,13 +1475,13 @@ $$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \r
 3. **`ca->cnt` のクランプ（増加ペースの引き上げ）**:
    `bpf_cubic4_cong_avoid_ai(tp, ca->cnt, acked)` は、「`ca->cnt` 個のセグメントが ACK されるごとに `tp->snd_cwnd` を $+1$ 増やす」関数です。つまり **`ca->cnt` が小さいほど `cwnd` は速く成長します**。
    もし `ca->tcp_cwnd > cwnd`（Reno 推定ウィンドウの方が現在の `cwnd` を追い越している状態）であれば、1 RTT（`cwnd` 個の ACK）あたり `ca->tcp_cwnd - cwnd` セグメント増やす必要があるため、1 セグメント増やすのに必要な ACK 間隔 `max_cnt` は次式になります。
-   $$\text{max\_cnt} = \left\lfloor \frac{\text{cwnd}}{\text{ca->tcp\_cwnd} - \text{cwnd}} \right\rfloor$$
+   $$\text{max}_{\text{cnt}} = \left\lfloor \frac{\text{cwnd}}{\text{ca}\to\text{tcp}_{\text{cwnd}} - \text{cwnd}} \right\rfloor$$
    三次関数が計算した `ca->cnt` がこの `max_cnt` より大きい（＝三次関数の方が成長が遅い）場合、`if (ca->cnt > max_cnt) ca->cnt = max_cnt;` として `ca->cnt` を引き下げ、Reno 相当の成長速度を保証します。
 4. **最小値 `2U` の保証**:
    最後に既存の `ca->cnt = max(ca->cnt, 2U);` によって、輻輳回避フェーズで少なくとも 2 ACK に 1 回の増加ペースを超えないよう下限を設定します。
 
 - **数値例（`test.pkt` のプラトー突破シナリオ）**:
-  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（$= \text{last\_max\_cwnd}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
+  - 2 回目のロス回復後、`cwnd = 9` からエポックが開始し（`tcp_cwnd = 9`）、Flight 1（9 ACKs）と Flight 2（10 ACKs）を経て `cwnd = 11`（$= \text{last}_{\max,\text{cwnd}}$）のプラトーに到達します（この時点で `tcp_cwnd = 10`、`ack_cnt = 1`）。
   - `cwnd = 11` のプラトーでは、$t < K \approx 1.71\text{ s}$ の間、純粋な三次関数は `bic_target = 11 == cwnd` となるため `ca->cnt = 100 * 11 = 1100` を返し、1100 パケット ACK されるまで `cwnd` が増えない「ほぼ停止状態」になります。
   - 一方、Reno-friendly 領域では `cwnd = 11` のとき `delta = (11 * 15) >> 3 = 165 >> 3 = 20` です。11 パケットのフライトを 4 回（計 44 ACKs）送ると、`ack_cnt` が 20 を 2 回超えて `ca->tcp_cwnd` が `10 -> 11 -> 12` へと進みます。
   - `ca->tcp_cwnd (12) > cwnd (11)` となった瞬間、`max_cnt = 11 / (12 - 11) = 11` が計算され、`ca->cnt` は `1100` から `11` にクランプされます。その結果、プラトーの最中であっても 11 パケットの ACK で `cwnd` が `12` へと成長します。
@@ -2574,21 +2574,21 @@ Step 2 までで、CUBIC の 3 次関数曲線・Fast Convergence・Reno-friendl
 
 一方、CUBIC は輻輳回避（Congestion Avoidance）における目標ウィンドウ `bic_target`（$W_{\text{cubic}}(t)$）を、**現在のエポックが始まってからの実経過時間 $t$** の 3 次関数として計算します。
 
-$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\text{epoch\_start}} + d_{\min}$$
+$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 ここで、もし Congestion Avoidance の途中でアプリケーションが 2 秒間データを送らずにアイドル状態になり、2 秒後に送信を再開したら何が起きるでしょうか？
 
-`ca->epoch_start` がアイドル前の古い時刻のまま放置されていると、再開後の最初の ACK が届いた瞬間に、経過時間 $t = \text{tcp\_jiffies32} - \text{ca->epoch\_start}$ が **アイドルしていた 2 秒分を一気にジャンプ** します。すると $(t - K)^3$ が急増して `bic_target` が跳ね上がり、その間ネットワークの空き帯域を一切プローブしていなかったにもかかわらず、アイドル明けのたった 1 RTT で `snd_cwnd` が最大 1.5 倍（`ca->cnt = 2`）まで急膨張してしまいます。このような理由から、[RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) は「経過時間 $t$ にアプリケーション制限（アイドル）期間を含めてはならない（MUST NOT）」と規定しています。
+`ca->epoch_start` がアイドル前の古い時刻のまま放置されていると、再開後の最初の ACK が届いた瞬間に、経過時間 $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ が **アイドルしていた 2 秒分を一気にジャンプ** します。すると $(t - K)^3$ が急増して `bic_target` が跳ね上がり、その間ネットワークの空き帯域を一切プローブしていなかったにもかかわらず、アイドル明けのたった 1 RTT で `snd_cwnd` が最大 1.5 倍（`ca->cnt = 2`）まで急膨張してしまいます。このような理由から、[RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) は「経過時間 $t$ にアプリケーション制限（アイドル）期間を含めてはならない（MUST NOT）」と規定しています。
 
 #### 2.2 解決策：曲線の「リセット」ではなく時間軸方向の「平行移動（シフト）」
 
 アイドル期間 $\Delta_{\text{idle}}$ を経過時間 $t$ から除外するには、送信を再開した瞬間にエポック開始時刻 `ca->epoch_start` をアイドル期間 $\Delta_{\text{idle}}$ の分だけ未来へずらします（平行移動）。
 
-$$t_{\text{epoch\_start}} \leftarrow t_{\text{epoch\_start}} + \Delta_{\text{idle}}, \quad \text{ただし } \Delta_{\text{idle}} = t_{\text{now}} - t_{\text{last\_send}}$$
+$$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{ただし } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
 これにより、再開後の経過時間は次のように計算され、アイドルしていた時間 $\Delta_{\text{idle}}$ がきれいに対消滅します。
 
-$$t_{\text{after}} = t_{\text{now}} - (t_{\text{epoch\_start}} + \Delta_{\text{idle}}) = (t_{\text{last\_send}} + \Delta_{\text{idle}}) - t_{\text{epoch\_start}} - \Delta_{\text{idle}} = t_{\text{last\_send}} - t_{\text{epoch\_start}}$$
+$$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}}) = (t_{\\text{last}} + \Delta_{\text{idle}}) - t_{\\text{epoch}} - \Delta_{\text{idle}} = t_{\\text{last}} - t_{\\text{epoch}}$$
 
 ```text
   cwnd
@@ -2624,7 +2624,7 @@ CUBIC では、`ca->epoch_start == 0` を「現在アクティブな Congestion 
 
 このとき $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$ なので、`ca->epoch_start` に $\Delta_{\text{idle}}$ を足すと次のようになります。
 
-$$\text{ca->epoch\_start} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
 なんと、`ca->epoch_start` が現在時刻 `now`（$T_2$）よりも $T_1 - T_0$ だけ **未来の時刻** になってしまいます！
 
@@ -2727,7 +2727,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 
 セクション 2.4 で見た通り、`tp->lsndtime` は **パケット送信時**（$T_0$）に記録されるのに対し、`ca->epoch_start` は **ACK 受信時**（$T_1 > T_0$）に記録されます。もし時刻 $T_0$ の送信後に追加送信がないまま時刻 $T_1$ の ACK でエポックが始まり、時刻 $T_2$（`now`）までアイドルだった場合、
 
-$$\text{ca->epoch\_start} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 となり、`ca->epoch_start` が現在時刻 `now` より未来になってしまいます。
 もし未来の `ca->epoch_start` のまま `bictcp_update()` が呼ばれて `t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;` が実行されると、`(__s32)(tcp_jiffies32 - ca->epoch_start)` が負の値になり、`__u64 t` への代入時に約 $2^{64}$ へラップアラウンドして 3 次関数が暴走します。これを防ぐために `after(ca->epoch_start, now)` であれば `ca->epoch_start = now` に丸めます。
@@ -3629,7 +3629,7 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
 
 - **直感的な仕組み**:
   Slow Start 中に送信側が 1 ラウンド分のパケット群を送出すると、それらのパケットはボトルネック回線の帯域幅に応じた間隔で順番に受信側へ届き、その応答である ACK も密に連なった「列車（ACK Train）」となって送信側へ戻ってきます。
-  この ACK Train の先頭（`ca->round_start`）から末尾までの継続時間は、1 ラウンド分のデータがボトルネックを通過するのに要した時間を表します。往復の最小伝搬遅延 `ca->delay_min` のうち片道分はおおよそ $\text{delay\_min} / 2$ であるため、**途切れない ACK Train がラウンド開始から $\text{delay\_min} / 2$ 以上続いたなら、送出したデータ量がすでに片道パイプ容量を埋め尽くしている** と判断できます。
+  この ACK Train の先頭（`ca->round_start`）から末尾までの継続時間は、1 ラウンド分のデータがボトルネックを通過するのに要した時間を表します。往復の最小伝搬遅延 `ca->delay_min` のうち片道分はおおよそ $\text{delay}_{\min} / 2$ であるため、**途切れない ACK Train がラウンド開始から $\text{delay}_{\min} / 2$ 以上続いたなら、送出したデータ量がすでに片道パイプ容量を埋め尽くしている** と判断できます。
 - **判定ルールと数式**:
   1. 直前の ACK からの経過時間が `HYSTART_ACK_DELTA_US`（$2000\ \mu\text{s} = 2\text{ ms}$）以内かどうかを符号付き 32 ビット差分で判定します：
      ```c
@@ -3661,17 +3661,17 @@ HyStart は特性の異なる 2 つの検出器を併用し、**どちらか一�
          ca->sample_cnt++;
      ```
   3. `ca->sample_cnt >= HYSTART_MIN_SAMPLES`（8 サンプル以上収集済み）になったら、`ca->curr_rtt` が最小 RTT `ca->delay_min` に動的閾値 $\Delta_{\text{thresh}}$ を足した値以上かを判定します：
-     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay\_min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
+     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay}_{\min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
      ```c
      if (ca->curr_rtt >= ca->delay_min + clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)) {
          ca->found = 1;
          tp->snd_ssthresh = tp->snd_cwnd;
      }
      ```
-  - **なぜ $\text{delay\_min} \gg 3$（$12.5\%$）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
+  - **なぜ $\text{delay}_{\min} \gg 3$（$12.5\%$）を $[4\text{ ms}, 16\text{ ms}]$ にクランプするのか？**:
     - 基本は最小 RTT の $1/8$（`ca->delay_min >> 3`）を許容キューイング遅延とします。
-    - **下限 `HYSTART_DELAY_MIN = 4000U`（$4\text{ ms}$）**: データセンターや LAN など $\text{delay\_min} \le 1\text{ ms}$ の超低遅延環境では、$\text{delay\_min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
-    - **上限 `HYSTART_DELAY_MAX = 16000U`（$16\text{ ms}$）**: 衛星回線や大陸間回線など $\text{delay\_min} = 200\text{ ms}$ を超える長遅延環境では、$\text{delay\_min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
+    - **下限 `HYSTART_DELAY_MIN = 4000U`（$4\text{ ms}$）**: データセンターや LAN など $\text{delay}_{\min} \le 1\text{ ms}$ の超低遅延環境では、$\text{delay}_{\min} / 8 \approx 125\ \mu\text{s}$ となり、TSO/GRO のパケット集約だけで簡単に超えてしまいます。最低 $4\text{ ms}$ の余裕を持たせることで早すぎる Slow Start 脱出を防ぎます。
+    - **上限 `HYSTART_DELAY_MAX = 16000U`（$16\text{ ms}$）**: 衛星回線や大陸間回線など $\text{delay}_{\min} = 200\text{ ms}$ を超える長遅延環境では、$\text{delay}_{\min} / 8 = 25\text{ ms}$ 以上もの深いキューが溜まるまで待ってしまうため、上限を $16\text{ ms}$ に抑えます。
 
 ---
 

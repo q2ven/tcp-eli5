@@ -21,7 +21,7 @@ Even if the receiver has gigabytes of free memory (a huge `snd_wnd`), blasting p
 
 Therefore, a TCP sender always caps its in-flight data at the **smaller of the two windows**:
 
-$$\text{Max In-Flight Data} = \min(\text{snd\_cwnd}, \text{snd\_wnd})$$
+$$\text{Max In-Flight Data} = \min(\text{snd}_{\text{cwnd}}, \text{snd}_{\text{wnd}})$$
 
 The fundamental challenge is that **routers along the path do not explicitly tell the sender how much bandwidth is available**. Congestion control is the algorithm the sender uses to probe the path's capacity — gently increasing its sending window while packets arrive safely, and backing off as soon as congestion is detected.
 

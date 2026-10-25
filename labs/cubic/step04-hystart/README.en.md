@@ -61,7 +61,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
 
 - **Intuition**:
   During Slow Start, packets sent in a round traverse the bottleneck link back-to-back at the bottleneck bandwidth rate. Their corresponding ACKs return to the sender closely spaced (within `HYSTART_ACK_DELTA_US = 2000` $\mu\text{s}$ = $2\text{ ms}$ of one another), forming a dense "ACK train".
-  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $\text{delay\_min} / 2$ in each direction), **an unbroken ACK train lasting at least $\text{delay\_min} / 2$ indicates that the flight of packets has filled the forward bottleneck pipe**.
+  The total duration of this continuous ACK train from `ca->round_start` reflects how long it took the bottleneck link to serialise the entire flight of packets. Because the minimum round-trip propagation time `ca->delay_min` comprises the forward data path plus the reverse ACK path (roughly $\text{delay}_{\min} / 2$ in each direction), **an unbroken ACK train lasting at least $\text{delay}_{\min} / 2$ indicates that the flight of packets has filled the forward bottleneck pipe**.
 - **Exact Rule and Formula**:
   1. Check whether the time elapsed since the previous ACK in the train (`ca->last_ack`) is at most `HYSTART_ACK_DELTA_US` ($2000\ \mu\text{s}$):
      ```c
@@ -93,7 +93,7 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
          ca->sample_cnt++;
      ```
   3. Once `ca->sample_cnt >= HYSTART_MIN_SAMPLES` (at least 8 samples collected in this round), compare `ca->curr_rtt` against `ca->delay_min` plus a clamped threshold $\Delta_{\text{thresh}}$:
-     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay\_min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
+     $$\Delta_{\text{thresh}} = \text{clamp}\left(\frac{\text{delay}_{\min}}{8},\ 4000\ \mu\text{s},\ 16000\ \mu\text{s}\right)$$
      ```c
      if (ca->curr_rtt >= ca->delay_min + clamp(ca->delay_min >> 3, HYSTART_DELAY_MIN, HYSTART_DELAY_MAX)) {
          ca->found = 1;
@@ -102,8 +102,8 @@ HyStart runs two independent detectors in each round once `tp->snd_cwnd >= 16`. 
      ```
   - **Why clamp `delay_min >> 3` ($12.5\%$) between $4\text{ ms}$ and $16\text{ ms}$?**:
     - By default, HyStart tolerates a queueing delay of $1/8$ ($12.5\%$) of the baseline RTT (`ca->delay_min >> 3`).
-    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($4\text{ ms}$)**: On low-latency data-centre or LAN paths where $\text{delay\_min} \le 1\text{ ms}$, $\text{delay\_min} / 8$ is only $125\ \mu\text{s}$—smaller than normal TSO/GRO batching jitter. Enforcing a $4\text{ ms}$ floor prevents premature Slow Start exits.
-    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($16\text{ ms}$)**: On long-delay paths (e.g., transcontinental or satellite links with $\text{delay\_min} > 200\text{ ms}$), waiting for $\text{delay\_min} / 8 > 25\text{ ms}$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $16\text{ ms}$.
+    - **Lower bound `HYSTART_DELAY_MIN = 4000U` ($4\text{ ms}$)**: On low-latency data-centre or LAN paths where $\text{delay}_{\min} \le 1\text{ ms}$, $\text{delay}_{\min} / 8$ is only $125\ \mu\text{s}$—smaller than normal TSO/GRO batching jitter. Enforcing a $4\text{ ms}$ floor prevents premature Slow Start exits.
+    - **Upper bound `HYSTART_DELAY_MAX = 16000U` ($16\text{ ms}$)**: On long-delay paths (e.g., transcontinental or satellite links with $\text{delay}_{\min} > 200\text{ ms}$), waiting for $\text{delay}_{\min} / 8 > 25\text{ ms}$ of queue buildup would cause excessive bufferbloat, so the threshold is capped at $16\text{ ms}$.
 
 ---
 

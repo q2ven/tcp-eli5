@@ -62,7 +62,7 @@ A physical pipe is characterised by just two parameters:
    - Therefore, BBR estimates the pipe's width `BtlBw` by tracking the **windowed maximum (max-filter)** of the delivery rate measured across ACKs.
 2. **The "Length" of the Pipe = Round-trip propagation time (`RTprop`)**
    - The pure physical two-way travel time of the path when router queues along the path are **completely empty (zero packets queued)**.
-   - Whenever a queue builds up at a router, the measured RTT increases to $\text{RTT} = \text{RTprop} + \text{queueing\_delay}$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
+   - Whenever a queue builds up at a router, the measured RTT increases to $\text{RTT} = \text{RTprop} + \text{queueing}_{\text{delay}}$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
    - Therefore, BBR estimates the pipe's length `RTprop` by tracking the **windowed minimum (min-filter)** of RTT samples measured across ACKs.
 
 ### Kleinrock's Optimal Operating Point
@@ -96,8 +96,8 @@ Even if `cwnd` (the total number of packets allowed in flight) is set to exactly
 
 Instead of relying solely on `cwnd`, BBR configures the socket's pacing rate (`sk->sk_pacing_rate`) to **space outgoing packets evenly over time at the exact bottleneck rate `BtlBw`**:
 
-- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($\text{pacing\_gain} \times \text{BtlBw}$).
-- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($\text{cwnd\_gain} \times \text{BDP}$).
+- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($\text{pacing}_{\text{gain}} \times \text{BtlBw}$).
+- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($\text{cwnd}_{\text{gain}} \times \text{BDP}$).
 
 Working together, pacing and BDP-based `cwnd` keep the pipe 100% full without building queues at the bottleneck.
 
@@ -329,7 +329,7 @@ flowchart LR
 
 On every incoming ACK, the Linux kernel's rate sampling engine (`tcp_rate_gen()`) measures how many segments (`delivered`) were delivered to the peer over the elapsed measurement interval (`interval_us`, in microseconds). Given the segment payload size `mss_cache` (in bytes) and `USEC_PER_SEC = 1,000,000` microseconds per second, the instantaneous delivery rate $\text{bw}$ in bytes per second is:
 
-$$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss\_cache} \times 1,000,000}{\text{interval\_us}}$$
+$$\text{bw (bytes/sec)} = \frac{\text{delivered} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{interval}_{\text{us}}}$$
 
 ##### Why Multiply Before Dividing in Integer Arithmetic?
 
@@ -341,15 +341,15 @@ When a connection starts in the **STARTUP** phase (BBR's equivalent of Slow Star
 
 Because floating-point instructions (`float` / `double`) are forbidden in the Linux kernel and BPF programs, BBR represents gains as fixed-point integers scaled by $2^{10} = 1024$ (`BBR_SCALE = 10`, where `BBR_UNIT = 1 << 10 = 1024` represents a `1.0x` multiplier). In this lab, the STARTUP gain is defined as `BBR_HIGH_GAIN = 2885` ($2885 / 1024 \approx 2.817\text{x}$). Applying the gain is a 64-bit multiplication followed by a right shift by `BBR_SCALE`:
 
-$$\text{pacing\_rate} = \frac{\text{bw} \times \text{BBR\_HIGH\_GAIN}}{2^{\text{BBR\_SCALE}}} = (\text{bw} \times 2885) \gg 10$$
+$$\text{pacing}_{\text{rate}} = \frac{\text{bw} \times \text{BBR}_{\text{HIGH,GAIN}}}{2^{\text{BBR}_{\text{SCALE}}}} = (\text{bw} \times 2885) \gg 10$$
 
 ##### Initialising the Pacing Rate at Connection Start (`.init`)
 
 When the 3-way handshake finishes and `.init(sk)` runs, no data segments have been acknowledged yet, so no `rate_sample` exists. To prevent the initial congestion window (`snd_cwnd = 10` segments) from being transmitted as an unpaced line-rate burst, BBR estimates an initial bandwidth from `snd_cwnd` and the handshake RTT (`rtt_us`), scales it by `BBR_HIGH_GAIN`, and enables TCP internal pacing:
 
-$$\text{init\_bw} = \frac{\text{snd\_cwnd} \times \text{mss\_cache} \times 1,000,000}{\text{rtt\_us}}$$
+$$\text{init}_{\text{bw}} = \frac{\text{snd}_{\text{cwnd}} \times \text{mss}_{\text{cache}} \times 1,000,000}{\text{rtt}_{\text{us}}}$$
 
-$$\text{init\_pacing\_rate} = (\text{init\_bw} \times \text{BBR\_HIGH\_GAIN}) \gg \text{BBR\_SCALE}$$
+$$\text{init}_{\text{pacing,rate}} = (\text{init}_{\text{bw}} \times \text{BBR}_{\text{HIGH,GAIN}}) \gg \text{BBR}_{\text{SCALE}}$$
 
 #### Concrete Numerical Walkthrough (`test.pkt` Numbers)
 
@@ -357,12 +357,12 @@ Let's trace the exact numbers from our test scenario where the payload MSS is `m
 
 1. **Right after the 3-way handshake (`.init`)**:
    - Initial `snd_cwnd = 10` segments, and the SYN/SYN-ACK RTT is `100 ms` (`rtt_us = 100,000` us):
-   - $\text{init\_bw} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$ (100 KB/s)
-   - $\text{init\_pacing\_rate} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$ (~281.7 KB/s)
+   - $\text{init}_{\text{bw}} = (10 \times 1000 \times 1,000,000) / 100,000 = 100,000\text{ B/s}$ (100 KB/s)
+   - $\text{init}_{\text{pacing,rate}} = (100,000 \times 2885) \gg 10 = 281,738\text{ B/s}$ (~281.7 KB/s)
 2. **When the first flight of 10 segments is ACKed after 10 ms (`.cong_control`)**:
    - The ACK reports `rs->delivered = 10` segments delivered over `rs->interval_us = 10,000` us (10 ms):
    - $\text{bw} = (10 \times 1000 \times 1,000,000) / 10,000 = 1,000,000\text{ B/s}$ (1.0 MB/s)
-   - $\text{pacing\_rate} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
+   - $\text{pacing}_{\text{rate}} = (1,000,000 \times 2885) \gg 10 = 2,817,382\text{ B/s}$ (~2.82 MB/s)
 
 #### What the Kernel Already Provides (Structures, Fields, and Hooks)
 
@@ -818,7 +818,7 @@ Each time an ACK arrives, the TCP sender observes an instantaneous **RTT sample 
 
 A crucial edge case arises when the application itself does not supply enough data to keep the network pipe full — for instance, between HTTP requests, during interactive SSH sessions, or after a brief pause between writes. This condition is called being **application-limited (app-limited)**.
 
-Suppose a flow on a $1000\text{ pkts/s}$ link sends a 10-packet burst at line rate (measuring $\text{max\_bw} = 1000\text{ pkts/s}$), and then the application pauses for $30\text{ ms}$ before writing just 2 packets. The delivery interval stretches to $\Delta t = 50\text{ ms}$, yielding an apparent delivery rate of $2 / 50\text{ ms} = 40\text{ pkts/s}$. The network did not become $25\times$ slower; **the application simply had nothing to send**.
+Suppose a flow on a $1000\text{ pkts/s}$ link sends a 10-packet burst at line rate (measuring $\text{max}_{\text{bw}} = 1000\text{ pkts/s}$), and then the application pauses for $30\text{ ms}$ before writing just 2 packets. The delivery interval stretches to $\Delta t = 50\text{ ms}$, yielding an apparent delivery rate of $2 / 50\text{ ms} = 40\text{ pkts/s}$. The network did not become $25\times$ slower; **the application simply had nothing to send**.
 
 The Linux kernel's rate estimator (`tcp_rate.c`) automatically detects whenever a rate sample was collected while the sender was not filling the pipe and sets `rs->is_app_limited = true`. BBR enforces a strict invariant on app-limited samples:
 
@@ -855,13 +855,13 @@ Because floating-point arithmetic is not permitted in the kernel or BPF programs
 
 - **`BW_SCALE = 24` (`BW_UNIT = 1U << 24 = 16,777,216`)**:
   Because `rs->delivered / rs->interval_us` in packets per microsecond is almost always a fraction less than `1`, BBR scales the numerator by `BW_UNIT` before dividing:
-  $$\text{bw} = \left\lfloor \frac{\text{rs->delivered} \times \text{BW\_UNIT}}{\text{rs->interval\_us}} \right\rfloor$$
+  $$\text{bw} = \left\lfloor \frac{\text{rs}\to\text{delivered} \times \text{BW}_{\text{UNIT}}}{\text{rs}\to\text{interval}_{\text{us}}} \right\rfloor$$
 - **`BBR_SCALE = 8` (`BBR_UNIT = 1U << 8 = 256`)**:
   Fixed-point scale for pacing and cwnd gains. A unity gain ($1.0\times$) is `BBR_UNIT` (`256`).
 
 Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in $\mu\text{s}$), and `gain` (scaled by $2^8$), `bbr_bdp()` computes the BDP in packets as follows:
 
-1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $\text{BDP} \times \text{BW\_UNIT}$).
+1. Multiply `bw` and `ca->min_rtt_us` in 64-bit integer precision: `w = (__u64)bw * ca->min_rtt_us;` (which represents $\text{BDP} \times \text{BW}_{\text{UNIT}}$).
 2. Multiply by `gain`, shift right by `BBR_SCALE` (`8` bits), and perform **ceiling division** by `BW_UNIT`:
    ```c
    return (((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT;
@@ -869,7 +869,7 @@ Given `bw` (in $\text{packets}/\mu\text{s} \times 2^{24}$), `ca->min_rtt_us` (in
    Why **ceiling division** (`+ BW_UNIT - 1`) rather than integer truncation? If truncation rounded `bdp` down by even 1 packet below the true BDP (e.g., $9.8 \to 9$), `snd_cwnd` would cap in-flight data below the bottleneck capacity, preventing the sender from ever filling the pipe or measuring the true bandwidth — a permanent negative feedback loop.
 3. If either `ca->min_rtt_us` or `bw` is not yet initialised (`0`), `bbr_bdp()` returns a safe default initial window of `10U` packets.
 4. Finally, BBR adds a 4-packet margin (`bdp + 4U`, floored at `BBR_CWND_MIN_TARGET = 4U`) to `tp->snd_cwnd` to absorb receiver delayed ACKs and TSO/GSO burst quantisation:
-   $$\text{snd\_cwnd} = \max(\text{bdp} + 4, 4)$$
+   $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
 
 #### Counting Packet-Timed Round Trips (`round_cnt`)
 
@@ -1057,7 +1057,7 @@ static __always_inline __u32 bbr_bdp(struct sock *sk, __u32 bw, int gain)
 }
 ```
 
-- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min\_rtt\_us} \times \text{gain} \gg 8) / 2^{24} \rceil$.
+- Returns `10U` until both `ca->min_rtt_us` and `bw` are non-zero, and otherwise computes $\lceil (\text{bw} \times \text{min}_{\text{rtt,us}} \times \text{gain} \gg 8) / 2^{24} \rceil$.
 
 #### 4. Initialisation (`bpf_bbr2_init()`) and Per-ACK Control (`bpf_bbr2_cong_control()`)
 
@@ -1540,12 +1540,12 @@ Using this physical property, BBR detects that the pipe is full (`full_bw_reache
 
 > **Full Pipe Detection Rule**:
 > At the end of each non-application-limited (`rs->is_app_limited == 0`) packet-timed round trip (`round_start == 1`), compare the current maximum delivery rate `max_bw` against the baseline `full_bw`:
-> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($\text{max\_bw} \ge 1.25 \times \text{full\_bw}$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
+> - If `max_bw` grew by **at least 25% (`1.25x`)** over `full_bw` ($\text{max}_{\text{bw}} \ge 1.25 \times \text{full}_{\text{bw}}$), the pipe is still filling: update the baseline `full_bw = max_bw` and reset the plateau counter `full_bw_cnt = 0`.
 > - If `max_bw` grew by **less than 25%**, increment `full_bw_cnt`. Once this happens for **3 consecutive non-app-limited rounds (`full_bw_cnt >= 3`)**, BBR concludes that the pipe is full and sets `full_bw_reached = 1`.
 
 In fixed-point arithmetic (`BBR_SCALE = 8`, where `BBR_UNIT = 256` represents `1.0x`), the `1.25x` growth factor is `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320`, and the threshold is computed as:
 
-$$\text{bw\_thresh} = \frac{\text{full\_bw} \times \text{bbr\_full\_bw\_thresh}}{2^{\text{BBR\_SCALE}}} = \left(\text{full\_bw} \times 320\right) \gg 8$$
+$$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{\text{bw,thresh}}}{2^{\text{BBR}_{\text{SCALE}}}} = \left(\text{full}_{\text{bw}} \times 320\right) \gg 8$$
 
 #### Counting Packet-Timed Round Trips Without Wall-Clock Timers
 
@@ -3627,7 +3627,7 @@ To solve both problems, BBR attaches a **filter expiration window `BBR_MIN_RTT_W
   Whenever an ACK produces a valid RTT sample `rs->rtt_us >= 0` that is **strictly smaller** than the current estimate (`(__u32)rs->rtt_us < ca->min_rtt_us`), BBR updates `ca->min_rtt_us = rs->rtt_us` and records the current timestamp `ca->min_rtt_stamp = tp->tcp_mstamp`. Using strict `<` rather than `<=` is essential: if identical RTT samples repeated continuously (e.g. under a constant standing queue or coarse timestamp granularity), `<=` would keep refreshing `ca->min_rtt_stamp` and the window would never expire.
 - **Detecting Filter Expiry (`filter_expired`)**:
   If more than `BBR_MIN_RTT_WIN_US` microseconds have elapsed since `ca->min_rtt_stamp`, the filter expires:
-  $$\text{filter\_expired} \iff \text{tp->tcp\_mstamp} > \text{ca->min\_rtt\_stamp} + \text{BBR\_MIN\_RTT\_WIN\_US}$$
+  $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
   When `filter_expired` is true, as long as the ACK was not artificially delayed by the receiver's delayed-ACK timer (`!rs->is_ack_delayed`), BBR overwrites `ca->min_rtt_us = rs->rtt_us` and `ca->min_rtt_stamp = tp->tcp_mstamp` (even if `rs->rtt_us >= ca->min_rtt_us`) and transitions into `BBR_PROBE_RTT`.
 
 #### Why Clamp `cwnd = 4` and Wait for Both 200 ms and 1 Packet-Timed Round?
@@ -4935,16 +4935,16 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
 1. **Preserving the Pre-Loss Window (`bbr_save_cwnd()`)**:
    Right before the kernel enters Fast Recovery (`TCP_CA_Recovery`) or RTO Loss recovery (`TCP_CA_Loss`)—and also right before entering `BBR_PROBE_RTT`—BBR saves the healthy congestion window into `ca->prior_cwnd`.
    - If the connection is *not* currently in recovery/loss (`ca->prev_ca_state < TCP_CA_Recovery`) and *not* in `BBR_PROBE_RTT` (`ca->mode != BBR_PROBE_RTT`), `tp->snd_cwnd` represents the normal operating window, so we assign `ca->prior_cwnd = tp->snd_cwnd`.
-   - Otherwise (for example, if loss occurs while `snd_cwnd` is already clamped to `4` in `BBR_PROBE_RTT`, or if multiple loss events overlap), overwriting `ca->prior_cwnd` with `tp->snd_cwnd` would destroy the saved pre-loss window. In that case, we preserve the maximum: $\text{prior\_cwnd} = \max(\text{prior\_cwnd}, \text{snd\_cwnd})$.
+   - Otherwise (for example, if loss occurs while `snd_cwnd` is already clamped to `4` in `BBR_PROBE_RTT`, or if multiple loss events overlap), overwriting `ca->prior_cwnd` with `tp->snd_cwnd` would destroy the saved pre-loss window. In that case, we preserve the maximum: $\text{prior}_{\text{cwnd}} = \max(\text{prior}_{\text{cwnd}}, \text{snd}_{\text{cwnd}})$.
 2. **Packet Conservation During the First Round of Recovery**:
    When an ACK reports newly lost packets (`rs->losses > 0`), BBR immediately subtracts those lost packets from `cwnd` (with a floor of `1`):
    $$\text{cwnd} = \max(\text{cwnd} - \text{rs->losses}, 1)$$
    Furthermore, on the exact ACK that transitions the socket into `TCP_CA_Recovery` (`state == TCP_CA_Recovery && prev_state != TCP_CA_Recovery`), BBR enables **Van Jacobson's Packet Conservation** (`ca->packet_conservation = 1`) for **one packet-timed round trip (1 RTT)**. Packet conservation dictates that a sender may only inject a new packet into the network when an old packet is confirmed to have left the network:
-   $$\text{cwnd} = \text{tcp\_packets\_in\_flight}(\text{tp}) + \max(\text{acked}, 1)$$
+   $$\text{cwnd} = \text{inflight}(\text{tp}) + \max(\text{acked}, 1)$$
    To time this single round trip, BBR sets `ca->next_rtt_delivered = tp->delivered` upon entering `TCP_CA_Recovery`. Once `bbr_update_bw()` observes `rs->prior_delivered >= ca->next_rtt_delivered` (`!before(rs->prior_delivered, ca->next_rtt_delivered)`), one full round trip has completed and `ca->packet_conservation` is cleared back to `0`.
 3. **Restoring `prior_cwnd` Upon Exiting Recovery/Loss**:
    As soon as all lost segments are recovered and the TCP state transitions from `>= TCP_CA_Recovery` back to `< TCP_CA_Recovery` (such as `TCP_CA_Open`), or when a loss event is declared spurious via `.undo_cwnd`, BBR immediately restores its saved congestion window:
-   $$\text{cwnd} = \max(\text{cwnd}, \text{ca->prior\_cwnd})$$
+   $$\text{cwnd} = \max(\text{cwnd}, \text{ca}\to\text{prior}_{\text{cwnd}})$$
 
 ##### Concrete Numerical Example
 
@@ -4961,7 +4961,7 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
 
 On Wi-Fi links (which batch frames at the MAC layer), cellular networks, cable modems, or receivers using GRO/LRO (Generic/Large Receive Offload), returning TCP ACKs are frequently coalesced. Instead of receiving a smooth stream of ACKs paced at the bottleneck rate, the sender experiences **a silent pause with zero ACKs followed by a sudden burst of ACKs acknowledging many packets at once**.
 
-If `target_cwnd` is sized strictly to $\text{BDP} \times \text{cwnd\_gain}$, the sender's in-flight packets will hit `snd_cwnd` during the silent ACK pause. Even though the pacing timer is ready to send and the bottleneck link is not congested, the sender becomes **cwnd-limited and stalls**, under-utilising the link until the delayed ACK burst arrives.
+If `target_cwnd` is sized strictly to $\text{BDP} \times \text{cwnd}_{\text{gain}}$, the sender's in-flight packets will hit `snd_cwnd` during the silent ACK pause. Even though the pacing timer is ready to send and the bottleneck link is not congested, the sender becomes **cwnd-limited and stalls**, under-utilising the link until the delayed ACK burst arrives.
 
 ##### Idea and Mathematical Formula
 
@@ -4985,8 +4985,8 @@ On every valid ACK (`rs->acked_sacked > 0 && rs->delivered > 0 && rs->interval_u
 
 1. **Compute Epoch Duration and Expected ACKs**:
    Using the microsecond delivery timestamp `tp->delivered_mstamp` and the epoch start timestamp `ca->epoch_mstamp`, compute the elapsed time `epoch_us` and multiply by `ca->max_bw` (which is scaled by `BW_SCALE = 24`, in units of `pkts/us << 24`):
-   $$\text{epoch\_us} = \text{tp->delivered\_mstamp} - \text{ca->epoch\_mstamp}$$
-   $$\text{expected\_acked} = (\text{ca->max\_bw} \times \text{epoch\_us}) \gg 24$$
+   $$\text{epoch}_{\text{us}} = \text{tp}\to\text{delivered}_{\text{mstamp}} - \text{ca}\to\text{epoch}_{\text{mstamp}}$$
+   $$\text{expected}_{\text{acked}} = (\text{ca}\to\text{max}_{\text{bw}} \times \text{epoch}_{\text{us}}) \gg 24$$
 2. **Reset the Epoch When Returning to Baseline (or on Overflow)**:
    If the cumulative packets acknowledged in the current epoch so far is at or below the steady-state expectation (`ca->ack_epoch_acked <= expected_acked`), or if adding `rs->acked_sacked` would reach the overflow threshold `BBR_ACK_EPOCH_ACKED_RESET_THRESH` ($2^{20}$ packets), start a new epoch at the current ACK:
    - `ca->ack_epoch_acked = 0`
@@ -4994,14 +4994,14 @@ On every valid ACK (`rs->acked_sacked > 0 && rs->delivered > 0 && rs->interval_u
    - `expected_acked = 0`
 3. **Accumulate ACKs and Track Peak `extra_acked`**:
    Add the newly acknowledged packets `rs->acked_sacked`, compute the excess over `expected_acked`, clamp it to `tp->snd_cwnd`, and update the running maximum `ca->extra_acked`:
-   $$\text{ack\_epoch\_acked} \mathrel{+}= \text{rs->acked\_sacked}$$
-   $$\text{extra\_acked} = \min(\text{ack\_epoch\_acked} - \text{expected\_acked}, \text{tp->snd\_cwnd})$$
-   $$\text{ca->extra\_acked} = \max(\text{ca->extra\_acked}, \text{extra\_acked})$$
+   $$\text{epoch}_{\text{acked}} \mathrel{+}= \text{rs}\to\text{acked}_{\text{sacked}}$$
+   $$\text{extra}_{\text{acked}} = \min(\text{epoch}_{\text{acked}} - \text{expected}_{\text{acked}}, \text{tp}\to\text{snd}_{\text{cwnd}})$$
+   $$\text{ca}\to\text{extra}_{\text{acked}} = \max(\text{ca}\to\text{extra}_{\text{acked}}, \text{extra}_{\text{acked}})$$
 4. **Windowed Decay Over 5 Round Trips (`BBR_EXTRA_ACKED_WIN_RTTS = 5`)**:
    So that a single old burst does not inflate `cwnd` indefinitely, whenever `ca->round_start` is true, BBR increments `ca->extra_acked_win_rtts = min(0x1FU, ca->extra_acked_win_rtts + 1U)`. When `ca->extra_acked_win_rtts >= BBR_EXTRA_ACKED_WIN_RTTS` (`5`), both `ca->extra_acked_win_rtts` and `ca->extra_acked` are reset to `0`.
 5. **Augment `target_cwnd` in `bbr_set_cwnd()`**:
-   When computing `target_cwnd`, BBR adds `ca->extra_acked` capped at the current BDP ($\text{bbr\_bdp}(\text{sk}, \text{bw}, \text{gain})$):
-   $$\text{target\_cwnd} = \text{bbr\_inflight}(\text{sk}, \text{bw}, \text{gain}) + \min(\text{ca->extra\_acked}, \text{bbr\_bdp}(\text{sk}, \text{bw}, \text{gain}))$$
+   When computing `target_cwnd`, BBR adds `ca->extra_acked` capped at the current BDP ($\text{bdp}(\text{sk}, \text{bw}, \text{gain})$):
+   $$\text{target}_{\text{cwnd}} = \text{inflight}(\text{sk}, \text{bw}, \text{gain}) + \min(\text{ca}\to\text{extra}_{\text{acked}}, \text{bdp}(\text{sk}, \text{bw}, \text{gain}))$$
 
 ---
 

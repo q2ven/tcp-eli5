@@ -23,12 +23,12 @@ Reno や CUBIC のような**ロスベース（Loss-based）**の輻輳制御で
 
 > **満杯パイプ検出（Full Pipe Detection）のルール**:
 > アプリケーション制限でない（`rs->is_app_limited == 0`）ラウンドの区切り（`round_start == 1`）ごとに、その時点の最大帯域 `max_bw` を基準値 `full_bw` と比較する。
-> - もし `max_bw` が `full_bw` から **25% 以上（`1.25x`）成長していれば**（$\text{max\_bw} \ge 1.25 \times \text{full\_bw}$）、パイプはまだ空いていると判断し、`full_bw = max_bw` に更新してカウンタ `full_bw_cnt = 0` にリセットする。
+> - もし `max_bw` が `full_bw` から **25% 以上（`1.25x`）成長していれば**（$\text{max}_{\text{bw}} \ge 1.25 \times \text{full}_{\text{bw}}$）、パイプはまだ空いていると判断し、`full_bw = max_bw` に更新してカウンタ `full_bw_cnt = 0` にリセットする。
 > - もし成長率が **25% 未満**であれば、`full_bw_cnt` を 1 増やす。これが **3 ラウンド連続（`full_bw_cnt >= 3`）** に達したら、ボトルネック帯域に達したと判断して `full_bw_reached = 1` をセットする。
 
 固定小数点（`BBR_SCALE = 8`、`BBR_UNIT = 256` が `1.0x`）では、しきい値 `1.25x` は `bbr_full_bw_thresh = BBR_UNIT * 5 / 4 = 320` と表され、判定式は以下のようになります。
 
-$$\text{bw\_thresh} = \frac{\text{full\_bw} \times \text{bbr\_full\_bw\_thresh}}{2^{\text{BBR\_SCALE}}} = \left(\text{full\_bw} \times 320\right) \gg 8$$
+$$\text{bw}_{\text{thresh}} = \frac{\text{full}_{\text{bw}} \times \text{full}_{\text{bw,thresh}}}{2^{\text{BBR}_{\text{SCALE}}}} = \left(\text{full}_{\text{bw}} \times 320\right) \gg 8$$
 
 ### 時計を使わずに「パケット数」で 1 ラウンド（1 RTT）を数える仕組み
 

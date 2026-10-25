@@ -18,21 +18,21 @@ Step 2 までで、CUBIC の 3 次関数曲線・Fast Convergence・Reno-friendl
 
 一方、CUBIC は輻輳回避（Congestion Avoidance）における目標ウィンドウ `bic_target`（$W_{\text{cubic}}(t)$）を、**現在のエポックが始まってからの実経過時間 $t$** の 3 次関数として計算します。
 
-$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\text{epoch\_start}} + d_{\min}$$
+$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 ここで、もし Congestion Avoidance の途中でアプリケーションが 2 秒間データを送らずにアイドル状態になり、2 秒後に送信を再開したら何が起きるでしょうか？
 
-`ca->epoch_start` がアイドル前の古い時刻のまま放置されていると、再開後の最初の ACK が届いた瞬間に、経過時間 $t = \text{tcp\_jiffies32} - \text{ca->epoch\_start}$ が **アイドルしていた 2 秒分を一気にジャンプ** します。すると $(t - K)^3$ が急増して `bic_target` が跳ね上がり、その間ネットワークの空き帯域を一切プローブしていなかったにもかかわらず、アイドル明けのたった 1 RTT で `snd_cwnd` が最大 1.5 倍（`ca->cnt = 2`）まで急膨張してしまいます。このような理由から、[RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) は「経過時間 $t$ にアプリケーション制限（アイドル）期間を含めてはならない（MUST NOT）」と規定しています。
+`ca->epoch_start` がアイドル前の古い時刻のまま放置されていると、再開後の最初の ACK が届いた瞬間に、経過時間 $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ が **アイドルしていた 2 秒分を一気にジャンプ** します。すると $(t - K)^3$ が急増して `bic_target` が跳ね上がり、その間ネットワークの空き帯域を一切プローブしていなかったにもかかわらず、アイドル明けのたった 1 RTT で `snd_cwnd` が最大 1.5 倍（`ca->cnt = 2`）まで急膨張してしまいます。このような理由から、[RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) は「経過時間 $t$ にアプリケーション制限（アイドル）期間を含めてはならない（MUST NOT）」と規定しています。
 
 ### 2.2 解決策：曲線の「リセット」ではなく時間軸方向の「平行移動（シフト）」
 
 アイドル期間 $\Delta_{\text{idle}}$ を経過時間 $t$ から除外するには、送信を再開した瞬間にエポック開始時刻 `ca->epoch_start` をアイドル期間 $\Delta_{\text{idle}}$ の分だけ未来へずらします（平行移動）。
 
-$$t_{\text{epoch\_start}} \leftarrow t_{\text{epoch\_start}} + \Delta_{\text{idle}}, \quad \text{ただし } \Delta_{\text{idle}} = t_{\text{now}} - t_{\text{last\_send}}$$
+$$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{ただし } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
 これにより、再開後の経過時間は次のように計算され、アイドルしていた時間 $\Delta_{\text{idle}}$ がきれいに対消滅します。
 
-$$t_{\text{after}} = t_{\text{now}} - (t_{\text{epoch\_start}} + \Delta_{\text{idle}}) = (t_{\text{last\_send}} + \Delta_{\text{idle}}) - t_{\text{epoch\_start}} - \Delta_{\text{idle}} = t_{\text{last\_send}} - t_{\text{epoch\_start}}$$
+$$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}}) = (t_{\\text{last}} + \Delta_{\text{idle}}) - t_{\\text{epoch}} - \Delta_{\text{idle}} = t_{\\text{last}} - t_{\\text{epoch}}$$
 
 ```text
   cwnd
@@ -68,7 +68,7 @@ CUBIC では、`ca->epoch_start == 0` を「現在アクティブな Congestion 
 
 このとき $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$ なので、`ca->epoch_start` に $\Delta_{\text{idle}}$ を足すと次のようになります。
 
-$$\text{ca->epoch\_start} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
 なんと、`ca->epoch_start` が現在時刻 `now`（$T_2$）よりも $T_1 - T_0$ だけ **未来の時刻** になってしまいます！
 
@@ -171,7 +171,7 @@ delta = now - tcp_sk(sk)->lsndtime;
 
 セクション 2.4 で見た通り、`tp->lsndtime` は **パケット送信時**（$T_0$）に記録されるのに対し、`ca->epoch_start` は **ACK 受信時**（$T_1 > T_0$）に記録されます。もし時刻 $T_0$ の送信後に追加送信がないまま時刻 $T_1$ の ACK でエポックが始まり、時刻 $T_2$（`now`）までアイドルだった場合、
 
-$$\text{ca->epoch\_start} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 となり、`ca->epoch_start` が現在時刻 `now` より未来になってしまいます。
 もし未来の `ca->epoch_start` のまま `bictcp_update()` が呼ばれて `t = (__s32)(tcp_jiffies32 - ca->epoch_start) * USEC_PER_JIFFY;` が実行されると、`(__s32)(tcp_jiffies32 - ca->epoch_start)` が負の値になり、`__u64 t` への代入時に約 $2^{64}$ へラップアラウンドして 3 次関数が暴走します。これを防ぐために `after(ca->epoch_start, now)` であれば `ca->epoch_start = now` に丸めます。

@@ -21,16 +21,16 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
 1. **Preserving the Pre-Loss Window (`bbr_save_cwnd()`)**:
    Right before the kernel enters Fast Recovery (`TCP_CA_Recovery`) or RTO Loss recovery (`TCP_CA_Loss`)—and also right before entering `BBR_PROBE_RTT`—BBR saves the healthy congestion window into `ca->prior_cwnd`.
    - If the connection is *not* currently in recovery/loss (`ca->prev_ca_state < TCP_CA_Recovery`) and *not* in `BBR_PROBE_RTT` (`ca->mode != BBR_PROBE_RTT`), `tp->snd_cwnd` represents the normal operating window, so we assign `ca->prior_cwnd = tp->snd_cwnd`.
-   - Otherwise (for example, if loss occurs while `snd_cwnd` is already clamped to `4` in `BBR_PROBE_RTT`, or if multiple loss events overlap), overwriting `ca->prior_cwnd` with `tp->snd_cwnd` would destroy the saved pre-loss window. In that case, we preserve the maximum: $\text{prior\_cwnd} = \max(\text{prior\_cwnd}, \text{snd\_cwnd})$.
+   - Otherwise (for example, if loss occurs while `snd_cwnd` is already clamped to `4` in `BBR_PROBE_RTT`, or if multiple loss events overlap), overwriting `ca->prior_cwnd` with `tp->snd_cwnd` would destroy the saved pre-loss window. In that case, we preserve the maximum: $\text{prior}_{\text{cwnd}} = \max(\text{prior}_{\text{cwnd}}, \text{snd}_{\text{cwnd}})$.
 2. **Packet Conservation During the First Round of Recovery**:
    When an ACK reports newly lost packets (`rs->losses > 0`), BBR immediately subtracts those lost packets from `cwnd` (with a floor of `1`):
    $$\text{cwnd} = \max(\text{cwnd} - \text{rs->losses}, 1)$$
    Furthermore, on the exact ACK that transitions the socket into `TCP_CA_Recovery` (`state == TCP_CA_Recovery && prev_state != TCP_CA_Recovery`), BBR enables **Van Jacobson's Packet Conservation** (`ca->packet_conservation = 1`) for **one packet-timed round trip (1 RTT)**. Packet conservation dictates that a sender may only inject a new packet into the network when an old packet is confirmed to have left the network:
-   $$\text{cwnd} = \text{tcp\_packets\_in\_flight}(\text{tp}) + \max(\text{acked}, 1)$$
+   $$\text{cwnd} = \text{inflight}(\text{tp}) + \max(\text{acked}, 1)$$
    To time this single round trip, BBR sets `ca->next_rtt_delivered = tp->delivered` upon entering `TCP_CA_Recovery`. Once `bbr_update_bw()` observes `rs->prior_delivered >= ca->next_rtt_delivered` (`!before(rs->prior_delivered, ca->next_rtt_delivered)`), one full round trip has completed and `ca->packet_conservation` is cleared back to `0`.
 3. **Restoring `prior_cwnd` Upon Exiting Recovery/Loss**:
    As soon as all lost segments are recovered and the TCP state transitions from `>= TCP_CA_Recovery` back to `< TCP_CA_Recovery` (such as `TCP_CA_Open`), or when a loss event is declared spurious via `.undo_cwnd`, BBR immediately restores its saved congestion window:
-   $$\text{cwnd} = \max(\text{cwnd}, \text{ca->prior\_cwnd})$$
+   $$\text{cwnd} = \max(\text{cwnd}, \text{ca}\to\text{prior}_{\text{cwnd}})$$
 
 #### Concrete Numerical Example
 
@@ -47,7 +47,7 @@ BBR explicitly models the physical pipe using **bottleneck bandwidth (`max_bw` =
 
 On Wi-Fi links (which batch frames at the MAC layer), cellular networks, cable modems, or receivers using GRO/LRO (Generic/Large Receive Offload), returning TCP ACKs are frequently coalesced. Instead of receiving a smooth stream of ACKs paced at the bottleneck rate, the sender experiences **a silent pause with zero ACKs followed by a sudden burst of ACKs acknowledging many packets at once**.
 
-If `target_cwnd` is sized strictly to $\text{BDP} \times \text{cwnd\_gain}$, the sender's in-flight packets will hit `snd_cwnd` during the silent ACK pause. Even though the pacing timer is ready to send and the bottleneck link is not congested, the sender becomes **cwnd-limited and stalls**, under-utilising the link until the delayed ACK burst arrives.
+If `target_cwnd` is sized strictly to $\text{BDP} \times \text{cwnd}_{\text{gain}}$, the sender's in-flight packets will hit `snd_cwnd` during the silent ACK pause. Even though the pacing timer is ready to send and the bottleneck link is not congested, the sender becomes **cwnd-limited and stalls**, under-utilising the link until the delayed ACK burst arrives.
 
 #### Idea and Mathematical Formula
 
@@ -71,8 +71,8 @@ On every valid ACK (`rs->acked_sacked > 0 && rs->delivered > 0 && rs->interval_u
 
 1. **Compute Epoch Duration and Expected ACKs**:
    Using the microsecond delivery timestamp `tp->delivered_mstamp` and the epoch start timestamp `ca->epoch_mstamp`, compute the elapsed time `epoch_us` and multiply by `ca->max_bw` (which is scaled by `BW_SCALE = 24`, in units of `pkts/us << 24`):
-   $$\text{epoch\_us} = \text{tp->delivered\_mstamp} - \text{ca->epoch\_mstamp}$$
-   $$\text{expected\_acked} = (\text{ca->max\_bw} \times \text{epoch\_us}) \gg 24$$
+   $$\text{epoch}_{\text{us}} = \text{tp}\to\text{delivered}_{\text{mstamp}} - \text{ca}\to\text{epoch}_{\text{mstamp}}$$
+   $$\text{expected}_{\text{acked}} = (\text{ca}\to\text{max}_{\text{bw}} \times \text{epoch}_{\text{us}}) \gg 24$$
 2. **Reset the Epoch When Returning to Baseline (or on Overflow)**:
    If the cumulative packets acknowledged in the current epoch so far is at or below the steady-state expectation (`ca->ack_epoch_acked <= expected_acked`), or if adding `rs->acked_sacked` would reach the overflow threshold `BBR_ACK_EPOCH_ACKED_RESET_THRESH` ($2^{20}$ packets), start a new epoch at the current ACK:
    - `ca->ack_epoch_acked = 0`
@@ -80,14 +80,14 @@ On every valid ACK (`rs->acked_sacked > 0 && rs->delivered > 0 && rs->interval_u
    - `expected_acked = 0`
 3. **Accumulate ACKs and Track Peak `extra_acked`**:
    Add the newly acknowledged packets `rs->acked_sacked`, compute the excess over `expected_acked`, clamp it to `tp->snd_cwnd`, and update the running maximum `ca->extra_acked`:
-   $$\text{ack\_epoch\_acked} \mathrel{+}= \text{rs->acked\_sacked}$$
-   $$\text{extra\_acked} = \min(\text{ack\_epoch\_acked} - \text{expected\_acked}, \text{tp->snd\_cwnd})$$
-   $$\text{ca->extra\_acked} = \max(\text{ca->extra\_acked}, \text{extra\_acked})$$
+   $$\text{epoch}_{\text{acked}} \mathrel{+}= \text{rs}\to\text{acked}_{\text{sacked}}$$
+   $$\text{extra}_{\text{acked}} = \min(\text{epoch}_{\text{acked}} - \text{expected}_{\text{acked}}, \text{tp}\to\text{snd}_{\text{cwnd}})$$
+   $$\text{ca}\to\text{extra}_{\text{acked}} = \max(\text{ca}\to\text{extra}_{\text{acked}}, \text{extra}_{\text{acked}})$$
 4. **Windowed Decay Over 5 Round Trips (`BBR_EXTRA_ACKED_WIN_RTTS = 5`)**:
    So that a single old burst does not inflate `cwnd` indefinitely, whenever `ca->round_start` is true, BBR increments `ca->extra_acked_win_rtts = min(0x1FU, ca->extra_acked_win_rtts + 1U)`. When `ca->extra_acked_win_rtts >= BBR_EXTRA_ACKED_WIN_RTTS` (`5`), both `ca->extra_acked_win_rtts` and `ca->extra_acked` are reset to `0`.
 5. **Augment `target_cwnd` in `bbr_set_cwnd()`**:
-   When computing `target_cwnd`, BBR adds `ca->extra_acked` capped at the current BDP ($\text{bbr\_bdp}(\text{sk}, \text{bw}, \text{gain})$):
-   $$\text{target\_cwnd} = \text{bbr\_inflight}(\text{sk}, \text{bw}, \text{gain}) + \min(\text{ca->extra\_acked}, \text{bbr\_bdp}(\text{sk}, \text{bw}, \text{gain}))$$
+   When computing `target_cwnd`, BBR adds `ca->extra_acked` capped at the current BDP ($\text{bdp}(\text{sk}, \text{bw}, \text{gain})$):
+   $$\text{target}_{\text{cwnd}} = \text{inflight}(\text{sk}, \text{bw}, \text{gain}) + \min(\text{ca}\to\text{extra}_{\text{acked}}, \text{bdp}(\text{sk}, \text{bw}, \text{gain}))$$
 
 ---
 

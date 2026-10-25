@@ -31,8 +31,8 @@ How can a sender tell that a new competing flow has joined the bottleneck and re
 
 The clue lies in **comparing the current `cwnd` at the moment of packet loss against `ca->last_max_cwnd` ($W_{\max}$) from the previous loss event**:
 
-- **When $\text{cwnd} \ge \text{last\_max\_cwnd}$**: The flow successfully recovered all the way to its previous maximum $W_{\max}$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
-- **When $\text{cwnd} < \text{last\_max\_cwnd}$**: The flow suffered another packet loss *before* it could even climb back to its previous $W_{\max}$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
+- **When $\text{cwnd} \ge \text{last}_{\max,\text{cwnd}}$**: The flow successfully recovered all the way to its previous maximum $W_{\max}$ and was probing beyond it in the convex region when loss occurred. The bottleneck share has not shrunk, so recording `last_max_cwnd = cwnd` is appropriate.
+- **When $\text{cwnd} < \text{last}_{\max,\text{cwnd}}$**: The flow suffered another packet loss *before* it could even climb back to its previous $W_{\max}$. This indicates that the bottleneck bandwidth available to this flow has shrunk (typically because a new competing flow has joined).
 
 Without Fast Convergence, setting `last_max_cwnd = cwnd` would place the next cubic plateau right at `cwnd`, causing the flow to hold on to bandwidth stubbornly. **Fast Convergence** resolves this: whenever loss occurs with `cwnd < last_max_cwnd`, it proactively lowers $W_{\max}$ further—to the **midpoint (average)** between the pre-loss window $\text{cwnd}$ ($1.0 \times \text{cwnd}$) and the post-loss window $\beta \cdot \text{cwnd}$:
 
@@ -57,7 +57,7 @@ cwnd
 
 In `starter.bpf.c` and `solution.bpf.c`, $\beta$ is represented in fixed-point arithmetic using `BICTCP_BETA_SCALE = 1024` and `beta = 717` ($717 / 1024 \approx 0.7002$). Multiplying `cwnd` by $\frac{1 + \beta}{2}$ in integer arithmetic therefore becomes:
 
-$$\text{last\_max\_cwnd} = \left\lfloor \frac{\text{cwnd} \times (\text{BICTCP\_BETA\_SCALE} + \text{beta})}{2 \times \text{BICTCP\_BETA\_SCALE}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
+$$\text{last}_{\max,\text{cwnd}} = \left\lfloor \frac{\text{cwnd} \times (\text{BETA}_{\text{SCALE}} + \text{beta})}{2 \times \text{BETA}_{\text{SCALE}}} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times (1024 + 717)}{2048} \right\rfloor = \left\lfloor \frac{\text{cwnd} \times 1741}{2048} \right\rfloor$$
 
 Note that the slow-start threshold returned by `.ssthresh` remains the standard multiplicative decrease $\max(\lfloor \text{cwnd} \times 717 / 1024 \rfloor, 2)$.
 
@@ -108,7 +108,7 @@ static const __u32 beta_scale = 8 * (BICTCP_BETA_SCALE + beta) / 3
 
 With `BICTCP_BETA_SCALE = 1024` and `beta = 717`, integer division yields `beta_scale = 4642 / 307 = 15` (representing $15 / 8 = 1.875$ RTTs). The number of ACKed segments `delta` needed to increment `ca->tcp_cwnd` by 1 is therefore obtained by shifting right by 3 (`>> 3`, i.e. dividing by 8):
 
-$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta\_scale}}{8} \right\rfloor = \text{(cwnd * beta\_scale) >> 3}$$
+$$\text{delta} = \left\lfloor \frac{\text{cwnd} \times \text{beta}_{\text{scale}}}{8} \right\rfloor = ((\text{cwnd} \times \text{beta}_{\text{scale}}) \gg 3)$$
 
 In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four steps:
 
@@ -128,7 +128,7 @@ In `bictcp_update(sk, cwnd, acked)`, the Reno-friendly region operates in four s
 3. **Clamp `ca->cnt` when `ca->tcp_cwnd > cwnd`**:
    Recall how `bpf_cubic4_cong_avoid_ai(tp, ca->cnt, acked)` works: it increments `tp->snd_cwnd` by 1 every `ca->cnt` ACKed segments. That means a **smaller** `ca->cnt` produces **faster** window growth.
    When `ca->tcp_cwnd > cwnd` (the Reno-equivalent window is ahead of `cwnd`), reaching `ca->tcp_cwnd` over one RTT (`cwnd` ACKs) requires adding 1 segment every `max_cnt` ACKs:
-   $$\text{max\_cnt} = \left\lfloor \frac{\text{cwnd}}{\text{ca->tcp\_cwnd} - \text{cwnd}} \right\rfloor$$
+   $$\text{max}_{\text{cnt}} = \left\lfloor \frac{\text{cwnd}}{\text{ca}\to\text{tcp}_{\text{cwnd}} - \text{cwnd}} \right\rfloor$$
    If the cubic curve's `ca->cnt` is larger (slower) than `max_cnt`, we clamp `ca->cnt` downwards:
    ```c
    if (ca->tcp_cwnd > cwnd) {

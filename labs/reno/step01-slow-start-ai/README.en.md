@@ -75,7 +75,7 @@ When packet loss is detected — or when a loss detection later turns out to be 
 
 - **Multiplicative Decrease (`.ssthresh()`)**: Packet loss signals that the current `cwnd` exceeded path capacity. Reno cuts `ssthresh` to half of the current `cwnd` ($\lfloor \text{cwnd} / 2 \rfloor$, written as `snd_cwnd >> 1U`), floored at a minimum of `2U` segments as mandated by RFC 5681 so transmission never stalls:
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd\_cwnd}, \text{prior\_cwnd})$.
+- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$.
 
 ### 2.6 What the Kernel Already Provides (Structs, Fields, and Helpers)
 

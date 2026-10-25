@@ -61,13 +61,13 @@ cwnd_epoch (14) +     *       最初は一気に駆け上がり、W_max に近�
 
 カーネルの輻輳回避処理は、「`ca->cnt` 個のセグメントが ACK されるごとに `snd_cwnd` を $+1$ する」という汎用カウンタ関数 `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` で動いています。では、連続関数の $W_{\text{cubic}}(t)$ をどのように `ca->cnt` に変換するのでしょうか？
 
-1. **1 RTT 先の時刻 $t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$ を評価する**:
-   エポック開始時刻 `epoch_start` は、輻輳回避の最初の ACK を受け取った瞬間に `now_us` で初期化されます。もし $t = \text{now} - \text{epoch\_start}$ のまま計算すると、最初の ACK 時点で $t = 0$ となり、$W_{\text{cubic}}(0) = \text{cwnd}$ となって目標ウィンドウが現在の `cwnd` から全く増えません。
-   そこで CUBIC は、観測された最小 RTT（`delay_min`）を足した **$t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$**（「今から 1 RTT 後に到達していたい目標時刻」）における目標ウィンドウ `bic_target` $= W_{\text{cubic}}(t)$ を計算します。
+1. **1 RTT 先の時刻 $t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$ を評価する**:
+   エポック開始時刻 `epoch_start` は、輻輳回避の最初の ACK を受け取った瞬間に `now_us` で初期化されます。もし $t = \text{now} - \text{epoch}_{\text{start}}$ のまま計算すると、最初の ACK 時点で $t = 0$ となり、$W_{\text{cubic}}(0) = \text{cwnd}$ となって目標ウィンドウが現在の `cwnd` から全く増えません。
+   そこで CUBIC は、観測された最小 RTT（`delay_min`）を足した **$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$**（「今から 1 RTT 後に到達していたい目標時刻」）における目標ウィンドウ `bic_target` $= W_{\text{cubic}}(t)$ を計算します。
 2. **`bic_target` から `ca->cnt` を逆算する**:
    現在のウィンドウが `cwnd` のとき、これからの 1 RTT で到着する ACK の総数は約 `cwnd` 個です。1 RTT 後にウィンドウを `bic_target` まで増やす（つまり 1 RTT の間に `bic_target - cwnd` 個だけ `+1` する）には、何個の ACK ごとに `+1` すればよいでしょうか？
    - **`bic_target > cwnd` のとき**:
-     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}} \right\rfloor$$
+     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}} \right\rfloor$$
    - **`bic_target <= cwnd` のとき（$t \approx K$ のプラトー）**:
      分母が $0$ 以下になるため、非常にゆっくりとした増加（100 RTT で $+1$）を表す `ca->cnt = 100 * cwnd` を設定します。
    - **過去のロス履歴がない初期エポック（`last_max_cwnd == 0` かつ `ca->cnt > 20`）**:
@@ -88,14 +88,14 @@ Linux カーネルや BPF プログラムでは浮動小数点（`float` / `doub
 
 この単位系を使うと、各計算はすべて整数シフトと乗除算だけで書けます。
 - **変曲点までの時間 `bic_K`（単位：`BICTCP_HZ`）**:
-  $$K_{\text{hz}} = \sqrt[3]{\text{cube\_factor} \times (W_{\max} - \text{cwnd})}$$
+  $$K_{\text{hz}} = \sqrt[3]{\text{cube}_{\text{factor}} \times (W_{\max} - \text{cwnd})}$$
 - **経過時間 `t`（マイクロ秒 $\to$ `BICTCP_HZ` 単位）**:
-  $$\text{t} = \frac{((\text{now\_us} - \text{epoch\_start}) + \text{delay\_min}) \ll 10}{1,000,000}$$
+  $$\text{t} = \frac{((\text{now}_{\text{us}} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}) \ll 10}{1,000,000}$$
 - **原点からの差分 `delta` $= C |t - K|^3$**:
-  符号なし整数 `__u64` で安全に計算するため、まず絶対値 $\text{offs} = |t - \text{bic\_K}|$ を取り、
-  $$\text{delta} = (\text{cube\_rtt\_scale} \times \text{offs}^3) \gg (10 + 3 \times 10)$$
+  符号なし整数 `__u64` で安全に計算するため、まず絶対値 $\text{offs} = |t - \text{bic}_{K}|$ を取り、
+  $$\text{delta} = (\text{cube}_{\text{rtt,scale}} \times \text{offs}^3) \gg (10 + 3 \times 10)$$
   （$C = 410 / 2^{10}$ と $\text{offs}^3$ の時間スケール $(2^{10})^3 = 2^{30}$ の合計 $40$ ビット分を右シフトで戻します。）
-  $t < \text{bic\_K}$（凹領域）なら `bic_target = bic_origin_point - delta`、$t \ge \text{bic\_K}$（凸領域）なら `bic_target = bic_origin_point + delta` となります。
+  $t < \text{bic}_{K}$（凹領域）なら `bic_target = bic_origin_point - delta`、$t \ge \text{bic}_{K}$（凸領域）なら `bic_target = bic_origin_point + delta` となります。
 
 #### 固定小数点の立方根 `cubic_root(__u64 a)` の仕組み
 
@@ -124,7 +124,7 @@ RTT = $100\text{ ms}$（`delay_min = 100,000` usec）の接続で、`cwnd = 20` 
    - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523`（秒に直すと $2523 / 1024 \approx 2.46\text{ 秒}$）
 3. **経過時間ごとの `bic_target` と `ca->cnt` の推移**:
 
-| フライト | 経過時間 $\text{now} - \text{epoch\_start}$ | 先読み時刻 $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | 領域と `bic_target` | `ca->cnt` | 1 RTT 後の `cwnd` |
+| フライト | 経過時間 $\text{now} - \text{epoch}_{\text{start}}$ | 先読み時刻 $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | 領域と `bic_target` | `ca->cnt` | 1 RTT 後の `cwnd` |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Flight 1** | $0.0\text{ s}$ | $102$ ($0.1\text{ s}$) | $2421$ | $5$ | 凹領域：$20 - 5 = 15$ | $14 / (15 - 14) = 14$ | $14 \to 15$ |
 | **Flight 2** | $0.6\text{ s}$ | $716$ ($0.7\text{ s}$) | $1807$ | $2$ | 凹領域：$20 - 2 = 18$ | $15 / (18 - 15) = 5$ | $15 \to 18$（$+3$ 急伸） |

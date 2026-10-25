@@ -27,7 +27,7 @@ BBR はネットワーク経路の帯域遅延積（$\text{BDP} = \text{BtlBw} \
   新しい ACK から得られた RTT サンプル `rs->rtt_us` が現在の `ca->min_rtt_us` より**厳密に小さい**（`rs->rtt_us < ca->min_rtt_us`）場合、`ca->min_rtt_us = rs->rtt_us` に更新し、更新時刻 `ca->min_rtt_stamp = tp->tcp_mstamp` を記録します。ここで `<=` ではなく厳密な `<` を使う理由は、同じ RTT 値が連続したときにタイムスタンプが延々と更新され、フィルタが永久に失効しなくなるのを防ぐためです。
 - **ウィンドウ失効（`filter_expired`）の判定**:
   最後に `ca->min_rtt_us` を更新してから `BBR_MIN_RTT_WIN_US` を超えて時間が経過した場合、フィルタが失効したと判定します。
-  $$\text{filter\_expired} \iff \text{tp->tcp\_mstamp} > \text{ca->min\_rtt\_stamp} + \text{BBR\_MIN\_RTT\_WIN\_US}$$
+  $$\text{filter}_{\text{expired}} \iff \text{tp}\to\text{tcp}_{\text{mstamp}} > \text{ca}\to\text{min}_{\text{rtt,stamp}} + \text{MIN}_{\text{RTT,WIN,US}}$$
   フィルタ失効時、受信側の遅延 ACK タイマーによる水増しサンプルでない限り（`!rs->is_ack_delayed`）、現在の `rs->rtt_us`（たとえ以前の `min_rtt_us` より大きくても）で `ca->min_rtt_us` と `ca->min_rtt_stamp` を上書きし、`BBR_PROBE_RTT` モードへ遷移します。
 
 ### なぜ `cwnd = 4` に絞り、「200 ms かつ 1 ラウンド」待つのか？

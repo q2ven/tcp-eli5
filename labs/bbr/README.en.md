@@ -62,7 +62,7 @@ A physical pipe is characterised by just two parameters:
    - Therefore, BBR estimates the pipe's width `BtlBw` by tracking the **windowed maximum (max-filter)** of the delivery rate measured across ACKs.
 2. **The "Length" of the Pipe = Round-trip propagation time (`RTprop`)**
    - The pure physical two-way travel time of the path when router queues along the path are **completely empty (zero packets queued)**.
-   - Whenever a queue builds up at a router, the measured RTT increases to $\text{RTT} = \text{RTprop} + \text{queueing\_delay}$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
+   - Whenever a queue builds up at a router, the measured RTT increases to $\text{RTT} = \text{RTprop} + \text{queueing}_{\text{delay}}$ (queueing delay is never negative, so RTT can never be shorter than `RTprop`).
    - Therefore, BBR estimates the pipe's length `RTprop` by tracking the **windowed minimum (min-filter)** of RTT samples measured across ACKs.
 
 ### Kleinrock's Optimal Operating Point
@@ -96,8 +96,8 @@ Even if `cwnd` (the total number of packets allowed in flight) is set to exactly
 
 Instead of relying solely on `cwnd`, BBR configures the socket's pacing rate (`sk->sk_pacing_rate`) to **space outgoing packets evenly over time at the exact bottleneck rate `BtlBw`**:
 
-- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($\text{pacing\_gain} \times \text{BtlBw}$).
-- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($\text{cwnd\_gain} \times \text{BDP}$).
+- **Primary control knob: `sk_pacing_rate`** — controls the *rate* at which packets are injected into the pipe ($\text{pacing}_{\text{gain}} \times \text{BtlBw}$).
+- **Safety cap: `snd_cwnd`** — bounds the total *volume* of in-flight data allowed in the pipe ($\text{cwnd}_{\text{gain}} \times \text{BDP}$).
 
 Working together, pacing and BDP-based `cwnd` keep the pipe 100% full without building queues at the bottleneck.
 

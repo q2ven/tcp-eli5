@@ -96,8 +96,8 @@ $$\text{BDP} = \text{BtlBw} \times \text{RTprop}$$
 
 そこで BBR は、`cwnd` でパイプ内の総量に上限をかけるだけでなく、ソケットのペーシングレート（`sk->sk_pacing_rate`）を使って **ボトルネック帯域 `BtlBw` とまったく同じ速度で、パケットを等間隔に滑らかに送り出します**。
 
-- **主役は `sk_pacing_rate`**（パケットを送り出すスピード ＝ $\text{pacing\_gain} \times \text{BtlBw}$）
-- **安全弁としての `snd_cwnd`**（パイプ内に出せる最大量 ＝ $\text{cwnd\_gain} \times \text{BDP}$）
+- **主役は `sk_pacing_rate`**（パケットを送り出すスピード ＝ $\text{pacing}_{\text{gain}} \times \text{BtlBw}$）
+- **安全弁としての `snd_cwnd`**（パイプ内に出せる最大量 ＝ $\text{cwnd}_{\text{gain}} \times \text{BDP}$）
 
 この 2 つを両輪として回すことで、BBR はルータに無駄な行列を作ることなく、回線を 100% 使い切ります。
 

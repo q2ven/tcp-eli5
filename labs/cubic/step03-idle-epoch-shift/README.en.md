@@ -18,21 +18,21 @@ Classical TCP Reno (AIMD) advances `snd_cwnd` purely by counting arriving ACKs. 
 
 CUBIC, by contrast, computes its target window `bic_target` ($W_{\text{cubic}}(t)$) in Congestion Avoidance as a cubic function of the **wall-clock time $t$ elapsed since the current epoch began**:
 
-$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\text{epoch\_start}} + d_{\min}$$
+$$W_{\text{cubic}}(t) = C (t - K)^3 + W_{\max}, \quad t = t_{\text{now}} - t_{\\text{epoch}} + d_{\min}$$
 
 What happens if a flow in Congestion Avoidance sits idle for 2 seconds and then resumes sending?
 
-If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{tcp\_jiffies32} - \text{ca->epoch\_start}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
+If `ca->epoch_start` is left untouched at its pre-idle timestamp, then on the very first ACK after transmission resumes, the elapsed time $t = \text{jiffies}_{32} - \text{ca}\to\text{epoch}_{\text{start}}$ **jumps forward by the entire 2-second idle gap at once**. As a result, $(t - K)^3$ explodes, `bic_target` leaps upwards, and `snd_cwnd` surges by up to $1.5\times$ (`ca->cnt = 2`) in a single RTT right after idle — even though the flow did not probe the network at all during those 2 seconds! This is why [RFC 9438 Section 5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) specifies that the elapsed time $t$ MUST NOT include periods during which `cwnd` was not updated due to application-limited (idle) behaviour.
 
 ### 2.2 The Solution: Horizontal Time Shift (`+= delta`), Not Epoch Reset (`= 0`)
 
 To exclude the idle duration $\Delta_{\text{idle}}$ from the elapsed time $t$, we shift `ca->epoch_start` forward by $\Delta_{\text{idle}}$ at the exact moment transmission resumes:
 
-$$t_{\text{epoch\_start}} \leftarrow t_{\text{epoch\_start}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\text{last\_send}}$$
+$$t_{\\text{epoch}} \leftarrow t_{\\text{epoch}} + \Delta_{\text{idle}}, \quad \text{where } \Delta_{\text{idle}} = t_{\text{now}} - t_{\\text{last}}$$
 
 When the next ACK arrives, the idle gap cancels out of the elapsed time calculation:
 
-$$t_{\text{after}} = t_{\text{now}} - (t_{\text{epoch\_start}} + \Delta_{\text{idle}}) = (t_{\text{last\_send}} + \Delta_{\text{idle}}) - t_{\text{epoch\_start}} - \Delta_{\text{idle}} = t_{\text{last\_send}} - t_{\text{epoch\_start}}$$
+$$t_{\text{after}} = t_{\text{now}} - (t_{\\text{epoch}} + \Delta_{\text{idle}}) = (t_{\\text{last}} + \Delta_{\text{idle}}) - t_{\\text{epoch}} - \Delta_{\text{idle}} = t_{\\text{last}} - t_{\\text{epoch}}$$
 
 ```text
   cwnd
@@ -68,7 +68,7 @@ Consider the following sequence of events:
 
 At $T_2$, the idle duration since the last send is $\Delta_{\text{idle}} = \text{now} - \text{lsndtime} = T_2 - T_0$. Adding $\Delta_{\text{idle}}$ to `ca->epoch_start` gives:
 
-$$\text{ca->epoch\_start} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \Delta_{\text{idle}} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > T_2 \ (\text{now})$$
 
 `ca->epoch_start` has moved into the **future** by $T_1 - T_0$ beyond `now` ($T_2$)!
 
@@ -171,7 +171,7 @@ Right after `ca->epoch_start += delta;`, why do we need `if (after(ca->epoch_sta
 
 As explained in Section 2.4, `tp->lsndtime` is recorded on **packet transmission** ($T_0$), whereas `ca->epoch_start` is recorded on **ACK arrival** ($T_1 > T_0$). If the last packet before recovery completes was sent at $T_0$, the epoch started on an ACK at $T_1 > T_0$ without sending new data, and the flow then sat idle until $T_2$ (`now`), then:
 
-$$\text{ca->epoch\_start} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
+$$\text{ca}\to\text{epoch}_{\text{start}} + \text{delta} = T_1 + (T_2 - T_0) = T_2 + (T_1 - T_0) > \text{now}$$
 
 placing `ca->epoch_start` in the future relative to `now`!
 If an ACK arrives while `ca->epoch_start > tcp_jiffies32`, then `(__s32)(tcp_jiffies32 - ca->epoch_start)` in `bictcp_update()` evaluates to a negative number, which sign-extends and wraps to a massive unsigned value near $2^{64}$ when assigned to `__u64 t`, corrupting the cubic calculation. Clamping with `if (after(ca->epoch_start, now)) ca->epoch_start = now;` prevents `ca->epoch_start` from ever exceeding `now`.

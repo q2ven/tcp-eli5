@@ -61,15 +61,15 @@ A single cubic equation naturally produces three distinct phases:
 
 The kernel's generalised linear counter `bpf_cubic3_cong_avoid_ai(tp, ca->cnt, acked)` increases `snd_cwnd` by $+1$ for every `ca->cnt` acknowledged segments. How does CUBIC translate a continuous target curve $W_{\text{cubic}}(t)$ into the discrete interval `ca->cnt`?
 
-1. **Looking one RTT ahead via $t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$**:
-   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $W_{\text{cubic}}(t)$ at $t = \text{now} - \text{epoch\_start} = 0$, we would get $W_{\text{cubic}}(0) = \text{cwnd}$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
+1. **Looking one RTT ahead via $t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$**:
+   `epoch_start` is initialised to `now_us` on the very first Congestion Avoidance ACK after recovery. If we evaluated $W_{\text{cubic}}(t)$ at $t = \text{now} - \text{epoch}_{\text{start}} = 0$, we would get $W_{\text{cubic}}(0) = \text{cwnd}$, leaving `bic_target == cwnd` and stalling growth for the entire first RTT!
    Instead, CUBIC adds the connection's minimum RTT (`delay_min`) to look one RTT ahead:
-   $$t = (\text{now} - \text{epoch\_start}) + \text{delay\_min}$$
+   $$t = (\text{now} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}$$
    Evaluating `bic_target` $= W_{\text{cubic}}(t)$ tells us **what window size we want to reach one RTT from now**.
 2. **Converting `bic_target` into `ca->cnt`**:
    Over the next RTT, roughly `cwnd` segments will be ACKed. To grow the window from `cwnd` to `bic_target` over those `cwnd` ACKs (an increase of `bic_target - cwnd` segments), we must increment `snd_cwnd` by $+1$ every:
    - **When `bic_target > cwnd`**:
-     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}} \right\rfloor$$
+     $$\text{cnt} = \left\lfloor \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}} \right\rfloor$$
    - **When `bic_target <= cwnd` (at the $W_{\max}$ plateau)**:
      To prevent division by zero or negative values and keep the window virtually flat, CUBIC sets `ca->cnt = 100 * cwnd` (only $+1$ segment per 100 RTTs).
    - **Initial epoch with no prior loss (`last_max_cwnd == 0` and `ca->cnt > 20`)**:
@@ -90,12 +90,12 @@ Because neither the Linux kernel nor BPF allows floating-point instructions, CUB
 
 With these fixed-point constants, every formula reduces to integer shifts, multiplications, and divisions:
 - **Time to origin `bic_K` (in `BICTCP_HZ` units)**:
-  $$K_{\text{hz}} = \sqrt[3]{\text{cube\_factor} \times (W_{\max} - \text{cwnd})}$$
+  $$K_{\text{hz}} = \sqrt[3]{\text{cube}_{\text{factor}} \times (W_{\max} - \text{cwnd})}$$
 - **Elapsed time `t` (microseconds $\to$ `BICTCP_HZ` units)**:
-  $$\text{t} = \frac{((\text{now\_us} - \text{epoch\_start}) + \text{delay\_min}) \ll 10}{1,000,000}$$
+  $$\text{t} = \frac{((\text{now}_{\text{us}} - \text{epoch}_{\text{start}}) + \text{delay}_{\min}) \ll 10}{1,000,000}$$
 - **Cubic distance from origin `delta` $= C |t - K|^3$**:
-  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $\text{offs} = |t - \text{bic\_K}|$, and then shift right by $10 + 3 \times 10 = 40$ bits to undo the scaling of $C$ ($2^{10}$) and $\text{offs}^3$ ($2^{30}$):
-  $$\text{delta} = (\text{cube\_rtt\_scale} \times \text{offs}^3) \gg (10 + 3 \times \text{BICTCP\_HZ})$$
+  To work purely with unsigned 64-bit integers (`__u64`), we first take the absolute distance $\text{offs} = |t - \text{bic}_{K}|$, and then shift right by $10 + 3 \times 10 = 40$ bits to undo the scaling of $C$ ($2^{10}$) and $\text{offs}^3$ ($2^{30}$):
+  $$\text{delta} = (\text{cube}_{\text{rtt,scale}} \times \text{offs}^3) \gg (10 + 3 \times \text{BICTCP}_{\text{HZ}})$$
   In the concave region (`t < ca->bic_K`), `bic_target = ca->bic_origin_point - delta`; in the convex region (`t >= ca->bic_K`), `bic_target = ca->bic_origin_point + delta`.
 
 #### How `cubic_root(__u64 a)` Computes $\lfloor \sqrt[3]{a} \rfloor$ in Integer Arithmetic
@@ -125,7 +125,7 @@ Let's trace the exact numbers on a connection with RTT = $100\text{ ms}$ (`delay
    - `bic_K = cubic_root(2,681,735,677 * (20 - 14)) = cubic_root(16,090,414,062) = 2523` ($2523 / 1024 \approx 2.46\text{ s}$)
 3. **Evolution of `bic_target` and `ca->cnt` across all five flights**:
 
-| Flight | Elapsed $\text{now} - \text{epoch\_start}$ | Lookahead $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
+| Flight | Elapsed $\text{now} - \text{epoch}_{\text{start}}$ | Lookahead $t$ (`BICTCP_HZ`) | $\text{offs} = \|t - 2523\|$ | $\text{delta} = C \cdot \text{offs}^3$ | Region & `bic_target` | `ca->cnt` | `cwnd` after 1 RTT |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Flight 1** | $0.0\text{ s}$ | $102$ ($0.1\text{ s}$) | $2421$ | $5$ | Concave: $20 - 5 = 15$ | $14 / (15 - 14) = 14$ | $14 \to 15$ |
 | **Flight 2** | $0.6\text{ s}$ | $716$ ($0.7\text{ s}$) | $1807$ | $2$ | Concave: $20 - 2 = 18$ | $15 / (18 - 15) = 5$ | $15 \to 18$ ($+3$ jump) |

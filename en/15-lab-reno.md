@@ -21,7 +21,7 @@ Even if the receiver has gigabytes of free memory (a huge `snd_wnd`), blasting p
 
 Therefore, a TCP sender always caps its in-flight data at the **smaller of the two windows**:
 
-$$\text{Max In-Flight Data} = \min(\text{snd\_cwnd}, \text{snd\_wnd})$$
+$$\text{Max In-Flight Data} = \min(\text{snd}_{\text{cwnd}}, \text{snd}_{\text{wnd}})$$
 
 The fundamental challenge is that **routers along the path do not explicitly tell the sender how much bandwidth is available**. Congestion control is the algorithm the sender uses to probe the path's capacity — gently increasing its sending window while packets arrive safely, and backing off as soon as congestion is detected.
 
@@ -243,7 +243,7 @@ When packet loss is detected — or when a loss detection later turns out to be 
 
 - **Multiplicative Decrease (`.ssthresh()`)**: Packet loss signals that the current `cwnd` exceeded path capacity. Reno cuts `ssthresh` to half of the current `cwnd` ($\lfloor \text{cwnd} / 2 \rfloor$, written as `snd_cwnd >> 1U`), floored at a minimum of `2U` segments as mandated by RFC 5681 so transmission never stalls:
   $$\text{ssthresh} = \max(\lfloor \text{cwnd} / 2 \rfloor, 2)$$
-- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd\_cwnd}, \text{prior\_cwnd})$.
+- **Undoing Spurious Window Reductions (`.undo_cwnd()`)**: If the kernel reduces `cwnd` on loss recovery entry, but subsequently discovers via DSACK or timestamps that no packet was actually lost (e.g. packets were merely reordered), it calls `.undo_cwnd()` to restore `snd_cwnd` to the larger of the current `snd_cwnd` and the pre-loss `prior_cwnd`: $\max(\text{snd}_{\text{cwnd}}, \text{prior}_{\text{cwnd}})$.
 
 #### 2.6 What the Kernel Already Provides (Structs, Fields, and Helpers)
 
@@ -750,11 +750,11 @@ What if segment 1 was only delayed by packet reordering? Shortly after the sende
 
 When entering **Fast Recovery (`TCP_CA_Recovery`)** on three duplicate ACKs or **Loss (`TCP_CA_Loss`)** on a Retransmission Timeout (RTO), NewReno sets the new slow start threshold (`snd_ssthresh`) to half of the current `snd_cwnd`, bounded below by 2 segments ([RFC 5681 §3.1](https://www.rfc-editor.org/rfc/rfc5681#section-3.1)):
 
-$$\text{ssthresh} = \max\left(\left\lfloor \frac{\text{snd\_cwnd}}{2} \right\rfloor, 2\right)$$
+$$\text{ssthresh} = \max\left(\left\lfloor \frac{\text{snd}_{\text{cwnd}}}{2} \right\rfloor, 2\right)$$
 
 At the exact same moment, NewReno saves the pre-loss window size into a per-socket variable `loss_cwnd` so it can recover the original window if the loss later turns out to be spurious:
 
-$$\text{loss\_cwnd} = \text{snd\_cwnd}$$
+$$\text{loss}_{\text{cwnd}} = \text{snd}_{\text{cwnd}}$$
 
 ##### 2. Division of Labour Between the TCP Core (PRR) and `.ssthresh`
 
@@ -778,9 +778,9 @@ When DSACK (or TCP Timestamp Eifel Detection, [RFC 3522](https://www.rfc-editor.
 
 NewReno's `.undo_cwnd(sk)` returns the maximum of the current window and the saved pre-loss window:
 
-$$\text{cwnd}_{\text{undo}} = \max(\text{snd\_cwnd}, \text{loss\_cwnd})$$
+$$\text{cwnd}_{\text{undo}} = \max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$$
 
-Why return $\max(\text{snd\_cwnd}, \text{loss\_cwnd})$ instead of simply returning $\text{loss\_cwnd}$? Because during a spurious Recovery or Loss episode, incoming ACKs might have already grown `tp->snd_cwnd` past the initial `loss_cwnd` by the time the undo is triggered. Taking the maximum guarantees that undoing a window reduction never accidentally shrinks a window that has already grown larger. (Meanwhile, the TCP core automatically restores `snd_ssthresh` from `tp->prior_ssthresh`.)
+Why return $\max(\text{snd}_{\text{cwnd}}, \text{loss}_{\text{cwnd}})$ instead of simply returning $\text{loss}_{\text{cwnd}}$? Because during a spurious Recovery or Loss episode, incoming ACKs might have already grown `tp->snd_cwnd` past the initial `loss_cwnd` by the time the undo is triggered. Taking the maximum guarantees that undoing a window reduction never accidentally shrinks a window that has already grown larger. (Meanwhile, the TCP core automatically restores `snd_ssthresh` from `tp->prior_ssthresh`.)
 
 #### Concrete Numerical Example and Sequence Diagram (`snd_cwnd = 10`)
 
@@ -974,7 +974,7 @@ u32 BPF_PROG(bpf_reno2_ssthresh, struct sock *sk)
 }
 ```
 
-- The right shift `tp->snd_cwnd >> 1U` computes integer division by 2 ($\lfloor \text{snd\_cwnd} / 2 \rfloor$), and `max(..., 2U)` enforces the lower bound of 2 segments required by RFC 5681 §3.1.
+- The right shift `tp->snd_cwnd >> 1U` computes integer division by 2 ($\lfloor \text{snd}_{\text{cwnd}} / 2 \rfloor$), and `max(..., 2U)` enforces the lower bound of 2 segments required by RFC 5681 §3.1.
 - Before returning, it saves the pre-reduction `tp->snd_cwnd` into `ca->loss_cwnd` so `bpf_reno2_undo_cwnd()` can restore it if the loss turns out to be spurious.
 
 #### 3. Handling Transition to `TCP_CA_Loss`: `bpf_reno2_set_state()`

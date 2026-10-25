@@ -27,7 +27,7 @@ TCP 送信側が ACK を受け取るたびに観測できるのは、その時�
 
 特に注意が必要なのが、Web サーバのレスポンス間や対話型通信のように、アプリケーションが一時的に少ししかデータを書き込まない **App-Limited（アプリケーション制限）** 状態です。
 
-たとえば $1000\text{ pkts/s}$ の回線で、最初に 10 パケットをバースト送信して $\text{max\_bw} = 1000\text{ pkts/s}$ を計測したあと、アプリケーションが $30\text{ ms}$ 休止してから 2 パケットだけを送ったとします。このとき配送区間は $\Delta t = 50\text{ ms}$ に引き伸ばされ、見かけの配送レートは $2 / 50\text{ ms} = 40\text{ pkts/s}$ まで落ち込みます。これはネットワークが遅くなったのではなく、**アプリケーションがデータを送らなかっただけ** です。
+たとえば $1000\text{ pkts/s}$ の回線で、最初に 10 パケットをバースト送信して $\text{max}_{\text{bw}} = 1000\text{ pkts/s}$ を計測したあと、アプリケーションが $30\text{ ms}$ 休止してから 2 パケットだけを送ったとします。このとき配送区間は $\Delta t = 50\text{ ms}$ に引き伸ばされ、見かけの配送レートは $2 / 50\text{ ms} = 40\text{ pkts/s}$ まで落ち込みます。これはネットワークが遅くなったのではなく、**アプリケーションがデータを送らなかっただけ** です。
 
 Linux カーネルの配送レート計測器（`tcp_rate.c`）は、送信ウィンドウやパイプを使い切っていない状態で計測されたサンプルに自動的に `rs->is_app_limited = 1` フラグを立てます。BBR はこのフラグに対して次の不変条件（ルール）を設けています。
 
@@ -64,13 +64,13 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
 
 - **`BW_SCALE = 24`（`BW_UNIT = 1U << 24 = 16,777,216`）**:
   1 マイクロ秒あたりに届くパケット数（`rs->delivered / rs->interval_us`）は通常 `1` 未満の小さな小数になるため、割り算の前に `BW_UNIT` を掛けて整数化します。
-  $$\text{bw} = \left\lfloor \frac{\text{rs->delivered} \times \text{BW\_UNIT}}{\text{rs->interval\_us}} \right\rfloor$$
+  $$\text{bw} = \left\lfloor \frac{\text{rs}\to\text{delivered} \times \text{BW}_{\text{UNIT}}}{\text{rs}\to\text{interval}_{\text{us}}} \right\rfloor$$
 - **`BBR_SCALE = 8`（`BBR_UNIT = 1U << 8 = 256`）**:
   ゲイン（倍率）を表す固定小数点単位です。等倍（$1.0\times$）は `BBR_UNIT`（`256`）で表されます。
 
 この `bw`（単位: $\text{packets}/\mu\text{s} \times 2^{24}$）と `ca->min_rtt_us`（単位: $\mu\text{s}$）、および `gain`（単位: $2^8$）から BDP パケット数を求める式は次の通りです（`bbr_bdp()`）：
 
-1. まず 64 ビット整数で `w = (__u64)bw * ca->min_rtt_us` を計算します（単位は $\text{packets} \times \text{BW\_UNIT}$）。
+1. まず 64 ビット整数で `w = (__u64)bw * ca->min_rtt_us` を計算します（単位は $\text{packets} \times \text{BW}_{\text{UNIT}}$）。
 2. 次に `gain` を掛けて `BBR_SCALE`（`8` ビット）右シフトし、最後に `BW_UNIT` で **切り上げ除算（ceil）** を行います。
    ```c
    return (((w * gain) >> BBR_SCALE) + BW_UNIT - 1) / BW_UNIT;
@@ -78,7 +78,7 @@ BPF / カーネル内では浮動小数点数が使えないため、Linux カ�
    ここで単なる切り捨て（`/ BW_UNIT`）ではなく `+ BW_UNIT - 1` を足して **切り上げ（ceil）** にするのには重要な理由があります。もし端数を切り捨てて `snd_cwnd` が真の BDP より 1 パケットでも小さくなると、送信側はパイプを 100% 満たせなくなり、結果としてそれ以上の帯域を計測できなくなる「負のフィードバックループ」に陥るためです。
 3. 未計測時（`ca->min_rtt_us == 0` または `bw == 0`）は、ゼロ除算や極端な縮小を防ぐため安全な初期ウィンドウ `10U` パケットを返します。
 4. 算出された `bdp` に対し、受信側の遅延 ACK（Delayed ACK）や TSO/GSO 送信の量子化誤差を吸収するためのマージンとして `4` パケットを加え、最小ターゲット `BBR_CWND_MIN_TARGET`（`4U`）との最大値を `tp->snd_cwnd` に設定します。
-   $$\text{snd\_cwnd} = \max(\text{bdp} + 4, 4)$$
+   $$\text{snd}_{\text{cwnd}} = \max(\text{bdp} + 4, 4)$$
 
 ### パケットタイムド・ラウンド（`round_cnt`）の数え方
 

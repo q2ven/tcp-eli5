@@ -148,11 +148,11 @@ flowchart LR
 具体的には、ACK が届くたびに `bictcp_update()` が次の手順で `ca->cnt` を計算します。
 
 1. **1 RTT 先の目標窓 `bic_target` を求める**:
-   現在時刻 `now` からの経過時間に最小 RTT（`ca->delay_min`）を足した「1 RTT 後の時刻 $t = \text{now} - \text{epoch\_start} + \text{delay\_min}$」における $W_{\text{cubic}}(t)$ を計算し、これを **`bic_target`** とします。
+   現在時刻 `now` からの経過時間に最小 RTT（`ca->delay_min`）を足した「1 RTT 後の時刻 $t = \text{now} - \text{epoch}_{\text{start}} + \text{delay}_{\min}$」における $W_{\text{cubic}}(t)$ を計算し、これを **`bic_target`** とします。
 2. **この 1 RTT で増やしたい個数から逆算して `ca->cnt` を決める**:
    1 RTT の間に到着する ACK の総数は、おおよそ現在の窓サイズ `cwnd` 個です。1 RTT 後に `cwnd` を `bic_target` まで到達させるには、`cwnd` 個の ACK が返ってくる間に `bic_target - cwnd` 回だけ `snd_cwnd++` を実行すればよいことになります。
    - **`bic_target > cwnd` のとき**:
-     $$\text{ca->cnt} = \frac{\text{cwnd}}{\text{bic\_target} - \text{cwnd}}$$
+     $$\text{ca}\to\text{cnt} = \frac{\text{cwnd}}{\text{bic}_{\text{target}} - \text{cwnd}}$$
      たとえば現在 `cwnd = 100` で、1 RTT 先の目標が `bic_target = 110`（あと $+10$ 増やしたい）なら、`ca->cnt = 100 / (110 - 100) = 10` となります。つまり「10 パケット ACK されるごとに `snd_cwnd` を $+1$ する」ペースにすれば、100 パケット分の ACK（1 RTT）でちょうど $+10$ 増えて `110` に到達します。
    - **`bic_target <= cwnd` のとき（プラトー付近）**:
      今すぐ窓を増やす必要はないため、`ca->cnt = 100 * cwnd`（100 RTT かけてやっと $+1$ する程度）という非常に大きな値を設定し、事実上ウィンドウの増加をストップさせます。
@@ -203,7 +203,7 @@ flowchart TD
 
 ### Step 3 (`step03-idle-epoch-shift`): アイドル期間後の `epoch_start` シフト
 - **学ぶこと**:
-  - Reno は ACK が届いたときだけ時計が進むので、アプリが送信を休止（アイドル）している間は自然に成長が止まります。しかし CUBIC は実時間 $t = \text{now} - \text{ca->epoch\_start}$ を見るため、Congestion Avoidance 中にアプリが数秒間データを送らずに休むと、その休んでいた時間まで $t$ に加算されてしまいます。
+  - Reno は ACK が届いたときだけ時計が進むので、アプリが送信を休止（アイドル）している間は自然に成長が止まります。しかし CUBIC は実時間 $t = \text{now} - \text{ca}\to\text{epoch}_{\text{start}}$ を見るため、Congestion Avoidance 中にアプリが数秒間データを送らずに休むと、その休んでいた時間まで $t$ に加算されてしまいます。
   - すると送信を再開した直後の最初の ACK で、$t$ が一気に数秒先の $t \gg K$（急激な凸領域）へワープしてしまい、たった 1 RTT で `cwnd` が 1.5 倍に大爆発します（[RFC 9438 §5.8](https://www.rfc-editor.org/rfc/rfc9438#section-5.8) で明確に禁止されている挙動です）。
   - これを防ぐため、飛行中パケット 0（`in_flight == 0`）から送信を再開した瞬間に発火する `CA_EVENT_TX_START`（`.cwnd_event_tx_start` フック）を捕捉し、休んでいた時間 `delta = now - tp->lsndtime` の分だけ `ca->epoch_start += delta` と未来へシフトさせて、3 次関数の時計を一時停止させる仕組みを実装します。
 
