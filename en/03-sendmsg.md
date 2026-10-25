@@ -883,7 +883,7 @@ void tcp_skb_entail(struct sock *sk, struct sk_buff *skb)
 - `__skb_header_release()` marks the buffer with `skb->nohdr`, indicating that clones may freely overwrite the header area.  When `tcp_transmit_skb()` prepends headers via `skb_push()` on the clone, `skb_header_cloned()` evaluates to false, avoiding an expensive copy through `pskb_expand_head()`.
 - `psp_enqueue_set_decrypted()` is for PSP encryption offload; it is normally a no-op (659a2899a57d).
 - `sk_wmem_queued_add()` and `sk_mem_charge()` record the empty `sk_buff`'s truesize (header overhead) into the accounting ledger.  The former is compared against `sk_sndbuf`, while the latter debits forward allocation.
-- `TCP_NAGLE_PUSH` is a one-shot directive set during `setsockopt(TCP_NODELAY)` or cork removal to "push whatever is currently queued".  It is cleared as soon as new data arrives.  Otherwise, this bit would persist indefinitely after toggling `TCP_NODELAY` (89ebd197eb2c).
+- `TCP_NAGLE_PUSH` is a one-shot directive set during `setsockopt(TCP_NODELAY, 1)` or cork removal to "push whatever is currently queued (even if `TCP_CORK` is active)".  It is cleared as soon as new data arrives so it does not leak onto future writes (89ebd197eb2c; see [Appendix: The 3 Bits of `tp->nonagle` and the Role of `TCP_NAGLE_PUSH`](appendix-notes.md#tcp-nagle-push)).
 - `tcp_slow_start_after_idle_check()` ([include/net/tcp.h#L1754](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1754)) enforces RFC 5681 §4.1: "if idle for more than an RTO, reset cwnd to the restart window":
 
 ```c

@@ -883,7 +883,7 @@ void tcp_skb_entail(struct sock *sk, struct sk_buff *skb)
 - `__skb_header_release()` は「この `sk_buff` のヘッダ領域は clone 側が自由に書いてよい」という印（`skb->nohdr`）を付けます。`tcp_transmit_skb()` は clone にヘッダを `skb_push()` しますが、その際 `skb_header_cloned()` が偽になるので `pskb_expand_head()` のコピーが要りません。
 - `psp_enqueue_set_decrypted()` は PSP（暗号化オフロード）用で、通常は何もしません（659a2899a57d）。
 - `sk_wmem_queued_add()` と `sk_mem_charge()` で、空の `sk_buff` の truesize（ヘッダ分）を家計簿に記帳します。前者は `sk_sndbuf` との比較用、後者は forward alloc の消費です。
-- `TCP_NAGLE_PUSH` は、`setsockopt(TCP_NODELAY)` や cork 解除の時点で「すでにキューにあるデータは押し出せ」という一回限りの指示です。新しいデータが来たら消します。消さないと、`TCP_NODELAY` を立てて戻した後などに、このビットが残り続ける問題がありました（89ebd197eb2c）。
+- `TCP_NAGLE_PUSH` は、`setsockopt(TCP_NODELAY, 1)` や cork 解除の時点で「すでにキューにあるデータだけは（たとえ `TCP_CORK` 中でも）押し出せ」という一回限りの指示ビットです。新しく `write()` されたデータには効かせないため、新しい `sk_buff` をキューにつなぐここで必ず消します（89ebd197eb2c。詳しい仕組みと具体例は [補足ノート: `tp->nonagle` の 3 つのビットと `TCP_NAGLE_PUSH` の役割](appendix-notes.md#tcp-nagle-push) を参照）。
 - `tcp_slow_start_after_idle_check()`（[include/net/tcp.h#L1754](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n1754)） は、RFC 5681 §4.1 の「RTO 以上アイドルだったら cwnd を restart window に戻す」を実行します。
 
 ```c
