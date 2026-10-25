@@ -78,11 +78,11 @@ BSD ソケットには PUSH 引数がありません。Linux は後者の「PUSH
 
 URGENT フラグは `MSG_OOB` に対応します。[§3.8.5](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.5) の urgent pointer は `tp->snd_up` に記録されます（`tcp_mark_urg()`）。
 
-#### Nagle（RFC 896）と送信側 SWS 回避 — 考え方だけ
+#### Nagle（RFC 896）と送信側 SWS（Silly Window Syndrome）回避 — 考え方だけ
 
 [RFC 896](https://www.rfc-editor.org/rfc/rfc896) "Congestion Control in IP/TCP Internetworks" は、1 バイトずつ打鍵される telnet のような通信が「41 バイトのパケットに 1 バイトのデータ」を大量に生んでネットワークを詰まらせる問題を扱いました。解決策（Nagle アルゴリズム）は「未 ACK のデータがある間は、小さいセグメントを新たに送らずに溜めておく」というものです。[RFC 9293 §3.7.4](https://www.rfc-editor.org/rfc/rfc9293#section-3.7.4) はこれを SHOULD とし、アプリが接続ごとに無効化できること（`TCP_NODELAY`）を MUST としています。
 
-[§3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) の送信側 SWS 回避アルゴリズムは、送信してよい条件の 1 つとして「相手がこれまでに広告した最大ウィンドウ `max(SND.WND)` の Fs 割（推奨 Fs = 1/2）以上を送れること」を挙げています。この「最大ウィンドウの半分」という基準は、本章の `forced_push()` と `tcp_bound_to_half_wnd()` に `tp->max_window >> 1` という形で出てきます。
+もう 1 つ、小さなパケットが大量発生する古典的な病気に **SWS（Silly Window Syndrome：愚かなウィンドウ症候群、[RFC 813](https://www.rfc-editor.org/rfc/rfc813)）** があります。これは受信バッファが満杯（`WIN = 0`）になった後、受信アプリが数バイト読んだだけで受信側が小さな窓（`WIN = 数バイト`）を広告し、送信側がそれに飛びついて数バイトの極小セグメントを送ってしまう悪循環です（図解と詳細は [補足ノート: SWS（Silly Window Syndrome）と回避策](appendix-notes.md#sws-avoidance) を参照）。[RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) の送信側 SWS 回避アルゴリズムは、送信してよい条件の 1 つとして「相手がこれまでに広告した最大ウィンドウ `max(SND.WND)` の Fs 割（推奨 Fs = 1/2）以上を送れること」を挙げています。この「最大ウィンドウの半分」という基準は、本章の `forced_push()` と `tcp_bound_to_half_wnd()` に `tp->max_window >> 1` という形で出てきます。
 
 Nagle 判定そのもの（`tcp_nagle_test()`、`TCP_CORK`、`tcp_tso_should_defer()`）は第 4 章で扱います。本章で出てくるのは、`tcp_push()` が第 4 章へ渡す `nonagle` 引数（`TCP_NAGLE_OFF` / `TCP_NAGLE_CORK` / `TCP_NAGLE_PUSH`）だけです。
 

@@ -78,11 +78,11 @@ The BSD sockets API has no PUSH argument.  Linux follows the latter rule ("PUSH 
 
 The URGENT flag corresponds to `MSG_OOB`.  The urgent pointer in [§3.8.5](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.5) is recorded in `tp->snd_up` (`tcp_mark_urg()`).
 
-#### Nagle (RFC 896) and sender SWS avoidance — the concept only
+#### Nagle (RFC 896) and sender SWS (Silly Window Syndrome) avoidance — the concept only
 
 [RFC 896](https://www.rfc-editor.org/rfc/rfc896) "Congestion Control in IP/TCP Internetworks" addressed the problem where single-byte keystroke applications like telnet generated massive numbers of packets containing 41 bytes of packet header for 1 byte of data, congesting the network ("tinygrams").  The solution (Nagle algorithm) is: "while there is unacknowledged data, do not send small segments; buffer them instead".  [RFC 9293 §3.7.4](https://www.rfc-editor.org/rfc/rfc9293#section-3.7.4) makes this a SHOULD, and mandates that an application MUST be able to disable it per-connection (`TCP_NODELAY`).
 
-The sender SWS avoidance algorithm in [§3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) lists as one condition for transmission that the sender can transmit at least a fraction Fs (recommended Fs = 1/2) of the maximum window advertised by the peer, `max(SND.WND)`.  This criterion of "half of the maximum window" appears in this chapter's `forced_push()` and `tcp_bound_to_half_wnd()` as `tp->max_window >> 1`.
+A related classic pathology that generates tiny segments is **SWS (Silly Window Syndrome, [RFC 813](https://www.rfc-editor.org/rfc/rfc813))**, where a full receive buffer (`WIN = 0`) is drained a few bytes at a time by the receiving app, causing the receiver to advertise tiny windows and the sender to immediately fill them with tiny sub-MSS packets (see [Deep-Dive Notes: SWS (Silly Window Syndrome) and Its Avoidance](appendix-notes.md#sws-avoidance) for diagrams and details).  The sender SWS avoidance algorithm in [RFC 9293 §3.8.6.2.1](https://www.rfc-editor.org/rfc/rfc9293#section-3.8.6.2.1) lists as one condition for transmission that the sender can transmit at least a fraction Fs (recommended Fs = 1/2) of the maximum window advertised by the peer, `max(SND.WND)`.  This criterion of "half of the maximum window" appears in this chapter's `forced_push()` and `tcp_bound_to_half_wnd()` as `tp->max_window >> 1`.
 
 The Nagle evaluation itself (`tcp_nagle_test()`, `TCP_CORK`, `tcp_tso_should_defer()`) is covered in Chapter 4.  In this chapter, what appears is merely the `nonagle` argument (`TCP_NAGLE_OFF` / `TCP_NAGLE_CORK` / `TCP_NAGLE_PUSH`) that `tcp_push()` passes to Chapter 4.
 
