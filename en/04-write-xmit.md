@@ -313,7 +313,7 @@ static int tcp_mtu_probe(struct sock *sk)
 ```
 
 - Early return wrapped in `likely(...)`: Because MTU probing is disabled by default (`tcp_mtu_probing=0`), execution almost always bails out here.  The `likely()` annotation was added in 12a59abc22d6.  It also exits if already probing (`probe_size != 0`), in recovery, if cwnd < 11, or if transmitting SACK/DSACK blocks (where varying option lengths distort calculations).
-- `probe_size` is the midpoint of a binary search between `search_low` and `search_high`.  `size_needed` is "1 probe + `reordering + 1` normal segments".  This requires enough data that if the probe is lost, trailing packets will generate dupacks/SACKs to detect the loss.
+- `probe_size` is the midpoint of a binary search between `search_low` and `search_high`.  `size_needed` is the byte count for "1 probe + `tp->reordering + 1` normal segments".  `tp->reordering` is the DupACK/SACK threshold required to trigger Fast Retransmit (default `net.ipv4.tcp_reordering = 3`); the extra `+ 1` MSS margin ensures that even if the final trailing bytes form a partial `< 1 MSS` segment held back by Nagle or `TCP_CORK`, at least `tp->reordering` (3) full-sized trailing segments will still go out on the wire to trigger DupACKs/SACKs if the probe is lost (commit `91cc17c0e5e5`).
 
 ```c
 	/* Have enough data in the send queue to probe? */
@@ -362,7 +362,7 @@ If any of pending data (`write_seq - snd_nxt`), rwnd, or cwnd is insufficient, p
 }
 ```
 
-On success, cwnd is decremented by 1 (since the probe is effectively two packets).  It is then placed into the retransmit queue just like normal data via `tcp_event_new_data_sent()`, recording `probe_seq_start/end`.  Success or failure is determined during ACK processing (`tcp_mtup_probe_success()`) or loss detection (`tcp_mtup_probe_failed()`).
+When `tcp_transmit_skb()` returns `0` (meaning the probe skb was handed down for transmission), `cwnd` is decremented by `1`.  Why subtract `1` from `cwnd` instead of adding `2` to `packets_out`?  Because `tcp_init_tso_segs(nskb, nskb->len)` passes `nskb->len` (rather than `mss_now`) to force `pcount = 1` so GSO/TSO will not chop the oversized probe back into small segments; consequently, `tcp_event_new_data_sent()` increments `packets_out` by only `+1` even though roughly two MSS worth of bytes were sent.  Incrementing `packets_out` by `+1` while decrementing `cwnd` by `-1` consumes `2` packets of `cwnd - in_flight` headroom (if the probe is lost, `tcp_fastretrans_alert()` restores `cwnd + 1`; if it is ACKed, `tcp_mtup_probe_success()` rescales `cwnd` to the new MTU).
 
 ### Step 3: How many segments to pack into one skb — `tcp_tso_segs()` and `tcp_tso_autosize()`
 

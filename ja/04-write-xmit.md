@@ -313,7 +313,7 @@ static int tcp_mtu_probe(struct sock *sk)
 ```
 
 - `likely(...)` で囲まれた早期 return: MTU probing は既定で無効（`tcp_mtu_probing=0`）なので、ほぼ常にここで抜けます。12a59abc22d6 で `likely()` が付けられました。probe 中（`probe_size != 0`）、recovery 中、cwnd < 11、SACK/DSACK ブロックを送信中（option 長が変わり計算が狂う）でも抜けます。
-- `probe_size` は `search_low` と `search_high` の二分探索の中点です。`size_needed` は「probe 1 個 + `reordering + 1` 個の通常セグメント」です。probe が失われたとき、後続が dupack/SACK を起こしてロスを検出できるだけの量を要求しています。
+- `probe_size` は `search_low` と `search_high` の二分探索の中点です。 `size_needed` は「 probe 1 個 + `tp->reordering + 1` 個の通常セグメント」分のバイト数です。 `tp->reordering` は Fast Retransmit を発動するのに必要な DupACK / SACK 数（初期値は `net.ipv4.tcp_reordering = 3` ）で、それに `+ 1` MSS 分のマージンを足しているのは、バイト数判定（ `write_seq - snd_nxt` ）で末尾が 1 MSS 未満の端数になって Nagle や `TCP_CORK` 等で送信保留されても、確実にフルサイズの後続セグメントを `tp->reordering` 個（ 3 個）ワイヤへ送り出して DupACK / SACK でロス検出できるようにするためです（コミット `91cc17c0e5e5` ）。
 
 ```c
 	/* Have enough data in the send queue to probe? */
@@ -362,7 +362,7 @@ static int tcp_mtu_probe(struct sock *sk)
 }
 ```
 
-成功したら cwnd を 1 減らします（probe は実質 2 パケット分なので）。そして `tcp_event_new_data_sent()` で通常のデータと同様に retransmit queue に入れ、`probe_seq_start/end` を記録します。成否は ACK 処理（`tcp_mtup_probe_success()`）またはロス検出（`tcp_mtup_probe_failed()`）で判定されます。
+`tcp_transmit_skb()` が `0` （送信成功）を返したら、 `cwnd` を `1` 減らします。なぜ `packets_out` を `+ 2` するのではなく `cwnd` を `- 1` するのかというと、直前の `tcp_init_tso_segs(nskb, nskb->len)` で GSO / TSO に分割されないよう第 2 引数に `nskb->len` を渡して強制的に `pcount = 1` （巨大な 1 パケット）にしているため、次の `tcp_event_new_data_sent()` では実質 2 MSS 近いバイト数を送り出したにもかかわらず `packets_out` が `+ 1` しか増えないからです。 `packets_out` を `+ 1` 増やしつつ `cwnd` を `- 1` 減らすことで、差し引き `cwnd - in_flight` の空き枠を 2 パケット分消費させて帳尻を合わせています（ probe がロスしたときは `tcp_fastretrans_alert()` で `cwnd + 1` して元に戻し、 ACK されたときは `tcp_mtup_probe_success()` で新しい MTU 比に合わせて `cwnd` を再計算します）。
 
 ### Step 3: 1 skb に何セグメント詰めるか — `tcp_tso_segs()` と `tcp_tso_autosize()`
 
