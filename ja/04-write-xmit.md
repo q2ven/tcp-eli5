@@ -516,7 +516,7 @@ static inline bool tcp_needs_internal_pacing(const struct sock *sk)
 ```
 
 - `tcp_wstamp_ns`（次に送ってよい時刻）が「いま」以下なら送れます。未来なら hrtimer を `tcp_wstamp_ns` の絶対時刻に張ります。`HRTIMER_MODE_ABS_PINNED_SOFT` なので、同じ CPU の softirq で `tcp_pace_kick()` が走ります。タイマが参照するのでソケットを `sock_hold()` し、`tcp_pace_kick()` 側で `sock_put()` します。`hrtimer_is_queued()` で既に張られていれば二重に張りません。
-- 864e5c090749 以前は「送った直後にタイマを張る」実装でした。現在は「送ろうとしたが早すぎたときだけ張る」実装です。RPC のようにタイマ満了前に次の書き込みが来ないワークロードで、無駄な hrtimer 割り込みを減らしました（TCP_RR で約 10% 改善）。
+- `864e5c090749` 以前は、パケットを 1 個送るたびに送信直後（ `tcp_update_skb_after_send()` ）で無条件に `hrtimer_start()` を呼んで次回送信解禁時刻（ `tcp_wstamp_ns` ）にタイマを予約していました。しかし `hrtimer` をセットすると、その時刻が来たときに **次に送るデータがあろうがなかろうが必ず CPU のハードウェアタイマ割り込み（ Local APIC Timer IRQ 、 `/proc/interrupts` の `LOC` ）と `HRTIMER_SOFTIRQ` が発火** します。たとえば `TCP_RR` （ RPC ）のように「 `t = 0 us` で 1 リクエスト（ pacing 間隔 `10 us` ）を送ったら送信キューが空になり、相手から応答が返る `t = 100 us` まで次の `sendmsg()` が来ない」ワークロードでは、毎回 `t = 10 us` にタイマ IRQ が鳴って `tcp_pace_kick()` -> `tcp_write_xmit()` が呼ばれ、「送信キューが空なので何もしない」という空振り割り込み（＋ `sock_hold()` / `sock_put()` ）が毎パケット発生していました。直前の `5f6188a8003d` で `tcp_wstamp_ns` が pacing 専用に分離されたことで、 `864e5c090749` からは **「送った直後は `tcp_wstamp_ns` の数値だけ更新してタイマは一切張らず、次に `while ((skb = tcp_send_head(sk)))` ループに入って実際に送ろうとしたとき、まだ `tcp_wstamp_ns` より早すぎた場合だけ `tcp_pacing_check()` でタイマを張る」** という遅延（ Lazy ）方式に変わり、 `TCP_RR` ではタイマ IRQ がゼロになって性能が約 10% 改善しました（なお、送信キューに未送信データが残ったまま `cwnd` 上限に達した場合は、ループ先頭で `tcp_cwnd_test()` より先に `tcp_pacing_check()` が呼ばれるため、現在も 2 周目でタイマが張られます）。
 - `sch_fq` が pacing するとき（`SK_PACING_FQ`）は、ここでは止めません。EDT を `skb->tstamp` に書いて qdisc に任せます。
 
 **`tcp_cwnd_test()`**: [RFC 5681 §3](https://www.rfc-editor.org/rfc/rfc5681#section-3) の cwnd 制限です。
