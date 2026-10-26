@@ -415,7 +415,25 @@ segs   = max(bytes / mss, min_tso_segs)               (default min_tso_segs=2)
 ```
 
 - The first term is "the amount sent in approximately 1 ms at the pacing rate".  Since `sk_pacing_rate` is in bytes/second, `>> 10` divides by 1024, yielding roughly 1 ms worth of data.  This reflects the design introduced in 95bd09eb2750 of sending "one TSO packet per 1 ms".  For low-rate flows, bursts become smaller, preserving ACK clocking.
-- The second term is a min_rtt-dependent bonus added in 65466904b015.  For flows with small min_rtt, such as those within the same rack, any loss is recovered rapidly.  Hence, larger chunks are sent to prioritise CPU efficiency.  The bonus halves every 512 us increase in min_rtt, dropping below 1500 bytes around 3 ms.  `r < BITS_PER_TYPE(...)` guards against excessive shifts that would cause undefined behaviour.
+- The second term is a `min_rtt`-dependent bonus added in `65466904b015`:
+  - **What `tcp_min_rtt(tp)` returns**: `minmax_get(&tp->rtt_min)` ([include/net/tcp.h#L947](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/include/net/tcp.h?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n947)), the windowed **minimum RTT in microseconds (`usec`, `u32`)** observed over the last `tcp_min_rtt_wlen` seconds (default 300 s; Chapter 7).  Before any RTT sample has been measured, `tp->rtt_min` is initialised to `~0U` (`0xffffffff` = `4,294,967,295 us` ≈ 71.6 minutes).
+  - **Why give short-RTT flows a bonus**: A flow rate-limited to `20 MB/s` gets only `20,000,000 >> 10 ≈ 19.5 KB` from the first term.  Within the same rack (`min_rtt` of tens to a few hundred `us`), however, occasional packet losses can be repaired so quickly that building full 64 KB TSO bursts to save CPU cycles is a clear win.
+  - **Concrete numbers with `>> 9` (assuming `sk_gso_max_size = 65,536` B)**: Because `tcp_tso_rtt_log` defaults to `9`, `r = min_rtt_us >> 9` is integer division by **`512` ($= 2^9$) `us`**.  Every `512 us` increase in `min_rtt` increments `r` by `1` and halves the bonus `65536 >> r`:
+
+    | `tcp_min_rtt(tp)` | `r = min_rtt >> 9` | `r < 32` | 2nd-term bonus (`65536 >> r`) | Approx. segments (`MSS = 1448 B`) |
+    | --- | --- | --- | --- | --- |
+    | `0` – `511 us` (same rack / DC) | `0` | Yes | **`+65,536 B`** (full 64 KB cap) | ~+45 segs (always max TSO) |
+    | `512` – `1,023 us` (~1.0 ms) | `1` | Yes | **`+32,768 B`** (32 KB) | ~+22 segs |
+    | `1,024` – `1,535 us` (~1.5 ms) | `2` | Yes | **`+16,384 B`** (16 KB) | ~+11 segs |
+    | `1,536` – `2,047 us` (~2.0 ms) | `3` | Yes | **`+8,192 B`** (8 KB) | ~+5 segs |
+    | `2,048` – `2,559 us` (~2.5 ms) | `4` | Yes | **`+4,096 B`** (4 KB) | ~+2 segs |
+    | `2,560` – `3,071 us` (~3.0 ms) | `5` | Yes | **`+2,048 B`** (2 KB) | ~+1 seg |
+    | **`3,072` – `3,583 us` (~3.1 ms+)** | **`6`** | Yes | **`+1,024 B`** (**< 1500 B**) | < 1 seg (practically negligible) |
+    | `8,704` – `16,383 us` (~16.4 ms) | `17` – `31` | Yes | **`+0 B`** | `0` (`31` is the largest shifted `r`) |
+    | **`>= 16,384 us` (~16.4 ms+)** | **`>= 32`** | **No** | Skipped (**`+0 B`**) | Ordinary WAN (e.g. `100 ms` -> `r = 195`) |
+    | **Unmeasured initial `~0U`** | **`8,388,607`** (`0x7fffff`) | **No** | Skipped (**`+0 B`**) | Max `r` at `log = 9` (safe zero bonus) |
+
+  - **Why `r < BITS_PER_TYPE(sk->sk_gso_max_size)` (`r < 32`) is essential, and the maximum `r`**: `sk_gso_max_size` is an `unsigned int` (32 bits), so `BITS_PER_TYPE(...)` is **`32`**.  In C, shifting a 32-bit integer by `>= 32` bits is undefined behaviour (on x86, `shr` masks the shift count to 5 bits, so without this guard `65536 >> 32` at `min_rtt = 16.4 ms` would wrap around to `65536 >> 0 = 65536`!).  `r >= 32` happens routinely on any WAN path with `min_rtt >= 16.4 ms`, as well as before any RTT sample arrives (`r = 0xffffffff >> 9 = 8,388,607`).  Setting `sysctl net.ipv4.tcp_tso_rtt_log=0` yields `r = min_rtt >> 0 = min_rtt` (up to `4,294,967,295`), which hits `r >= 32` for every flow with `min_rtt >= 32 us` and thus acts as the kill switch for this bonus.
 - The `mss_now == 0` branch defends against invocations from BPF (converted to a kfunc in f69a0944415f).
 
 `tcp_tso_segs()`（[net/ipv4/tcp_output.c#L2285](https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/net/ipv4/tcp_output.c?id=279d5c8afcd38bd841832a39bfe1aa4f8518d98e#n2285)）delegates to the CC module if it provides a `tso_segs()` callback (BBR decides its TSO size from its own pacing model; Chapter 13).  The result is clamped to `[1, sk_gso_max_segs]`.  `sk_gso_max_segs` is set in `sk_setup_caps()` from the device's `gso_max_segs`.
