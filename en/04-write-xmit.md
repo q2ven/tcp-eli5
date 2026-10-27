@@ -765,9 +765,11 @@ static void tcp_minshall_update(struct tcp_sock *tp, unsigned int mss_now,
 }
 ```
 
-- `snd_sml` is the "end sequence number of the last small (sub-MSS) segment sent".  `tcp_minshall_check()` evaluates to true when `snd_una < snd_sml <= snd_nxt`—that is, when that small segment has not yet been acknowledged.
-- The original Nagle rule was "do not transmit a small segment if even a single byte of unacknowledged data remains".  Under Minshall, this becomes "transmission is permitted if there is no unacknowledged **small** segment".  Responses consisting of several full-sized segments plus a trailing remainder can thus transmit that remainder immediately.
-- `tcp_minshall_update()` determines whether the final segment of a TSO skb is a remainder via `skb->len < pcount * mss`.  As the comment notes, this is equivalent to `skb->len % mss != 0`, but avoids a division.
+- `snd_sml` is the "end sequence number of the last small (sub-MSS) segment sent".  `tcp_minshall_check()` evaluates to true when `snd_una < snd_sml <= snd_nxt` — that is, **while an unacknowledged small segment is already in flight**.
+- **The Original Nagle (RFC 896) + Delayed ACK 40 ms stall, and how Minshall fixes it**:
+  - Original Nagle forbade sending a sub-MSS segment **whenever *any* unacknowledged data (even full-sized segments) was in flight**.  Suppose `MSS = 1000 B` and a server writes a `1400 B` reply in two calls: `write(1000 B)` (1 full segment, sent immediately) followed right away by `write(400 B)` (1 trailing remainder).  Original Nagle held back the `400 B` remainder waiting for an ACK of the `1000 B` segment, while the receiver's **Delayed ACK** waited up to **40 ms** for a second segment before sending an ACK — causing a classic **40 ms deadlock even on a 0.1 ms LAN** (the exact same stall occurs after any odd number of full-sized segments plus a remainder).
+  - Greg Minshall's modification (`draft-minshall-nagle-01`) recognised that Nagle's real goal is preventing **streams of back-to-back small packets** (like `1 B` Telnet keystrokes), i.e., allowing **at most one unacknowledged small segment in flight**.  Under Minshall, a small segment is held back **only if an unacknowledged *small* segment is already in flight**.  In the `1000 B` + `400 B` example, the `1000 B` full segment does not update `snd_sml`, so the `400 B` remainder goes out **immediately** (recording `snd_sml` at that point so any *further* `write(10 B)` before an ACK returns is properly coalesced).
+- `tcp_minshall_update()` checks whether the final wire segment of the transmitted skb (including a TSO skb) is sub-MSS via `skb->len < pcount * mss_now` and updates `snd_sml`.  As the comment notes, this is equivalent to `skb->len % mss_now != 0`, without a division instruction.
 
 **When `tso_segs > 1`: `tcp_tso_should_defer()`**
 
